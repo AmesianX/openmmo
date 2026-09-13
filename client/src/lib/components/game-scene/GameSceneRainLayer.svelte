@@ -3,9 +3,9 @@
   import * as THREE from 'three'
   import {
     createParticleInstancedMesh,
-    createWindParticleMaterial,
     PARTICLE_OPACITY_ATTR,
   } from '../../shaders/wind-particle-material'
+  import { createRainParticleMaterial } from '../../shaders/rain-particle-material'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
 
   interface Props {
@@ -15,7 +15,7 @@
 
   let { playerPosition = null, heightManager = null }: Props = $props()
 
-  // Covers the whole visible quarter-view area, not just the player's surroundings.
+  // Cover the visible quarter-view area.
   const SPAWN_RADIUS = 36
   const MAX_DROPS = 1100
   const SPAWN_RATE_AT_FULL = 760
@@ -86,7 +86,7 @@
     return tex
   }
 
-  // Bright core + darker cool halo so streaks read on bright grass and at night
+  // Bright core with a soft, cool halo.
   function createStreakTexture(): THREE.CanvasTexture {
     const w = 16
     const h = 128
@@ -141,7 +141,7 @@
     count: number
   ): THREE.InstancedMesh {
     return createParticleInstancedMesh(
-      createWindParticleMaterial(tex),
+      createRainParticleMaterial(tex),
       width,
       height,
       count

@@ -228,6 +228,9 @@ day from the server's. Per-frame local sample drives:
    (instanced streaks, ground splash rings, pool ≤ 1,100, measured 66 fps /
    0.017 ms sim on the dev machine), spawn rate scaled by the local sample;
    a cell is kilometres wide, so one sample covers the whole view.
+   Streaks and ground splashes respond to scene lighting, including torch/fire
+   color and distance attenuation. Their diffuse scattering ignores billboard
+   orientation, keeping nearby rain visible with light behind the drops.
    `enableRainParticles` preset flag (off on low and mobile). Off
    indoors/dungeons; petals stop spawning under rain.
 3. **Audio** — rain loop + distant thunder one-shots from the prototype's

@@ -37,10 +37,7 @@ export function createParticleInstancedMesh(
   return mesh
 }
 
-/**
- * Create an unlit billboard material for wind-blown particles.
- * Uses alpha from the texture multiplied by per-instance opacity.
- */
+/** Unlit billboard with per-instance opacity. */
 export function createWindParticleMaterial(
   alphaMap: THREE.Texture
 ): MeshBasicNodeMaterial {
