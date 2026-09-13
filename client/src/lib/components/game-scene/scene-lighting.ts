@@ -7,9 +7,12 @@ import {
   type SunLightSnapshot,
   computeCelestialLightState,
 } from '../../utils/celestialSimulation'
+import { setDirectionalShadowIntensity } from './renderer-quality'
 
 export const AMBIENT_DAY_INTENSITY = 0.35
 export const AMBIENT_NIGHT_INTENSITY = 0.3
+const RAIN_SHADOW_FADE_END = 0.2
+const RAIN_SHADOW_INTENSITY = 0.03
 
 export interface Vector3Like {
   x: number
@@ -26,9 +29,9 @@ export interface SceneLightingUpdateParams {
   scene: THREE.Scene
   sunLightSnapshot: SunLightSnapshot
   eclipseFactor: number
-  /** Overcast 0..1 from the weather cells over the player; full cover reads
-   *  as a cloudy afternoon, never as night. */
+  /** Overcast 0..1 at the player. */
   cloudFactor?: number
+  rainIntensity?: number
   /** Dungeon render mode: no sun/moon, dim cold ambient, dark background. */
   underground?: boolean
 }
@@ -48,11 +51,7 @@ export function createSceneLightingController(): SceneLightingController {
   const ambientNightColor = new THREE.Color('#8ea8ff')
   const ambientColor = new THREE.Color()
 
-  // Quantize shadow light direction to prevent shadow map flickering.
-  // Tiny per-frame direction changes rotate the shadow texel grid, causing
-  // boundary pixels to oscillate. Snapping to discrete angular steps keeps
-  // the grid stable between updates. Comparison uses squared values to
-  // avoid per-frame sqrt calls.
+  // Snap light direction to stabilize shadow edges.
   const SHADOW_DIR_SNAP_SQ = 0.0005 * 0.0005
   const SUN_SHADOW_ELEVATION_MIN = 0.08
   let snappedOffset: { x: number; y: number; z: number } | null = null
@@ -84,13 +83,7 @@ export function createSceneLightingController(): SceneLightingController {
   let savedBackground: THREE.Scene['background'] = null
   let wasUnderground = false
 
-  /**
-   * Underground branch: celestial lighting is fully overridden every
-   * frame anyway, so we just write different values — ambient-only cave
-   * light, directional off (shadow toggle goes through the same latch),
-   * near-black background. The unified torch PointLight is untouched and
-   * becomes the main light source.
-   */
+  /** Use dim ambient lighting underground. */
   function updateUnderground(params: SceneLightingUpdateParams) {
     if (!wasUnderground) {
       savedBackground = params.scene.background
@@ -173,6 +166,16 @@ export function createSceneLightingController(): SceneLightingController {
     )
     params.directionalLight.intensity =
       directionalLightState.intensity * (1 - eclipse * 0.95) * (1 - cloud * 0.5)
+
+    const rainShadowFade = THREE.MathUtils.smoothstep(
+      params.rainIntensity ?? 0,
+      0,
+      RAIN_SHADOW_FADE_END
+    )
+    setDirectionalShadowIntensity(
+      params.directionalLight,
+      THREE.MathUtils.lerp(1, RAIN_SHADOW_INTENSITY, rainShadowFade)
+    )
 
     const shouldCastSunShadow =
       params.directionalShadowsEnabled &&

@@ -796,7 +796,7 @@
 
       // Update directional light to follow player
       const lightUpdateStart = performance.now()
-      updateLightPosition(sunSnapshot, calDate, localWeather.cloud)
+      updateLightPosition(sunSnapshot, calDate, localWeather)
       loopProfiler.record('lightUpdate', performance.now() - lightUpdateStart)
 
       // Update water uniforms — always use real sun direction (not moon)
@@ -968,7 +968,7 @@
   function updateLightPosition(
     sunLightSnapshot: SunLightSnapshot,
     calDate: CalendarDate,
-    cloudFactor: number
+    localWeather: LocalWeather
   ) {
     sceneLighting.update({
       currentPlayerPosition: currentPlayer?.position ?? null,
@@ -979,7 +979,8 @@
       scene,
       sunLightSnapshot,
       eclipseFactor: eclipseState.factor,
-      cloudFactor,
+      cloudFactor: localWeather.cloud,
+      rainIntensity: localWeather.rain,
       underground: $isUnderground,
     })
   }

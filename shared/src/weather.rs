@@ -1,7 +1,6 @@
-//! Regional rain cells (doc/WEATHER_SYSTEM.md). A cell forms over a baked
-//! sector, rains, and clears; everything is a pure function of the world
-//! seed, the sector list and game time, so server and client agree and any
-//! future time can be forecast.
+//! Deterministic regional rain cells; see doc/WEATHER_SYSTEM.md.
+
+mod seasonal;
 
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +11,7 @@ use crate::worldgen::noise::smoothstep;
 
 pub const GAME_MINUTES_PER_DAY: i64 = 24 * 60;
 
-/// Rain cells spawn on one of a sector's spots; a sector hosts at most one
-/// cell at a time. Baked by terrain-gen from the climate grid.
+/// Baked rain-cell spawn spots; each sector hosts at most one cell.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sector {
     pub zone: u8,
@@ -21,8 +19,7 @@ pub struct Sector {
     pub spots: Vec<[f32; 2]>,
 }
 
-/// The seed is the one the sectors were placed with, so the server needs no
-/// other record of the world seed to broadcast it.
+/// Sectors and the world seed used to place them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WeatherSectors {
     pub version: u32,
@@ -32,9 +29,7 @@ pub struct WeatherSectors {
 
 pub const WEATHER_SECTORS_VERSION: u32 = 1;
 
-/// Per-zone cadence in game minutes and kilometres. A rain event lasts
-/// 15-30 real minutes (a game day is 3 real hours); dry zones get longer gaps,
-/// not shorter rain.
+/// Regional cadence in game minutes and kilometres; events last 15–30 real minutes.
 #[derive(Debug, Clone, Copy)]
 pub struct ZoneSchedule {
     pub period: f64,
@@ -141,10 +136,7 @@ fn hash01(seed: u64, sector: u64, cycle: i64, salt: u64) -> f64 {
     (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
-/// The cell a sector hosts at `t_min`, if any. Only the current cycle can
-/// be live: a cell fits inside its own cycle (`birth + life ≤ (k + 1) * P`).
-/// `bias` scales every zone's chance: 1.0 is the baked schedule, 0.5 skips
-/// half the cycles, 0.0 turns rain off.
+/// The current cycle's cell. `bias` scales the seasonal rain chance.
 pub fn sector_cell(
     sectors: &[Sector],
     index: usize,
@@ -162,7 +154,9 @@ pub fn sector_cell(
     }
     let k = (t_min / sched.period).floor() as i64;
     let id = index as u64;
-    if hash01(seed, id, k, 1) >= sched.chance * bias {
+    let draw = hash01(seed, id, k, 1);
+    let chance = sched.chance * bias;
+    if draw >= chance {
         return None;
     }
     let life = (sched.life_min + hash01(seed, id, k, 2) * sched.life_var)
@@ -172,9 +166,13 @@ pub fn sector_cell(
     if age < 0.0 || age > life {
         return None;
     }
+    let spot = sector.spots[(hash01(seed, id, k, 4) * sector.spots.len() as f64) as usize];
+    // Freeze the seasonal chance at birth so accepted rain finishes naturally.
+    if draw >= chance * seasonal::chance_multiplier(spot, birth) {
+        return None;
+    }
     let progress = (age / life) as f32;
     let env = smoothstep(0.0, 0.25, progress) * (1.0 - smoothstep(0.7, 1.0, progress));
-    let spot = sector.spots[(hash01(seed, id, k, 4) * sector.spots.len() as f64) as usize];
     let radius_km = (sched.radius_min_km + sched.radius_var_km * hash01(seed, id, k, 5) as f32)
         * (0.6 + 0.4 * env);
     Some(Cell {
@@ -277,6 +275,48 @@ mod tests {
             "half {half} vs full {full}"
         );
         assert_eq!(live_minutes(0.0), 0.0);
+    }
+
+    #[test]
+    fn seasonal_rain_keeps_complete_events_and_their_original_strength() {
+        let regional = vec![Sector {
+            zone: Climate::WetCoast as u8,
+            spots: vec![[-1475.2, 4741.6]],
+        }];
+        let unseasonal = vec![Sector {
+            zone: Climate::WetCoast as u8,
+            spots: vec![[14000.0, -14000.0]],
+        }];
+        let sched = zone_schedule(regional[0].zone);
+        let seed = 42;
+        let mut accepted = 0;
+        let mut skipped = 0;
+        for k in 0..20_000 {
+            let life = sched.life_min + hash01(seed, 0, k, 2) * sched.life_var;
+            let birth = k as f64 * sched.period + hash01(seed, 0, k, 3) * (sched.period - life);
+            let middle = birth + life * 0.5;
+            if sector_cell(&unseasonal, 0, seed, 1.0, middle).is_none() {
+                continue;
+            }
+            let rains = sector_cell(&regional, 0, seed, 1.0, middle).is_some();
+            if rains {
+                accepted += 1;
+            } else {
+                skipped += 1;
+            }
+            for fraction in [0.001, 0.1, 0.25, 0.5, 0.7, 0.9, 0.999] {
+                let t = birth + life * fraction;
+                let cell = sector_cell(&regional, 0, seed, 1.0, t);
+                assert_eq!(cell.is_some(), rains, "cycle {k}, progress {fraction}");
+                if let Some(cell) = cell {
+                    let baseline = sector_cell(&unseasonal, 0, seed, 1.0, t).unwrap();
+                    assert_eq!(cell.env, baseline.env);
+                    assert_eq!(cell.radius_m, baseline.radius_m);
+                    assert_eq!(cell.progress, baseline.progress);
+                }
+            }
+        }
+        assert!(accepted > 0 && skipped > 0);
     }
 
     #[test]

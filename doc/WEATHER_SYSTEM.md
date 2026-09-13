@@ -13,7 +13,7 @@ function of time, a map forecast can be added later without touching the
 model; the world map is left as it is for now.
 
 Non-goals (v1): snow, lightning visuals, wetness debuffs, weather-dependent
-fishing, seasons, sky dome (quarter view — the sky is never on screen).
+fishing, sky dome (quarter view — the sky is never on screen).
 
 ## Why stationary cells, not travelling clouds
 
@@ -65,9 +65,9 @@ lifetime range `[L0, L0 + Lv]`, cycle `k` yields
 
 ```
 h1, h2, h3 = hash(seed, s, k)
-active   = h1 < chance
-life     = min(L0 + h3 * Lv, 0.9 * P)
-birth    = k * P + h2 * (P - life)         // the cell fits inside its cycle
+life     = min(L0 + h2 * Lv, 0.9 * P)
+birth    = k * P + h3 * (P - life)         // the cell fits inside its cycle
+active   = h1 < chance * bias * seasonalMultiplier(spawnSpot, birth)
 envelope = ramp-up 25 % of life → full → ramp-down 30 % of life
 falloff(d) = 1 - smoothstep(0.7, 1.0, d)   // flat top, short edge, 0 at the radius
 rain(x, z, t) = min(1, sum over cells of envelope(t) * falloff(dist / radius))
@@ -79,13 +79,16 @@ next zone from beyond its own edge. A Gaussian was tried first: it still held
 37 % at the radius and drizzled out to twice it, which made the map
 over-promise and let coastal cells wet the rain shadow.
 
-Everything is a pure function of `(seed, sectors, t)` — `shared/src/weather.rs`.
+Everything is a pure function of `(seed, sectors, t)` and the compiled
+seasonal region settings — `shared/src/weather.rs`.
 `t` is game minutes since the calendar epoch (`weather::game_minutes`, on top
 of `moon::game_day_index`), already synced by `GameTimeSync`. Only cycle `k`
-can be live at `t`, so the runtime cost is one hash per sector. Anyone who
+can be live at `t`, so the runtime checks one cycle per sector. Anyone who
 knows the seed can evaluate any time — that is the forecast.
 
 ### Schedule (game minutes; a game day is 3 real hours)
+
+These are the base schedules, before regional seasonal multipliers.
 
 | Zone | km² per sector | Period | Lifetime | Chance | Radius | Real-time feel |
 |---|---|---|---|---|---|---|
@@ -112,6 +115,42 @@ sectors), and 3–5 km coastal cells centred in that band soaked every zone
 behind it — hence the small shoreline showers. The ignored test
 `weather_zone_shares_from_bake` in `terrain/src/tests.rs` re-measures this
 from baked climate files in under a second.
+
+### Seasonal rain in western Valdran
+
+`data-src/weather.json` defines a winter-wet, summer-dry region around
+Aldermark at `(-1475.2, 4741.6)`. The multiplier applies fully to cell birth
+positions within 6 km and fades to the base schedule between 6 and 8 km.
+Cells outside the region retain their original schedules. This includes
+all nearby coastal and inland cells that can reach the village.
+
+The calendar follows the existing solstices and equinoxes:
+
+| Season | Dates | Chance multiplier in the region core | Village wet-time target |
+|---|---|---|---|
+| Winter | 12/30–3/29 | 1.0 | about 37% |
+| Spring | 3/30–6/29 | smoothly decreases from 1.0 to 0.11 | about 21% on average |
+| Summer | 6/30–9/29 | 0.11 | about 5% |
+| Autumn | 9/30–12/29 | smoothly increases from 0.11 to 1.0 | about 21% on average |
+
+The targets describe time spent under rain at the village, not the chance
+of a single sector producing a cell. Overlapping cells make those different
+quantities. Spring and autumn use smoothstep interpolation; winter and summer
+hold their values. The multiplier is evaluated at the cell's scheduled birth,
+so an accepted event keeps its original duration, strength and fade even
+across season boundaries. `WEATHER_BIAS` still multiplies the final chance.
+
+The configuration is compiled into both native Rust and client WASM. No
+terrain re-bake or sector-file migration is needed. After rebuilding WASM,
+run `node tools/measure-weather.mjs 20` from the repository root to sample
+20 game years at the configured player spawn, with `bias=1`, rain intensity
+above 0.01, and a five-game-minute step.
+
+With the current seed-42 bake (104 sectors), that sample gives winter 36.8%,
+spring 21.6%, summer 4.8%, autumn 20.7%, and an annual mean of 21.0%.
+The same sample before seasonality averaged 36.7%, so yearly wet time drops
+by about 43%. These are long-run shares; individual years and nearby
+positions vary.
 
 Derived values: `rainIntensity = rain(x, z, t)`; `cloudFactor =
 smoothstep(0.35, 0.80, rain)`. There is no separate background cloud layer:
@@ -166,7 +205,8 @@ day from the server's. Per-frame local sample drives:
 1. **Lighting** — `cloudFactor` multiplied where `eclipseFactor` already is
    (`scene-lighting.ts`): directional `× (1 − 0.5·cf)`, ambient and
    environment `× (1 − 0.25·cf)`. Full overcast reads "cloudy afternoon",
-   never "night".
+   never "night". Sun shadow intensity fades from 1 to 0.03 as rain rises
+   from 0 to 0.2, including every CSM cascade.
 2. **Rain particles** — `GameSceneRainLayer.svelte` from the prototype
    (instanced streaks, ground splash rings, pool ≤ 1,100, measured 66 fps /
    0.017 ms sim on the dev machine), spawn rate scaled by the local sample;
@@ -175,7 +215,8 @@ day from the server's. Per-frame local sample drives:
    indoors/dungeons; petals stop spawning under rain.
 3. **Audio** — rain loop + distant thunder one-shots from the prototype's
    ambience manager (CC0 assets recorded in `doc/assets/sfx.md`), following
-   the SFX volume/mute settings; ducked indoors; the BGM playlist goes quiet
+   the SFX volume/mute settings; the rain loop has a 0.5 gain multiplier,
+   with thunder volume unchanged. Ducked indoors; the BGM playlist goes quiet
    through the same quiet-zone path as bard performances, with hysteresis
    (on above 0.35, off below 0.2) so it does not flap at a cell edge.
 

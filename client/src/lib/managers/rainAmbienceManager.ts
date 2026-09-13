@@ -1,10 +1,9 @@
 import { getSfxMultiplier } from './sfxManager'
 
-// Looping ambience + scheduled one-shots need WebAudio (gain automation,
-// seamless loop), so this runs beside sfxManager but obeys the same
-// SFX volume/mute settings.
+// WebAudio ambience follows the shared SFX volume/mute settings.
 const RAIN_URL = '/sounds/rain-loop.ogg'
 const THUNDER_URL = '/sounds/thunder-distant.ogg'
+const RAIN_VOLUME = 0.5
 const INDOOR_FACTOR = 0.35
 const SMOOTH_RATE = 1.2
 const THUNDER_MIN_INTENSITY = 0.35
@@ -30,8 +29,7 @@ function init() {
   audioCtx = ctx
   rainGain = gain
 
-  // Stop and re-init while the files are still downloading must not leave
-  // this load attaching a second loop to the newer context.
+  // Ignore loads from a stopped context.
   const load = async () => {
     const [rainData, thunderData] = await Promise.all([
       fetch(RAIN_URL).then((r) => r.arrayBuffer()),
@@ -95,7 +93,7 @@ export function updateRainAmbience(
 
   const k = Math.min(1, SMOOTH_RATE * dtSec)
   current += (target - current) * k
-  rainGain.gain.value = current * getSfxMultiplier()
+  rainGain.gain.value = current * getSfxMultiplier() * RAIN_VOLUME
 
   if (intensity > THUNDER_MIN_INTENSITY) {
     if (thunderIn === null) {
