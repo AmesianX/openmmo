@@ -12,6 +12,7 @@ export interface ServerWeather {
 }
 
 export const weather = writable<ServerWeather | null>(null)
+export const weatherSectorsReady = writable(false)
 
 /** Rain 0..1 and light dimming 0..1 at the local player. */
 export interface LocalWeather {
@@ -28,12 +29,14 @@ export function setWeather(next: ServerWeather) {
   weather.set(next)
   if (next.sectorsTag !== sectorsTag) {
     sectorsTag = next.sectorsTag
+    weatherSectorsReady.set(false)
     void loadSectors(next.sectorsTag)
   }
 }
 
 export function clearWeather() {
   weather.set(null)
+  weatherSectorsReady.set(false)
   sectorsTag = null
 }
 
@@ -44,7 +47,10 @@ async function loadSectors(tag: string) {
     )
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const text = await resp.text()
-    if (sectorsTag === tag) weather_set_sectors(text)
+    if (sectorsTag === tag) {
+      weather_set_sectors(text)
+      weatherSectorsReady.set(true)
+    }
   } catch (err) {
     if (sectorsTag === tag) sectorsTag = null
     console.warn('weather: sectors unavailable', err)

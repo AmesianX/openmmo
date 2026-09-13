@@ -40,6 +40,14 @@ white-cloud.jpg도 같은 폴더의 원본(5964px)을 2048px q85로 줄인 것.
 
 - <a href="https://kr.freepik.com/free-photo/white-cloud_3816314.htm#fromView=keyword&page=1&position=8&uuid=159badd4-6cbe-4767-aec8-8a40d2789230&query=Sky+cloud">작가 lifeforstock 출처 Freepik</a>
 
+## Rain Puddle Reflections
+
+- `client/public/textures/puddle-light-streak.png` — **[미사용]** 물웅덩이 반사광용 흑백 마스크 (1254×1254 PNG). 지그재그 무늬가 부자연스러워 셰이더에서 제거하고 텍스처·프롬프트 파일도 삭제함.
+  - 출처: OpenAI 내장 `image_gen`으로 생성, 2026-09-14 (KST).
+  - 생성 도구/티어: Codex 내장 이미지 생성; 계정 요금제와 서비스 티어는 도구에서 미노출.
+  - 라이선스: OpenAI 생성 출력물에 적용되는 서비스 약관. 별도 제3자 stock/CC 에셋을 사용하지 않음.
+  - 원본: `exec-dc34119b-bd15-42fc-a47f-08d30de51617.png`.
+
 ## Sea
 
 - sea https://www.filterforge.com/filters/4141.html — **[미사용]** 물 표면은 절차적 렌더 + waternormals(three.js examples); 4141 사용 흔적 없음

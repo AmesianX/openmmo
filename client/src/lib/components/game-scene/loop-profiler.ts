@@ -13,6 +13,7 @@ export type LoopProfileSection =
   | 'grassUpdate'
   | 'windParticles'
   | 'rain'
+  | 'puddles'
   | 'wetnessPass'
   | 'refractionPass'
   | 'reflectionPass'
@@ -33,6 +34,7 @@ export const LOOP_PROFILE_SECTIONS: readonly LoopProfileSection[] = [
   'grassUpdate',
   'windParticles',
   'rain',
+  'puddles',
   'wetnessPass',
   'refractionPass',
   'reflectionPass',

@@ -6,7 +6,12 @@ vi.mock('../wasm/onlinerpg_shared', () => ({
 }))
 
 import { weather_set_sectors } from '../wasm/onlinerpg_shared'
-import { clearWeather, setWeather, weather } from './weatherStore'
+import {
+  clearWeather,
+  setWeather,
+  weather,
+  weatherSectorsReady,
+} from './weatherStore'
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 const okList = { ok: true, text: async () => '{"sectors":[]}' }
@@ -25,6 +30,7 @@ describe('weatherStore', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     setWeather({ seed: 42, bias: 1, sectorsTag: 'aa', rainOverride: null })
+    expect(get(weatherSectorsReady)).toBe(false)
     setWeather({ seed: 42, bias: 0.5, sectorsTag: 'aa', rainOverride: null })
     await flush()
     setWeather({ seed: 42, bias: 0.5, sectorsTag: 'aa', rainOverride: null })
@@ -41,9 +47,11 @@ describe('weatherStore', () => {
       expect.stringMatching(/\/api\/terrain\/weather-sectors\?v=aa$/)
     )
     expect(weather_set_sectors).toHaveBeenCalledWith('{"sectors":[]}')
+    expect(get(weatherSectorsReady)).toBe(true)
 
     clearWeather()
     expect(get(weather)).toBeNull()
+    expect(get(weatherSectorsReady)).toBe(false)
   })
 
   it('retries the sector fetch on the next sync after a failure', async () => {
@@ -57,6 +65,7 @@ describe('weatherStore', () => {
     setWeather({ seed: 1, bias: 1, sectorsTag: 'aa', rainOverride: null })
     await flush()
     expect(weather_set_sectors).not.toHaveBeenCalled()
+    expect(get(weatherSectorsReady)).toBe(false)
 
     setWeather({ seed: 1, bias: 1, sectorsTag: 'aa', rainOverride: null })
     await flush()

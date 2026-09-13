@@ -233,6 +233,7 @@ day from the server's. Per-frame local sample drives:
    orientation, keeping nearby rain visible with light behind the drops.
    `enableRainParticles` preset flag (off on low and mobile). Off
    indoors/dungeons; petals stop spawning under rain.
+   Rain also accumulates on the terrain as described below.
 3. **Audio** — a sparse droplet loop for light rain, crossfading into the
    original heavy-rain recording above intensity 0.45 (smoothstep, fully
    replaced at 1), plus distant thunder one-shots. Sources and licenses are
@@ -246,6 +247,52 @@ The world map is deliberately untouched. A forecast layer (cells as soft
 discs in the atlas pass, a slider that evaluates the same function at a later
 time) was prototyped and works, but it is held back until there is a
 gameplay reason for players to read the weather ahead.
+
+### Rain puddles
+
+Wet terrain darkens across the whole surface, including between puddles.
+Dampness reaches its full strength at 45% accumulated wetness, reducing the
+lit ground's linear color by 38%. Irregular puddles spread over nearly flat
+ground and retain a transparent bed. Inside each puddle, stone normals blend
+toward the flat terrain normal, baked color contrast is softened, and crevice
+occlusion is reduced. The shared puddle mask also controls a narrow dark rim;
+its transition follows pixel width so the edge stays sharp without aliasing.
+Rain ripples add narrow highlights on crests facing the camera. Their brightness
+follows daylight, and they fade as each wave expands. Ripples settle when rain
+stops; the wet ground and puddles remain until they dry. Puddles use no projected
+cloud or light-streak texture.
+Slopes and terrain below sea level do not form puddles. Dungeon terrain stays
+dry, and the map editor's brush/grid remains unobscured.
+
+`rainPuddles.ts` controls the timing in real seconds: full rain fills the ground
+in 90 seconds; lighter rain takes longer. Rain at or below 0.02 lets it dry.
+Once rain stops, puddles shrink from their edges, leaving damp ground that
+returns to its original appearance within 240 seconds. Rain restarting refills
+the remaining water.
+
+Rain is sampled about once per second at shared 64 m tile corners. Wetness
+advances every frame and its displayed value eases over 0.35 seconds to avoid
+stepping edges. Weather queries, including the initial 330-second history
+replay, share a limit of eight calls per frame. Only visible corners receive
+updates; unvisited corners restore their history on return. The cache retains
+up to 256 corners, discarding samples older than eight minutes on return.
+Overrides accumulate from their first observation because the server does not
+provide their start time.
+
+Puddles reuse the terrain draw and the existing baked value-noise texture.
+Color, normal, occlusion and ripple highlights reuse the same mask and noise samples.
+Ground below the puddle visibility threshold skips those noise samples and
+only applies dampness darkening.
+They add no scene captures, render targets or draw calls on any graphics preset.
+The former planar capture of trees/buildings/characters was removed to avoid
+repeating scene geometry, skinning and shadow work. The normal sea/river
+reflection stays at sea level.
+
+The ripple facing direction and daylight strength are computed once per frame.
+Ripple animation uses the continuous render clock. Calm puddles skip ripple math.
+`__togglePuddles()` hides/shows just the puddle shader for comparison; wetness
+keeps advancing. `__profile()` reports puddle CPU time separately under
+`puddles`, alongside rain particles, rendering and other scene work.
 
 ## Test plan
 

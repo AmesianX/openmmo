@@ -7,6 +7,10 @@
 import * as THREE from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import {
+  applyRainPuddles,
+  type RainPuddleUniforms,
+} from '../shaders/rain-puddle-nodes'
+import {
   Fn,
   Discard,
   uniform,
@@ -72,6 +76,7 @@ export type SplatParams = {
   sharedHoleUniforms?: SplatHoleUniforms
   /** Include grid/brush editor overlay in the shader. Default false. */
   includeEditorOverlay?: boolean
+  rainPuddleUniforms?: RainPuddleUniforms
 }
 
 export interface SplatBrushUniforms {
@@ -145,6 +150,7 @@ export function makeSplatStandardMaterial({
   sharedBrushUniforms,
   sharedHoleUniforms,
   includeEditorOverlay = false,
+  rainPuddleUniforms,
 }: SplatParams) {
   // Splat bytes are integer indices — must NOT be bilinearly interpolated.
   splatMap.minFilter = THREE.NearestFilter
@@ -457,6 +463,14 @@ export function makeSplatStandardMaterial({
           gridVisible: brush.gridVisible,
         }
       : {}),
+  }
+
+  if (rainPuddleUniforms) {
+    applyRainPuddles(
+      mat,
+      rainPuddleUniforms,
+      brush ? max(brush.active, brush.gridVisible) : undefined
+    )
   }
 
   return mat

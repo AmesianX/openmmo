@@ -3,6 +3,11 @@
   import { OrbitControls } from '@threlte/extras'
   import * as THREE from 'three'
   import { ClippingGroup, type WebGPURenderer } from 'three/webgpu'
+  import {
+    createRainPuddleUniforms,
+    updateRainPuddleLighting,
+  } from '../shaders/rain-puddle-nodes'
+  import { weather_rain_at } from '../wasm/onlinerpg_shared'
   import { onMount } from 'svelte'
   import {
     gameStore,
@@ -88,6 +93,7 @@
   import { type PlayerState } from '../utils/movementUtils'
   import {
     SUN_MAX_INTENSITY,
+    SUN_DAY_DURATION_SECONDS,
     computeSunLightSnapshot,
     type SunLightSnapshot,
     type CalendarDate,
@@ -102,9 +108,10 @@
   import {
     NO_WEATHER,
     weather,
+    weatherSectorsReady,
     type LocalWeather,
   } from '../stores/weatherStore'
-  import { sampleLocalWeather } from '../utils/weatherSample'
+  import { gameMinutesAt, sampleLocalWeather } from '../utils/weatherSample'
   import {
     debugVisible,
     cameraRotationEnabled,
@@ -198,6 +205,9 @@
   let terrainGroup = $state<THREE.Group | undefined>(undefined)
   let syncTileMeshes = $state<() => void>(() => {})
   let terrainGeometry = $state<THREE.BufferGeometry | null>(null)
+  let terrainLayerRef = $state<GameSceneTerrainLayer | undefined>(undefined)
+  const rainPuddleUniforms = createRainPuddleUniforms()
+  let puddlesVisible = true
   let terrainTiles = $state<TerrainTile[]>([])
   let terrainCenterChunk = $state({ x: 0, z: 0 })
   const terrainHeightManager = new TerrainHeightManager()
@@ -776,6 +786,30 @@
         loopProfiler.record('rain', performance.now() - rainStart)
       }
 
+      {
+        const puddleStart = performance.now()
+        const weatherNow = $weather
+        const gameMinutes = gameMinutesAt(calDate, calendarSystem.getGameHour())
+        if (
+          weatherNow &&
+          ($weatherSectorsReady || weatherNow.rainOverride !== null)
+        )
+          terrainLayerRef?.updateRainPuddles(
+            realDeltaSeconds,
+            (x, z, secondsAgo) =>
+              weatherNow.rainOverride ??
+              weather_rain_at(
+                weatherNow.seed,
+                weatherNow.bias,
+                gameMinutes - (secondsAgo * 1440) / SUN_DAY_DURATION_SECONDS,
+                x,
+                z
+              ),
+            weatherNow.rainOverride === null
+          )
+        loopProfiler.record('puddles', performance.now() - puddleStart)
+      }
+
       // Update river-rock spray particles + wake scroll
       riverRocksRef?.update(deltaTime, camera)
 
@@ -820,6 +854,14 @@
         camera.getWorldDirection(waterCamDirTmp)
         waterCamDir = waterCamDirTmp.clone()
       }
+      rainPuddleUniforms.enabled.value =
+        !$isUnderground && puddlesVisible ? 1 : 0
+      updateRainPuddleLighting(
+        rainPuddleUniforms,
+        currentTime / 1000,
+        waterSunDirTmp,
+        waterCamDirTmp
+      )
 
       runRenderPasses({
         renderer,
@@ -1004,6 +1046,7 @@
       setLoopProfileEnabled: (v) => {
         loopProfileEnabled = v
       },
+      togglePuddles: () => (puddlesVisible = !puddlesVisible),
       renderer,
       scene,
       getGrassGroup: () => grassLayerRef?.getGroup(),
@@ -1236,6 +1279,8 @@
 {/if}
 
 <GameSceneTerrainLayer
+  bind:this={terrainLayerRef}
+  {rainPuddleUniforms}
   {terrainGeometry}
   {terrainTiles}
   bind:terrainMeshes
