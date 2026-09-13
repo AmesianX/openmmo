@@ -6,6 +6,7 @@ import { getTerrainApiUrl } from '../utils/networkUtils'
 export interface ServerWeather {
   seed: number
   bias: number
+  rainOverride: number | null
   /** Names the sector list the server loaded; the list is fetched per tag. */
   sectorsTag: string
 }
@@ -20,9 +21,7 @@ export interface LocalWeather {
 
 export const NO_WEATHER: LocalWeather = { rain: 0, cloud: 0 }
 
-/** Tag of the list requested or loaded; a sync repeating it fetches nothing,
- *  so rain holds steady through a rejoin. Null after a failed fetch so the
- *  next sync (every 30 s) retries. */
+/** Null after a failed fetch so the next sync retries. */
 let sectorsTag: string | null = null
 
 export function setWeather(next: ServerWeather) {

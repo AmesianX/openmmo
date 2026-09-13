@@ -2676,6 +2676,12 @@ mod tests {
             "/summon Abuser",
             "/goto Abuser",
             "/spawnmob kobold",
+            "/weather",
+            "/weather rain",
+            "  /weather rain 0.4  ",
+            "/weather clear",
+            "/weather auto",
+            "/weather invalid",
         ] {
             assert!(
                 requires_admin(&ClientMessage::ChatMessage {
@@ -2694,5 +2700,8 @@ mod tests {
             message: "/giveaway".into()
         }));
         assert!(!requires_admin(&ClientMessage::Heartbeat));
+        assert!(!requires_admin(&ClientMessage::ChatMessage {
+            message: "/weathering".into()
+        }));
     }
 }

@@ -100,6 +100,7 @@
   - [x] goto
   - [x] mute
   - [x] spawnmob (`/spawnmob <타입> [마릿수]`, 전투 테스트용 몬스터 소환)
+  - [x] weather (`/weather rain [0~1]`, `clear`, `auto`, 서버 전체 비 디버깅)
 - party, guild 기능
   - party는 만듦
   - [x] party원 수 조정 (4명? 5명?)

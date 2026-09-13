@@ -74,9 +74,12 @@ fn split_name_and_arg(rest: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// Bounded numeric argument shared by `/ban`, `/mute`, and `/spawnmob`;
-/// `what` names the command and argument in the reply ("Ban: minutes").
-fn parse_bounded<T>(raw: &str, range: std::ops::RangeInclusive<T>, what: &str) -> Result<T, String>
+/// Parse a numeric admin argument within an inclusive range.
+pub(super) fn parse_bounded<T>(
+    raw: &str,
+    range: std::ops::RangeInclusive<T>,
+    what: &str,
+) -> Result<T, String>
 where
     T: std::str::FromStr + PartialOrd + std::fmt::Display,
 {
@@ -213,10 +216,7 @@ pub(crate) fn parse_say_command(message: &str) -> Option<&str> {
     strip_command(message, "/s")
 }
 
-/// Operator commands (doc/TODO.md 운영자 커맨드). `requires_admin` gates them
-/// through this same parser, so the syntax is defined once. Parts return
-/// unvalidated, like the whisper parser: a malformed command draws a usage
-/// reply instead of leaking into local chat.
+/// Shared by dispatch and the admin gate; malformed arguments still require admin.
 #[derive(Debug, PartialEq)]
 pub(crate) enum AdminCommand<'a> {
     Give {
@@ -236,6 +236,7 @@ pub(crate) enum AdminCommand<'a> {
     Unmute(&'a str),
     Summon(&'a str),
     Goto(&'a str),
+    Weather(&'a str),
     Spawnmob {
         monster_type: &'a str,
         count: Option<&'a str>,
@@ -274,6 +275,9 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
             monster_type,
             count,
         });
+    }
+    if let Some(rest) = strip_command(message, "/weather") {
+        return Some(AdminCommand::Weather(rest));
     }
     strip_command(message, "/goto").map(AdminCommand::Goto)
 }
@@ -996,6 +1000,7 @@ impl super::GameState {
             AdminCommand::Unban(name) => self.unban_command(name, auth).await,
             AdminCommand::Summon(name) => self.summon_command(admin_id, name).await,
             AdminCommand::Goto(name) => self.goto_command(admin_id, name).await,
+            AdminCommand::Weather(args) => self.weather_command(admin_id, args),
             AdminCommand::Spawnmob {
                 monster_type,
                 count,

@@ -167,7 +167,7 @@ implementation, no drift.
 
 ## Server
 
-- `WeatherState { seed, bias, sectors_json, sectors_tag }` in `GameState`
+- `WeatherState { seed, bias, sectors_json, sectors_tag, rain_override }` in `GameState`
   next to `game_clock` (`server/src/game_state/weather.rs`). The seed is
   read from `weather-sectors.json` — it is the seed the sectors were placed
   with, so the server keeps no other record of the world seed; without the
@@ -177,18 +177,35 @@ implementation, no drift.
   broadcast with. `bias` multiplies every zone's
   `chance` (1.0 = baked schedule, 0.5 = half the cells, 0 = off); it comes
   from `--weather-bias` / `WEATHER_BIAS` at boot, so the amount of rain is a
-  deployment setting rather than a code change. A live `/weather` override
-  is a follow-up.
-- `ServerMessage::WeatherSync { seed, bias, sectors_tag }` on connection
-  accept and from `run_ticks("weather", 30 s)` (same scaffolding as the
+  deployment setting rather than a code change.
+- `ServerMessage::WeatherSync { seed, bias, sectors_tag, rain_override }` on connection
+  accept, on admin override changes, and from `run_ticks("weather", 30 s)` (same scaffolding as the
   time-sync tick). Seeds cross the wire as JS numbers; `place_sectors` masks
   them to 53 bits.
 - Climate grid served at `/api/terrain/climate/{rx}/{rz}`, revalidated like
   tree files. The sector list at `/api/terrain/weather-sectors?v=<tag>` is
   served from memory as immutable; the tag in the URL is the cache key.
 - `PROTOCOL_VERSION` 69 → 70; agent-client 0.50.0 lists `WeatherSync` as
-  noise so it never wakes the LLM.
+  noise so it never wakes the LLM. Version 78 adds `rain_override`.
 - Load at 5,000 CCU: one tiny broadcast per 30 s, zero per-player work.
+
+### Admin debugging
+
+| Command | Effect |
+| --- | --- |
+| `/weather rain [intensity]` | Force rain server-wide; intensity is 0–1, default 1. |
+| `/weather clear` | Force zero rain server-wide. |
+| `/weather auto` | Resume the current regional and seasonal weather. |
+
+These chat commands use the existing server admin gate and appear in admin
+`/help` and autocomplete. The override broadcasts immediately, persists through
+reconnects, and lasts until `/weather auto` or a server restart. It requires
+loaded weather data. Invalid arguments leave the current weather unchanged.
+
+The override changes sampled rain intensity and its cloud factor, so particles,
+ambience, shadows, and petals follow the same weather path. Existing indoor and
+dungeon suppression still applies. It leaves the seed, bias, sector list, and
+game clock intact; automatic weather continues to advance underneath it.
 
 ## Client
 

@@ -6,8 +6,7 @@ import {
 import type { LocalWeather } from '../stores/weatherStore'
 import type { CalendarDate } from './celestialSimulation'
 
-/** Game minutes since the calendar epoch at a fractional hour of `date`.
- *  The day index comes from wasm so it cannot drift from the server's. */
+/** Game minutes since the epoch, using the shared calendar. */
 export function gameMinutesAt(date: CalendarDate, gameHour: number): number {
   return (
     weather_day_start_minutes(date.year, date.month, date.day) + gameHour * 60
@@ -20,8 +19,11 @@ export function sampleLocalWeather(
   date: CalendarDate,
   gameHour: number,
   x: number,
-  z: number
+  z: number,
+  rainOverride: number | null = null
 ): LocalWeather {
-  const rain = weather_rain_at(seed, bias, gameMinutesAt(date, gameHour), x, z)
+  const rain =
+    rainOverride ??
+    weather_rain_at(seed, bias, gameMinutesAt(date, gameHour), x, z)
   return { rain, cloud: weather_cloud_factor(rain) }
 }

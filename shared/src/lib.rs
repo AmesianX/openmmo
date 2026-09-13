@@ -161,7 +161,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v75: targeted abilities and private True Aim mark updates.
 /// v76: distinct out-of-range ability rejection.
 /// v77: Double Slash cooldown snapshots on login.
-pub const PROTOCOL_VERSION: u32 = 77;
+/// v78: server-wide rain overrides in WeatherSync.
+pub const PROTOCOL_VERSION: u32 = 78;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -335,23 +336,28 @@ mod tests {
 
     #[test]
     fn roundtrip_weather_sync() {
-        let bytes = serialize_server_msg(&ServerMessage::WeatherSync {
-            seed: 42,
-            bias: 1.0,
-            sectors_tag: "0123456789abcdef".into(),
-        })
-        .unwrap();
-        match deserialize_server_msg(&bytes).unwrap() {
-            ServerMessage::WeatherSync {
-                seed,
-                bias,
-                sectors_tag,
-            } => {
-                assert_eq!(seed, 42);
-                assert_eq!(bias, 1.0);
-                assert_eq!(sectors_tag, "0123456789abcdef");
+        for rain_override in [None, Some(0.0), Some(0.4), Some(1.0)] {
+            let bytes = serialize_server_msg(&ServerMessage::WeatherSync {
+                seed: 42,
+                bias: 1.0,
+                sectors_tag: "0123456789abcdef".into(),
+                rain_override,
+            })
+            .unwrap();
+            match deserialize_server_msg(&bytes).unwrap() {
+                ServerMessage::WeatherSync {
+                    seed,
+                    bias,
+                    sectors_tag,
+                    rain_override: decoded_override,
+                } => {
+                    assert_eq!(seed, 42);
+                    assert_eq!(bias, 1.0);
+                    assert_eq!(sectors_tag, "0123456789abcdef");
+                    assert_eq!(decoded_override, rain_override);
+                }
+                other => panic!("Wrong variant: {other:?}"),
             }
-            other => panic!("Wrong variant: {other:?}"),
         }
     }
 

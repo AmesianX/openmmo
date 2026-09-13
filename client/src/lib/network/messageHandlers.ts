@@ -1027,6 +1027,7 @@ export function handleServerMessage(
         seed: data.seed,
         bias: data.bias,
         sectorsTag: data.sectors_tag,
+        rainOverride: data.rain_override ?? null,
       })
       break
     }

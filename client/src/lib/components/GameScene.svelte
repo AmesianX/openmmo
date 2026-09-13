@@ -951,8 +951,7 @@
     cameraDistance.set(camera.zoom)
   }
 
-  // Weather runs on true game time, not the debug-offset display hour, so
-  // it stays in step with the server.
+  // Use server game time, excluding the debug display offset.
   function sampleLocalWeatherNow(calDate: CalendarDate): LocalWeather {
     if (!$weather || !currentPlayer || $isUnderground) return NO_WEATHER
     return sampleLocalWeather(
@@ -961,7 +960,8 @@
       calDate,
       calendarSystem.getGameHour(),
       currentPlayer.position.x,
-      currentPlayer.position.z
+      currentPlayer.position.z,
+      $weather.rainOverride
     )
   }
 

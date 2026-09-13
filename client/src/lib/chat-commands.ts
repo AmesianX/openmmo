@@ -159,6 +159,10 @@ const COMMANDS: Record<string, Command> = {
     desc: 'Give yourself items: /give <item_id> [count] (default 1, max 10000)',
     admin: true,
   },
+  '/weather': {
+    desc: 'Set weather server-wide: /weather rain [0..1] (default 1), /weather clear, /weather auto',
+    admin: true,
+  },
   '/spawnmob': {
     desc: 'Spawn monsters beside you: /spawnmob <type> [count]',
     admin: true,
