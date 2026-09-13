@@ -35,6 +35,11 @@ export class RainPuddleTracker {
   private historyQueue: WetPoint[] = []
   private elapsed = 0
 
+  pause(seconds: number) {
+    this.elapsed += Math.max(0, seconds)
+    this.active.clear()
+  }
+
   update(seconds: number, sampleRain: RainSampler, restoreHistory = true) {
     const dt = Math.max(0, seconds)
     this.elapsed += dt

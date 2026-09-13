@@ -8,7 +8,7 @@
 use crate::debuff_defs::{debuff_def, DebuffDef};
 use futures_util::{stream, StreamExt};
 use onlinerpg_shared::debuff::ActiveDebuffState;
-use onlinerpg_shared::{PlayerId, ServerMessage};
+use onlinerpg_shared::{PlayerId, Position, ServerMessage};
 use rand::Rng;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -28,6 +28,8 @@ const WET_DEPTH_M: f32 = 0.4;
 /// this, so wading costs one terrain sample per player per refresh window
 /// instead of one per movement tick.
 const WET_REFRESH_BELOW: Duration = Duration::from_secs(300);
+const RAIN_SOAK_SECS: f32 = 10.0 * 60.0 / super::time::GAME_SECONDS_PER_REAL_SECOND as f32;
+const SOAKING_RAIN_MIN: f32 = 0.02;
 /// Movement ticks (200 ms) per water-check round: every mover is checked on
 /// one of them, so an unsoaked crowd samples terrain at ~1 Hz each.
 const WATER_CHECK_TICKS: u64 = 5;
@@ -195,14 +197,16 @@ impl super::GameState {
         let now = Instant::now();
         let (msgs, was_wet) = {
             let mut hunger = self.hunger.write().await;
-            match hunger.get_mut(player_id) {
-                Some(data) if !data.debuffs.is_empty() => {
-                    let was_wet = data.carries(WET_DEBUFF_ID, now);
-                    data.debuffs.clear();
-                    (data.status_msgs(now), was_wet)
-                }
-                _ => return,
+            let Some(data) = hunger.get_mut(player_id) else {
+                return;
+            };
+            data.rain_exposure_secs = 0.0;
+            if data.debuffs.is_empty() {
+                return;
             }
+            let was_wet = data.carries(WET_DEBUFF_ID, now);
+            data.debuffs.clear();
+            (data.status_msgs(now), was_wet)
         };
         for msg in msgs {
             self.send_direct_message(player_id, msg).await;
@@ -403,11 +407,64 @@ impl super::GameState {
         .await;
     }
 
-    /// A lit campfire dries you off: `elapsed` by the fire burns
-    /// `CAMPFIRE_DRY_SECS_PER_SEC`× that much off the soaking. Runs on the
-    /// 1 s hunger sweep just before `tick_debuffs`, which then drops the
-    /// timer it pulled to zero. Both lists are read-locked and bailed on
-    /// first: with no fire lit, or nobody wet, this costs two reads.
+    pub async fn tick_rain_soaking(&self, elapsed: Duration) {
+        let candidates: Vec<PlayerId> = self.hunger.read().await.keys().copied().collect();
+        if candidates.is_empty() {
+            return;
+        }
+        let (rain_override, cells) = self.current_rain_cells();
+        let now_ms = Self::now_ms();
+        let exposure: Vec<(PlayerId, f32)> = {
+            let players = self.players.read().await;
+            let shelters = self.rain_shelters.read().unwrap_or_else(|e| e.into_inner());
+            candidates
+                .iter()
+                .filter_map(|id| players.get(id))
+                .map(|player| {
+                    let Position { x, z, .. } = player.position;
+                    let mut rain = if player.floor_level == 0 && player.is_damageable(now_ms) {
+                        rain_override
+                            .unwrap_or_else(|| onlinerpg_shared::weather::rain_at(&cells, x, z))
+                    } else {
+                        0.0
+                    };
+                    if rain > SOAKING_RAIN_MIN
+                        && shelters.values().flatten().any(|s| s.contains(x, z))
+                    {
+                        rain = 0.0;
+                    }
+                    (player.id, rain)
+                })
+                .collect()
+        };
+        let now = Instant::now();
+        let mut soaked = Vec::new();
+        {
+            let mut hunger = self.hunger.write().await;
+            for (id, rain) in exposure {
+                let Some(data) = hunger.get_mut(&id) else {
+                    continue;
+                };
+                if rain <= SOAKING_RAIN_MIN {
+                    data.rain_exposure_secs = 0.0;
+                    continue;
+                }
+                data.rain_exposure_secs =
+                    (data.rain_exposure_secs + elapsed.as_secs_f32() * rain).min(RAIN_SOAK_SECS);
+                let remaining = data.remaining(WET_DEBUFF_ID, now);
+                if (data.rain_exposure_secs >= RAIN_SOAK_SECS || !remaining.is_zero())
+                    && remaining < WET_REFRESH_BELOW
+                {
+                    soaked.push(id);
+                }
+            }
+        }
+        for id in soaked {
+            self.inflict_debuff(&id, WET_DEBUFF_ID, None).await;
+        }
+    }
+
+    /// Accelerate drying by a lit campfire; `tick_debuffs` handles expiry.
     pub async fn tick_campfire_drying(&self, elapsed: Duration) {
         let now = Instant::now();
         let wet: Vec<PlayerId> = {

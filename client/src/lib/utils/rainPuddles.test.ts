@@ -141,4 +141,30 @@ describe('rain puddles', () => {
     expect(revisited).not.toBe(point)
     expect(revisited.wetness).toBe(0)
   })
+
+  it('restores current weather after puddles have been disabled', () => {
+    const tracker = new RainPuddleTracker()
+    const point = tracker.sample(0, 0, false)
+    tracker.update(PUDDLE_FILL_SECONDS, () => 1, false)
+    expect(point.wetness).toBe(1)
+    tracker.sample(0, 0, false)
+    tracker.pause(PUDDLE_DRY_SECONDS + 1)
+    const dry = vi.fn(() => 0)
+    tracker.update(0, dry)
+    expect(dry).not.toHaveBeenCalled()
+    for (let frame = 0; frame < 10; frame++) {
+      tracker.sample(0, 0, true)
+      tracker.update(0, dry)
+    }
+    expect(point.wetness).toBe(0)
+  })
+
+  it('preserves wetness across a brief pause without inventing override history', () => {
+    const tracker = new RainPuddleTracker()
+    const point = tracker.sample(0, 0, false)
+    tracker.update(PUDDLE_FILL_SECONDS, () => 1, false)
+    tracker.pause(3)
+    expect(tracker.sample(0, 0, false)).toBe(point)
+    expect(point.wetness).toBeCloseTo(1 - 3 / PUDDLE_DRY_SECONDS)
+  })
 })

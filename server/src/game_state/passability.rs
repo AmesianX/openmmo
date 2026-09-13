@@ -489,6 +489,7 @@ impl super::GameState {
     /// from the data's `is_open` flags.
     pub async fn passability_add_house(&self, house: &HouseData) {
         self.reset_open_doors_for_house(house).await;
+        self.sync_rain_shelters(house);
         let rp = pathfinding::build_runtime_passability(house);
         let mut cache = self.passability_write();
         cache.insert(house.id.clone(), rp);
@@ -498,6 +499,10 @@ impl super::GameState {
     pub async fn passability_remove_house(&self, house_id: &str) {
         self.clear_open_doors_for_house(house_id).await;
         self.passability_write().remove(house_id);
+        self.rain_shelters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(house_id);
     }
 
     /// Mirror of the client's `passability_set_furniture` for one region:

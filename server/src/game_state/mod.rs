@@ -453,6 +453,7 @@ pub struct GameState {
     /// Bridge decks by owning region, so wading checks can tell a crossing
     /// from a swim without trusting the client's Y.
     bridge_decks: Arc<std::sync::RwLock<passability::BridgeDeckIndex>>,
+    rain_shelters: Arc<std::sync::RwLock<weather::RainShelterIndex>>,
     /// The configured respawn beds, refreshed with their region's objects.
     respawn_beds: Arc<std::sync::RwLock<Vec<onlinerpg_shared::furniture::FurniturePlacement>>>,
     /// Chairs and tables by region, so a served plate lands on a table top.
@@ -751,6 +752,7 @@ impl GameState {
                 onlinerpg_shared::pathfinding::PassabilityCache::new(),
             )),
             bridge_decks: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            rain_shelters: Arc::new(std::sync::RwLock::new(HashMap::new())),
             respawn_beds: Arc::new(std::sync::RwLock::new(Vec::new())),
             dining: Arc::new(std::sync::RwLock::new(HashMap::new())),
             no_spawn_zones,

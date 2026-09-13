@@ -1,10 +1,13 @@
 //! Regional weather sync and admin overrides (doc/WEATHER_SYSTEM.md).
 
 use bytes::Bytes;
+use onlinerpg_shared::housing::HouseData;
 use onlinerpg_shared::messages::ServerMessage;
-use onlinerpg_shared::weather::{WeatherSectors, WEATHER_SECTORS_VERSION};
+use onlinerpg_shared::weather::{cells_at, Cell, Sector, WeatherSectors, WEATHER_SECTORS_VERSION};
 use onlinerpg_shared::PlayerId;
 use sha2::Digest;
+use std::collections::HashMap;
+use std::ops::RangeInclusive;
 use tracing::{info, warn};
 
 use super::{chat::parse_bounded, GameState};
@@ -19,20 +22,35 @@ pub struct WeatherState {
     pub sectors_json: Bytes,
     /// Content hash of `sectors_json`; clients re-fetch only when it changes.
     pub sectors_tag: String,
+    sectors: Vec<Sector>,
 }
 
 impl WeatherState {
-    pub fn new(seed: u64, bias: f32, sectors_json: Vec<u8>) -> Self {
+    pub fn new(data: WeatherSectors, bias: f32, sectors_json: Vec<u8>) -> Self {
         let sectors_tag = sectors_tag(&sectors_json);
         Self {
-            seed,
+            seed: data.seed,
             bias,
             rain_override: None,
             sectors_json: Bytes::from(sectors_json),
             sectors_tag,
+            sectors: data.sectors,
         }
     }
 }
+
+pub(super) struct RainShelter {
+    x: RangeInclusive<f32>,
+    z: RangeInclusive<f32>,
+}
+
+impl RainShelter {
+    pub(super) fn contains(&self, x: f32, z: f32) -> bool {
+        self.x.contains(&x) && self.z.contains(&z)
+    }
+}
+
+pub(super) type RainShelterIndex = HashMap<String, Vec<RainShelter>>;
 
 pub fn sectors_tag(json: &[u8]) -> String {
     let digest = sha2::Sha256::digest(json);
@@ -40,6 +58,41 @@ pub fn sectors_tag(json: &[u8]) -> String {
 }
 
 impl GameState {
+    pub(super) fn sync_rain_shelters(&self, house: &HouseData) {
+        let shelters = house
+            .rooms
+            .iter()
+            .filter(|room| room.floor_level == 0)
+            .map(|room| {
+                let x = house.origin.x + room.local_x as f32;
+                let z = house.origin.z + room.local_z as f32;
+                RainShelter {
+                    x: x..=x + room.size_x as f32,
+                    z: z..=z + room.size_z as f32,
+                }
+            })
+            .collect();
+        self.rain_shelters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(house.id.clone(), shelters);
+    }
+
+    pub(super) fn current_rain_cells(&self) -> (Option<f32>, Vec<Cell>) {
+        let weather = self.weather.read().expect("weather lock poisoned");
+        let Some(weather) = weather.as_ref() else {
+            return (Some(0.0), Vec::new());
+        };
+        if weather.rain_override.is_some() {
+            return (weather.rain_override, Vec::new());
+        }
+        let minutes = self.current_total_game_seconds() as f64 / 60.0;
+        (
+            None,
+            cells_at(&weather.sectors, weather.seed, weather.bias as f64, minutes),
+        )
+    }
+
     /// Weather stays off until a bake has produced `weather-sectors.json`.
     pub async fn load_weather(&self, bias: f32) {
         let json = match self.terrain_io.read_weather_sectors_bytes().await {
@@ -61,11 +114,11 @@ impl GameState {
                 )
             }
             Ok(sectors) => {
-                let state = WeatherState::new(sectors.seed, bias, json);
+                let state = WeatherState::new(sectors, bias, json);
                 info!(
                     "weather: {} rain sectors, seed {}, bias {bias}, tag {}",
-                    sectors.sectors.len(),
-                    sectors.seed,
+                    state.sectors.len(),
+                    state.seed,
                     state.sectors_tag
                 );
                 self.set_weather(state);

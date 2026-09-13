@@ -95,6 +95,10 @@
   const puddleTracker = new RainPuddleTracker()
   const puddleTarget = new THREE.Vector4()
 
+  export function pauseRainPuddles(seconds: number) {
+    puddleTracker.pause(seconds)
+  }
+
   export function updateRainPuddles(
     seconds: number,
     sampleRain: RainSampler,

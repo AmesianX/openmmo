@@ -549,6 +549,9 @@ impl SharedState {
     }
 
     pub(super) fn set_self_pose(&mut self, object_type: Option<String>, object_id: Option<u32>) {
+        if object_type.as_deref() != Some(MUSIC_EMOTE) {
+            self.recital = None;
+        }
         if let Some(p) = self.self_player.as_mut() {
             p.object_type = object_type;
             p.object_id = object_id;

@@ -1125,6 +1125,15 @@ impl SharedState {
                 self.pricing = Some(notice.clone());
                 return urgency;
             }
+            ServerMessage::WeatherSync {
+                seed,
+                bias,
+                sectors_tag,
+                rain_override,
+            } => {
+                self.weather.sync(*seed, *bias, sectors_tag, *rain_override);
+                return urgency;
+            }
             ServerMessage::GameTimeSync { datetime, is_night } => {
                 let dark = onlinerpg_shared::moon::is_serin_dark_day(
                     onlinerpg_shared::moon::game_day_index(datetime),
@@ -1142,6 +1151,7 @@ impl SharedState {
                 self.schedule_period = Some(onlinerpg_shared::schedule::schedule_period(datetime));
                 self.game_hour = Some(hour);
                 self.game_minute = Some(minute);
+                self.weather.update_time(datetime);
                 self.latest_time = Some(msg);
                 // Detect day/night transition or hour change → wake driver
                 if (prev_night.is_some() && prev_night != self.is_night)

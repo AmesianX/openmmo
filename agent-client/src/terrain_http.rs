@@ -9,6 +9,11 @@ use onlinerpg_terrain::defaults::{self, HEIGHTMAP_SIZE};
 use onlinerpg_terrain::height::HeightTiles;
 use tracing::{debug, warn};
 
+pub(crate) fn http_client() -> reqwest::Client {
+    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    HTTP.get_or_init(reqwest::Client::new).clone()
+}
+
 /// Disk-cached HTTP tile source, shared by the height and splat twins:
 /// size-checked cache reads, temp-file + rename writes, 404 surfaced as
 /// `None` so each kind can decide what a missing tile means.

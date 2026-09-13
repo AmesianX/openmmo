@@ -1,6 +1,7 @@
 <script lang="ts">
   import { T } from '@threlte/core'
   import * as THREE from 'three'
+  import { onDestroy, untrack } from 'svelte'
   import {
     createParticleInstancedMesh,
     PARTICLE_OPACITY_ATTR,
@@ -11,15 +12,23 @@
   interface Props {
     playerPosition?: THREE.Vector3 | null
     heightManager?: TerrainHeightManager | null
+    maxDrops?: number
+    enableSplashes?: boolean
   }
 
-  let { playerPosition = null, heightManager = null }: Props = $props()
+  const FULL_DROP_LIMIT = 1100
+  let {
+    playerPosition = null,
+    heightManager = null,
+    maxDrops = FULL_DROP_LIMIT,
+    enableSplashes = true,
+  }: Props = $props()
+  const dropLimit = untrack(() => maxDrops)
+  const splashLimit = untrack(() => (enableSplashes ? 350 : 0))
 
   // Cover the visible quarter-view area.
   const SPAWN_RADIUS = 36
-  const MAX_DROPS = 1100
-  const SPAWN_RATE_AT_FULL = 760
-  const MAX_SPLASHES = 350
+  const SPAWN_RATE_AT_FULL = (760 * dropLimit) / FULL_DROP_LIMIT
   const SPAWN_HEIGHT_MIN = 4
   const SPAWN_HEIGHT_MAX = 13
   const FALL_SPEED_MIN = 9
@@ -48,7 +57,7 @@
     age: number
   }
 
-  const drops: Drop[] = Array.from({ length: MAX_DROPS }, () => ({
+  const drops: Drop[] = Array.from({ length: dropLimit }, () => ({
     alive: false,
     x: 0,
     y: 0,
@@ -59,7 +68,7 @@
     baseOpacity: 0,
     scale: 1,
   }))
-  const splashes: Splash[] = Array.from({ length: MAX_SPLASHES }, () => ({
+  const splashes: Splash[] = Array.from({ length: splashLimit }, () => ({
     alive: false,
     x: 0,
     y: 0,
@@ -133,6 +142,21 @@
   let dropsAlive = 0
   let splashesAlive = 0
   let spawnAccumulator = 0
+  const textures: THREE.Texture[] = []
+
+  onDestroy(() => {
+    for (const mesh of [streakMesh, splashMesh]) {
+      if (!mesh) continue
+      mesh.removeFromParent()
+      mesh.dispose()
+      mesh.geometry.dispose()
+      const materials = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material]
+      for (const material of materials) material.dispose()
+    }
+    for (const texture of textures) texture.dispose()
+  })
 
   function createPooledMesh(
     tex: THREE.CanvasTexture,
@@ -140,6 +164,7 @@
     height: number,
     count: number
   ): THREE.InstancedMesh {
+    textures.push(tex)
     return createParticleInstancedMesh(
       createRainParticleMaterial(tex),
       width,
@@ -150,9 +175,16 @@
 
   function init() {
     if (streakMesh) return
-    streakMesh = createPooledMesh(createStreakTexture(), 0.03, 0.42, MAX_DROPS)
-    splashMesh = createPooledMesh(createSplashTexture(), 0.3, 0.3, MAX_SPLASHES)
-    splashMesh.renderOrder = 1
+    streakMesh = createPooledMesh(createStreakTexture(), 0.03, 0.42, dropLimit)
+    if (splashLimit > 0) {
+      splashMesh = createPooledMesh(
+        createSplashTexture(),
+        0.3,
+        0.3,
+        splashLimit
+      )
+      splashMesh.renderOrder = 1
+    }
     streakMesh.renderOrder = 2
   }
 
@@ -183,7 +215,7 @@
     const z = pz + Math.sin(angle) * dist
 
     const d = drops[dropCursor]
-    dropCursor = (dropCursor + 1) % MAX_DROPS
+    dropCursor = (dropCursor + 1) % dropLimit
     if (d.alive) return
 
     d.x = x
@@ -201,8 +233,9 @@
   }
 
   function spawnSplash(x: number, y: number, z: number) {
+    if (splashLimit === 0) return
     const s = splashes[splashCursor]
-    splashCursor = (splashCursor + 1) % MAX_SPLASHES
+    splashCursor = (splashCursor + 1) % splashLimit
     if (s.alive) return
     s.x = x
     s.y = y + 0.03
@@ -269,7 +302,14 @@
       streakMesh!.setMatrixAt(i, tmpMatrix)
     }
 
-    const splashOpacity = splashMesh!.geometry.getAttribute(
+    dropsAlive = aliveD
+    syncMesh(streakMesh!, streakOpacity, aliveD)
+    updateSplashes(dt)
+  }
+
+  function updateSplashes(dt: number) {
+    if (!splashMesh) return
+    const splashOpacity = splashMesh.geometry.getAttribute(
       PARTICLE_OPACITY_ATTR
     ) as THREE.InstancedBufferAttribute
     const splashArr = splashOpacity.array as Float32Array
@@ -281,7 +321,7 @@
       const t = s.age / SPLASH_LIFE
       if (t >= 1) {
         s.alive = false
-        splashMesh!.setMatrixAt(i, zeroMatrix)
+        splashMesh.setMatrixAt(i, zeroMatrix)
         splashArr[i] = 0
         continue
       }
@@ -291,13 +331,11 @@
       tmpPos.set(s.x, s.y, s.z)
       tmpScale.set(grow, grow, grow)
       tmpMatrix.compose(tmpPos, flatQuat, tmpScale)
-      splashMesh!.setMatrixAt(i, tmpMatrix)
+      splashMesh.setMatrixAt(i, tmpMatrix)
     }
 
-    dropsAlive = aliveD
     splashesAlive = aliveS
-    syncMesh(streakMesh!, streakOpacity, aliveD)
-    syncMesh(splashMesh!, splashOpacity, aliveS)
+    syncMesh(splashMesh, splashOpacity, aliveS)
   }
 
   /** An empty pool leaves the group so it costs no draw call. */

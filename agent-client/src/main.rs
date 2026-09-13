@@ -21,6 +21,7 @@ mod title_defs;
 mod transcript;
 mod update;
 mod watch;
+mod weather;
 mod ws;
 
 use std::sync::Arc;

@@ -37,13 +37,13 @@ pub enum ScheduleCondition {
     },
     /// After sunset on Serin's dark day (doc/PRICING.md).
     Meeting,
+    Rain,
 }
 
 /// A single schedule entry: go to a position at a specific time condition.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScheduleEntry {
-    /// When to activate: a daily period, meeting, exact time, time range, or
-    /// hourly recurrence.
+    /// Daily period, time, recurrence, meeting, or rain shelter.
     pub at: String,
     /// Target position [x, y, z] (final/rest position).
     pub pos: [f32; 3],
@@ -69,6 +69,8 @@ pub struct ScheduleEntry {
     /// The bard includes heroic tales in the set here (doc/HEROIC_TALES.md).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tales: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shelter_from_rain: bool,
     /// Optional patrol route: waypoints to visit before going to `pos`.
     #[serde(default)]
     pub waypoints: Vec<[f32; 3]>,
@@ -86,9 +88,7 @@ impl ScheduleEntry {
         self.label.as_deref().unwrap_or("schedule position")
     }
 
-    /// Parse the `at` field into a `ScheduleCondition`. Returns error for invalid formats.
-    /// Supports daily periods, exact times, time ranges, hourly recurrence,
-    /// and meetings.
+    /// Parse and validate the activation condition.
     pub fn parse_condition(&mut self) -> Result<(), String> {
         self.condition = Some(match self.at.as_str() {
             "day" => ScheduleCondition::Day,
@@ -96,6 +96,7 @@ impl ScheduleEntry {
             "night" => ScheduleCondition::Night,
             "breakfast" => ScheduleCondition::Breakfast,
             "meeting" => ScheduleCondition::Meeting,
+            "rain" => ScheduleCondition::Rain,
             time_str => {
                 if let Some((start, end)) = time_str.split_once('-') {
                     let (start_hour, start_minute) = parse_daily_time(start, time_str)?;
@@ -200,6 +201,7 @@ pub fn resolve_active_schedule(
             None => continue,
         };
         let matched = match condition {
+            ScheduleCondition::Rain => false,
             ScheduleCondition::Day => {
                 matches!(period, Some(SchedulePeriod::Day | SchedulePeriod::Dinner))
             }
@@ -295,6 +297,21 @@ mod tests {
         };
         e.parse_condition().unwrap();
         e
+    }
+
+    #[test]
+    fn rain_shelter_never_overrides_the_clock_alone() {
+        let schedule = [entry("4:30"), entry("12:00"), entry("19:00"), entry("rain")];
+        for (hour, expected) in [(2, 2), (5, 0), (13, 1), (20, 2)] {
+            assert_eq!(
+                resolve_active_schedule(&schedule, None, Some(hour), Some(0), Some(false)).0,
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            resolve_active_schedule(&[entry("rain")], None, Some(12), Some(0), Some(false)),
+            (None, None)
+        );
     }
 
     #[test]

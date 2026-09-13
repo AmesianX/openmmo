@@ -15,6 +15,7 @@ use tracing::{debug, error, info, warn};
 use super::walk;
 use crate::geom::PlanarDelta;
 use crate::state::SharedState;
+use crate::terrain_http::http_client;
 use onlinerpg_shared::schedule::{ScheduleCondition, ScheduleEntry};
 
 use onlinerpg_shared::schedule::resolve_active_schedule;
@@ -56,8 +57,20 @@ pub(super) async fn resolve_due_schedule(
     state: &Arc<Mutex<SharedState>>,
     schedule: &[ScheduleEntry],
 ) -> (Option<usize>, Option<u32>) {
-    let (period, game_hour, game_minute, dark_day) = { state.lock().await.time_context() };
-    resolve_active_schedule(schedule, period, game_hour, game_minute, dark_day)
+    let s = state.lock().await;
+    let (period, game_hour, game_minute, dark_day) = s.time_context();
+    let due = resolve_active_schedule(schedule, period, game_hour, game_minute, dark_day);
+    if let Some(entry) = due.0.map(|i| &schedule[i]).filter(|e| e.shelter_from_rain) {
+        if s.weather.rain_at(entry.pos) > 0.02 {
+            if let Some(i) = schedule
+                .iter()
+                .position(|e| e.condition == Some(ScheduleCondition::Rain))
+            {
+                return (Some(i), None);
+            }
+        }
+    }
+    due
 }
 
 /// Execute the move to a newly due schedule entry (from
@@ -112,7 +125,11 @@ pub(super) async fn stop_current_entry(
     label: &str,
 ) {
     let mut s = state.lock().await;
-    if current.is_some_and(|i| schedule[i].action.is_some()) {
+    if current.is_some_and(|i| schedule[i].action.is_some())
+        || s.self_player
+            .as_ref()
+            .is_some_and(|p| p.object_type.as_deref() == Some(crate::state::MUSIC_EMOTE))
+    {
         if let Err(e) = s.send_command(ClientMessage::StopInteraction).await {
             error!("[{label}] Failed to send StopInteraction: {e}");
         }
@@ -293,13 +310,6 @@ struct RegionObjects {
     placements: Vec<FurniturePlacement>,
 }
 
-/// One pooled client for the world-data fetches, so refetches reuse the
-/// connection instead of handshaking again.
-fn http_client() -> reqwest::Client {
-    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    HTTP.get_or_init(reqwest::Client::new).clone()
-}
-
 /// Insert the region (16×16 tiles) containing a world position into the set.
 fn insert_region(regions: &mut HashSet<(i32, i32)>, x: f32, z: f32) {
     regions.insert((
@@ -457,6 +467,110 @@ pub(super) async fn fetch_houses_around(
 mod tests {
     use super::*;
     use crate::state::tests::{test_player, test_state};
+
+    fn npc_schedule(json: &str) -> Vec<ScheduleEntry> {
+        #[derive(serde::Deserialize)]
+        struct File {
+            schedule: Vec<ScheduleEntry>,
+        }
+        let mut schedule = serde_json::from_str::<File>(json).unwrap().schedule;
+        assert!(onlinerpg_shared::schedule::parse_conditions(&mut schedule).is_empty());
+        schedule
+    }
+
+    #[tokio::test]
+    async fn rain_pauses_only_outdoor_work_and_clear_resumes_the_current_routine() {
+        use onlinerpg_shared::schedule::SchedulePeriod;
+        use onlinerpg_shared::ServerMessage;
+
+        let signe = npc_schedule(include_str!("../../data/npcs/signe/schedule.json"));
+        let wick = npc_schedule(include_str!("../../data/npcs/wick/schedule.json"));
+        let (s, _rx) = test_state();
+        let state = Arc::new(Mutex::new(s));
+        for (schedule, hour, minute, period, dark, wet, dry) in [
+            (&signe, 13, 0, SchedulePeriod::Day, false, 5, 2),
+            (&signe, 5, 0, SchedulePeriod::Day, false, 0, 0),
+            (&signe, 11, 30, SchedulePeriod::Day, false, 1, 1),
+            (&signe, 18, 30, SchedulePeriod::Dinner, false, 3, 3),
+            (&signe, 20, 0, SchedulePeriod::Night, false, 4, 4),
+            (&signe, 2, 0, SchedulePeriod::Night, false, 4, 4),
+            (&wick, 22, 0, SchedulePeriod::Night, false, 5, 2),
+            (&wick, 13, 0, SchedulePeriod::Day, false, 0, 0),
+            (&wick, 18, 30, SchedulePeriod::Dinner, false, 1, 1),
+            (&wick, 5, 30, SchedulePeriod::Breakfast, false, 3, 3),
+            (&wick, 22, 0, SchedulePeriod::Night, true, 4, 4),
+        ] {
+            {
+                let mut s = state.lock().await;
+                s.game_hour = Some(hour);
+                s.game_minute = Some(minute);
+                s.schedule_period = Some(period);
+                s.is_serin_dark_day = Some(dark);
+                s.push_event(ServerMessage::WeatherSync {
+                    seed: 42,
+                    bias: 1.0,
+                    sectors_tag: "test".into(),
+                    rain_override: Some(1.0),
+                });
+            }
+            assert_eq!(
+                resolve_due_schedule(&state, schedule).await,
+                (Some(wet), None)
+            );
+            state.lock().await.push_event(ServerMessage::WeatherSync {
+                seed: 42,
+                bias: 1.0,
+                sectors_tag: "test".into(),
+                rain_override: Some(0.0),
+            });
+            assert_eq!(
+                resolve_due_schedule(&state, schedule).await,
+                (Some(dry), None)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn shelter_stops_music_seats_the_bard_and_blocks_another_performance() {
+        use onlinerpg_shared::ServerMessage;
+
+        let schedule = npc_schedule(include_str!("../../data/npcs/signe/schedule.json"));
+        let shelter = &schedule[5];
+        let (mut s, mut rx) = test_state();
+        let me = test_player(shelter.pos[0], shelter.pos[2]);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: s.self_player_id.unwrap(),
+            object_type: Some(crate::state::MUSIC_EMOTE.into()),
+            object_id: None,
+        });
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: s.self_player_id.unwrap(),
+            track: "Twilight Fields".into(),
+            elapsed_secs: 0.0,
+        });
+        s.begin_recital(&["The rain is coming".into()]).unwrap();
+        let state = Arc::new(Mutex::new(s));
+        let active =
+            check_schedule_transition(&state, &schedule, (Some(2), None), (Some(5), None), "Signe")
+                .await;
+        assert_eq!(active, (Some(5), None));
+        assert!(matches!(rx.try_recv(), Ok(ClientMessage::StopInteraction)));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::InteractObject { object_type, object_id: 39 }) if object_type == "chair"
+        ));
+        let mut s = state.lock().await;
+        assert_eq!(s.own_chair(), Some(39));
+        assert!(s.refuses_play_command("/play_music"));
+        assert!(s.begin_recital(&["An encore".into()]).is_err());
+    }
 
     /// The pose is adopted when the InteractObject is sent, not on the
     /// server's echo — a stale LLM response handled in the same tick must

@@ -238,6 +238,14 @@ async fn announce_seat(
     if entry.action.as_deref() != Some(crate::state::SIT_OBJECT_TYPE) {
         return;
     }
+    if entry.condition == Some(onlinerpg_shared::schedule::ScheduleCondition::Rain) {
+        state.lock().await.push_ambient_event(
+            "[Schedule] You are resting inside the inn until the rain clears. Relax, listen to \
+             the rain, or chat quietly; keep your stall and instruments packed away."
+                .to_string(),
+        );
+        return;
+    }
     state
         .lock()
         .await
@@ -417,6 +425,7 @@ pub async fn llm_driver(
     }
 
     info!("[{label}] LLM driver: in game, ready.");
+    let shelters_from_rain = schedule.iter().any(|e| e.shelter_from_rain);
 
     // Operator announcements — what a web player reads once on the login
     // screen. Delivered as one-shot events for the same reason: the next
@@ -529,6 +538,9 @@ pub async fn llm_driver(
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
+        if shelters_from_rain {
+            crate::weather::refresh_sectors(&state, &api_base_url, &label).await;
+        }
         let due = resolve_due_schedule(&state, &schedule).await;
         active_schedule =
             check_schedule_transition(&state, &schedule, active_schedule, due, &label).await;
@@ -606,6 +618,9 @@ pub async fn llm_driver(
 
     loop {
         decline_lapsed_trade(&state, &label).await;
+        if shelters_from_rain {
+            crate::weather::refresh_sectors(&state, &api_base_url, &label).await;
+        }
 
         // Housing data was fetched around the start position; the initial
         // prefetch covers ±96m (the chunk and its neighbors). An exploring
@@ -1478,6 +1493,24 @@ mod tests {
 
     use super::*;
     use crate::state::tests::{test_player, test_state};
+
+    #[tokio::test]
+    async fn a_rain_seat_invites_rest_instead_of_ordering_a_meal() {
+        let (s, _rx) = test_state();
+        let state = Arc::new(Mutex::new(s));
+        let mut entry = ScheduleEntry {
+            at: "rain".into(),
+            action: Some("chair".into()),
+            ..Default::default()
+        };
+        entry.parse_condition().unwrap();
+        announce_seat(&state, &[entry], Some(0), false).await;
+        let events = state.lock().await.drain_agent_events();
+        assert!(events.iter().any(|e| e.contains("resting inside the inn")));
+        assert!(!events
+            .iter()
+            .any(|e| e.contains("menu") || e.contains("maid")));
+    }
 
     #[test]
     fn a_tale_stays_available_during_the_automatic_song_gap() {

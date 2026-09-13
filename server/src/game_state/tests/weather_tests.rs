@@ -12,7 +12,11 @@ async fn weather_is_silent_until_loaded_then_broadcasts_seed_bias_and_tag() {
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 
     let json = br#"{"version":1,"seed":42,"sectors":[]}"#.to_vec();
-    game_state.set_weather(WeatherState::new(42, 0.5, json.clone()));
+    game_state.set_weather(WeatherState::new(
+        serde_json::from_slice(&json).unwrap(),
+        0.5,
+        json.clone(),
+    ));
     game_state.broadcast_weather();
     let msg = rx.try_recv().expect("weather broadcast");
     match rmp_serde::from_slice::<ServerMessage>(&msg.bytes).expect("decode") {
@@ -81,7 +85,11 @@ async fn weather_commands_broadcast_overrides_and_preserve_the_automatic_schedul
     let mut direct = game_state.register_direct_channel(&admin_id).await;
     let mut broadcast = game_state.subscribe();
     let json = br#"{"version":1,"seed":42,"sectors":[]}"#.to_vec();
-    game_state.set_weather(WeatherState::new(42, 0.5, json.clone()));
+    game_state.set_weather(WeatherState::new(
+        serde_json::from_slice(&json).unwrap(),
+        0.5,
+        json.clone(),
+    ));
 
     for (command, expected) in [
         ("/weather rain", Some(1.0)),
@@ -122,7 +130,12 @@ async fn invalid_weather_commands_do_not_change_or_broadcast_weather() {
     let admin_id = pid("admin");
     game_state.add_player(make_player("admin", 0.0, 0.0)).await;
     let mut direct = game_state.register_direct_channel(&admin_id).await;
-    game_state.set_weather(WeatherState::new(42, 0.5, b"{}".to_vec()));
+    let json = br#"{"version":1,"seed":42,"sectors":[]}"#.to_vec();
+    game_state.set_weather(WeatherState::new(
+        serde_json::from_slice(&json).unwrap(),
+        0.5,
+        json,
+    ));
     game_state.weather_command(&admin_id, "rain 0.4").unwrap();
     let before = game_state.weather.read().unwrap().clone();
     let mut broadcast = game_state.subscribe();

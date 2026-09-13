@@ -60,6 +60,224 @@ async fn move_mult(game_state: &GameState, id: &PlayerId) -> f32 {
         .map_or(1.0, |(m, _)| *m)
 }
 
+mod rain {
+    use super::*;
+    use crate::game_state::weather::WeatherState;
+    use crate::housing::test_fixtures::{house_at, room_at};
+    use onlinerpg_shared::weather::{
+        cells_at, rain_at, Sector, WeatherSectors, WEATHER_SECTORS_VERSION,
+    };
+
+    fn set_rain(game: &GameState, intensity: f32) {
+        let json = br#"{"version":1,"seed":42,"sectors":[]}"#.to_vec();
+        let mut weather = WeatherState::new(serde_json::from_slice(&json).unwrap(), 1.0, json);
+        weather.rain_override = Some(intensity);
+        game.set_weather(weather);
+    }
+
+    async fn rain_for(game: &GameState, seconds: u64) {
+        for _ in 0..seconds {
+            advance(Duration::from_secs(1)).await;
+            game.tick_rain_soaking(Duration::from_secs(1)).await;
+            game.tick_campfire_drying(Duration::from_secs(1)).await;
+            game.tick_debuffs().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn standing_in_rain_soaks_after_ten_game_minutes_scaled_by_intensity() {
+        for (intensity, seconds) in [(1.0, 75), (0.5, 150)] {
+            let game = make_test_game_state("wet_rain_threshold");
+            let (id, mut rx) = make_wader(&game, "rain_walker").await;
+            set_rain(&game, intensity);
+            rain_for(&game, seconds - 1).await;
+            assert_eq!(wet_remaining(&game, &id).await, None);
+            assert!(drain(&mut rx).is_empty());
+
+            rain_for(&game, 1).await;
+            assert_eq!(
+                wet_remaining(&game, &id).await,
+                Some(Duration::from_secs(450))
+            );
+            assert!((move_mult(&game, &id).await - 0.83).abs() < 1e-6);
+            assert_eq!(game.armor_weight_mult(&id).await, 1.5);
+            assert!(broadcast_wet_flag(&game, &id).await);
+            assert!(drain(&mut rx)
+                .iter()
+                .any(|msg| matches!(msg, ServerMessage::DebuffUpdate { .. })));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shelter_resets_exposure_but_gaps_between_rooms_still_get_rain() {
+        let game = make_test_game_state("wet_rain_shelter");
+        let (id, _rx) = make_wader(&game, "sheltering").await;
+        set_rain(&game, 1.0);
+        rain_for(&game, 74).await;
+
+        let house = house_at(100.0, 49.0, vec![room_at(0, 0), room_at(0, 6)]);
+        game.passability_add_house(&house).await;
+        rain_for(&game, 75).await;
+        assert_eq!(wet_remaining(&game, &id).await, None);
+
+        game.players.write().await.get_mut(&id).unwrap().position.z = 54.0;
+        rain_for(&game, 74).await;
+        assert_eq!(wet_remaining(&game, &id).await, None);
+        rain_for(&game, 1).await;
+        assert!(wet_remaining(&game, &id).await.is_some());
+
+        game.players.write().await.get_mut(&id).unwrap().position.z = 50.0;
+        rain_for(&game, 1).await;
+        assert_eq!(
+            wet_remaining(&game, &id).await,
+            Some(Duration::from_secs(449))
+        );
+        rain_for(&game, 449).await;
+        assert_eq!(wet_remaining(&game, &id).await, None);
+        assert!(!broadcast_wet_flag(&game, &id).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn replacing_and_removing_a_house_updates_rain_shelter() {
+        let game = make_test_game_state("wet_rain_shelter_changes");
+        let (id, _rx) = make_wader(&game, "builder").await;
+        set_rain(&game, 1.0);
+        let mut house = house_at(100.0, 49.0, vec![room_at(0, 0)]);
+        game.passability_add_house(&house).await;
+        rain_for(&game, 75).await;
+        assert_eq!(wet_remaining(&game, &id).await, None);
+
+        house.origin.x = 200.0;
+        game.passability_add_house(&house).await;
+        rain_for(&game, 75).await;
+        assert!(wet_remaining(&game, &id).await.is_some());
+        game.clear_debuffs(&id).await;
+        game.players.write().await.get_mut(&id).unwrap().position.x = 200.0;
+        rain_for(&game, 75).await;
+        assert_eq!(wet_remaining(&game, &id).await, None);
+
+        game.passability_remove_house(&house.id).await;
+        rain_for(&game, 75).await;
+        assert!(wet_remaining(&game, &id).await.is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dry_weather_and_ineligible_players_reset_partial_exposure() {
+        let game = make_test_game_state("wet_rain_exemptions");
+        let (id, _rx) = make_wader(&game, "resting").await;
+        let mut npc = make_player("rain_npc", 100.0, 50.0);
+        npc.is_official_npc = true;
+        game.add_player(npc).await;
+
+        for reason in [
+            "clear",
+            "trace_rain",
+            "upper_floor",
+            "dungeon",
+            "dead",
+            "loading",
+            "death_cleanup",
+        ] {
+            set_rain(&game, 1.0);
+            rain_for(&game, 74).await;
+            match reason {
+                "clear" => set_rain(&game, 0.0),
+                "trace_rain" => set_rain(&game, 0.02),
+                "upper_floor" => game.players.write().await.get_mut(&id).unwrap().floor_level = 1,
+                "dungeon" => game.players.write().await.get_mut(&id).unwrap().floor_level = -1,
+                "dead" => game.players.write().await.get_mut(&id).unwrap().health = 0,
+                "loading" => game.players.write().await.get_mut(&id).unwrap().ready_at = u64::MAX,
+                "death_cleanup" => game.clear_debuffs(&id).await,
+                _ => unreachable!(),
+            }
+            if reason != "death_cleanup" {
+                rain_for(&game, 75).await;
+            }
+            assert_eq!(wet_remaining(&game, &id).await, None, "{reason}");
+            assert!(!broadcast_wet_flag(&game, &pid("rain_npc")).await);
+            *game.players.write().await.get_mut(&id).unwrap() = make_player("resting", 100.0, 50.0);
+            set_rain(&game, 1.0);
+            rain_for(&game, 1).await;
+            assert_eq!(wet_remaining(&game, &id).await, None, "{reason}");
+            game.clear_debuffs(&id).await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rain_refreshes_wet_without_spamming_updates_and_clear_weather_allows_drying() {
+        let game = make_test_game_state("wet_rain_refresh");
+        let (id, mut rx) = make_wader(&game, "soaked").await;
+        set_rain(&game, 1.0);
+        rain_for(&game, 75).await;
+        drain(&mut rx);
+        rain_for(&game, 150).await;
+        assert_eq!(
+            wet_remaining(&game, &id).await,
+            Some(Duration::from_secs(300))
+        );
+        assert!(drain(&mut rx).is_empty());
+        rain_for(&game, 1).await;
+        assert_eq!(
+            wet_remaining(&game, &id).await,
+            Some(Duration::from_secs(450))
+        );
+        assert!(matches!(
+            drain(&mut rx).as_slice(),
+            [ServerMessage::DebuffUpdate { .. }]
+        ));
+
+        set_rain(&game, 0.0);
+        rain_for(&game, 1).await;
+        assert_eq!(
+            wet_remaining(&game, &id).await,
+            Some(Duration::from_secs(449))
+        );
+        light_fire_at(&game, 100.0, 0).await;
+        rain_for(&game, 45).await;
+        assert_eq!(wet_remaining(&game, &id).await, None);
+        assert!(!broadcast_wet_flag(&game, &id).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn automatic_rain_only_soaks_players_in_the_active_region() {
+        let game = make_test_game_state("wet_rain_regional");
+        let (near, _near_rx) = make_wader(&game, "near_rain").await;
+        let (far, _far_rx) = make_wader(&game, "far_from_rain").await;
+        game.players.write().await.get_mut(&far).unwrap().position.z = 10_000.0;
+        let sectors = WeatherSectors {
+            version: WEATHER_SECTORS_VERSION,
+            seed: 42,
+            sectors: vec![Sector {
+                zone: 1,
+                spots: vec![[100.0, 50.0]],
+            }],
+        };
+        let minute = (0..1440)
+            .find(|minute| {
+                rain_at(
+                    &cells_at(&sectors.sectors, 42, 1.0, *minute as f64),
+                    100.0,
+                    50.0,
+                ) > 0.99
+            })
+            .expect("full rain during the first winter day");
+        game.debug_set_datetime(&GameState::total_game_seconds_to_datetime(minute * 60));
+        let json = serde_json::to_vec(&sectors).unwrap();
+        game.set_weather(WeatherState::new(sectors, 1.0, json));
+        rain_for(&game, 80).await;
+        assert!(wet_remaining(&game, &near).await.is_some());
+        assert_eq!(wet_remaining(&game, &far).await, None);
+
+        game.weather_command(&near, "clear").unwrap();
+        rain_for(&game, 450).await;
+        assert_eq!(wet_remaining(&game, &near).await, None);
+        game.weather_command(&near, "auto").unwrap();
+        rain_for(&game, 80).await;
+        assert!(wet_remaining(&game, &near).await.is_some());
+        assert_eq!(wet_remaining(&game, &far).await, None);
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_step_into_the_sea_soaks_and_slows() {
     let game_state = make_test_game_state("wet_sea_step");

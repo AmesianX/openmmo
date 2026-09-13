@@ -374,6 +374,7 @@ pub struct SharedState {
     /// Current game time: is_night flag from server
     pub is_night: Option<bool>,
     pub schedule_period: Option<onlinerpg_shared::schedule::SchedulePeriod>,
+    pub weather: crate::weather::Weather,
     /// Serin's dark day (the merchants' meeting night), from the game date.
     pub is_serin_dark_day: Option<bool>,
     /// LLM turns taken at the price meeting; None when not attending.
@@ -504,6 +505,7 @@ impl SharedState {
             world_cache,
             is_night: None,
             schedule_period: None,
+            weather: crate::weather::Weather::default(),
             is_serin_dark_day: None,
             meeting_turns: None,
             meeting_host: false,

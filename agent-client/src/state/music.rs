@@ -248,6 +248,9 @@ impl SharedState {
     /// follow every `RECITE_LINE_SECS`, cycling until our song ends. A new
     /// recital replaces one still running.
     pub fn begin_recital(&mut self, verses: &[String]) -> Result<(), String> {
+        if let Some(held) = self.held_pose() {
+            return Err(format!("you are resting on the {held}"));
+        }
         let lines: Vec<String> = verses
             .iter()
             .map(|v| v.trim())

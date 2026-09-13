@@ -20,6 +20,7 @@ use tokio::time::Instant;
 pub(crate) struct HungerData {
     pub satiation: u32,
     pub debuffs: Vec<super::debuff::ActiveDebuff>,
+    pub rain_exposure_secs: f32,
     /// Recent drinks as (when, units), pruned to the alcohol window.
     pub recent_drinks: Vec<(Instant, u32)>,
     movement_seconds: f32,
@@ -84,6 +85,7 @@ impl super::GameState {
             HungerData {
                 satiation,
                 debuffs: Vec::new(),
+                rain_exposure_secs: 0.0,
                 recent_drinks: Vec::new(),
                 movement_seconds: 0.0,
                 sprint_seconds: 0.0,

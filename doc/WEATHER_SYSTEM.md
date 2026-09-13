@@ -12,7 +12,7 @@ quarter-view look — not a gray realism filter. Because every cell is a pure
 function of time, a map forecast can be added later without touching the
 model; the world map is left as it is for now.
 
-Non-goals (v1): snow, wetness debuffs, weather-dependent
+Non-goals: snow, weather-dependent
 fishing, sky dome (quarter view — the sky is never on screen).
 
 ## Why stationary cells, not travelling clouds
@@ -161,13 +161,13 @@ ramp-up is what darkens the ground before rain.
 ### Where the function lives
 
 `shared/` crate, exported through `wasm_api` next to the message codec — the
-same home as `celestial.rs` and `moon.rs`. Server calls it natively (future
-gameplay hooks), client through wasm once per frame at the player. One
+same home as `celestial.rs` and `moon.rs`. Server calls it natively for rain
+exposure, client through wasm once per frame at the player. One
 implementation, no drift.
 
 ## Server
 
-- `WeatherState { seed, bias, sectors_json, sectors_tag, rain_override }` in `GameState`
+- `WeatherState { seed, bias, sectors, sectors_json, sectors_tag, rain_override }` in `GameState`
   next to `game_clock` (`server/src/game_state/weather.rs`). The seed is
   read from `weather-sectors.json` — it is the seed the sectors were placed
   with, so the server keeps no other record of the world seed; without the
@@ -187,7 +187,26 @@ implementation, no drift.
   served from memory as immutable; the tag in the URL is the cache key.
 - `PROTOCOL_VERSION` 69 → 70; agent-client 0.50.0 lists `WeatherSync` as
   noise so it never wakes the LLM. Version 78 adds `rain_override`.
-- Load at 5,000 CCU: one tiny broadcast per 30 s, zero per-player work.
+- One weather broadcast per 30 s. Rain exposure evaluates the active cells
+  once per second and shares them across player samples, using cached sectors
+  and room footprints without terrain IO.
+
+### Rain exposure
+
+Continuous outdoor rain applies the existing `wet` debuff after ten game
+minutes at full intensity (75 real seconds). Exposure scales with intensity;
+half-strength rain takes twice as long. The server's one-second hunger sweep
+includes stationary players and ignores graphics settings.
+
+Dry weather (intensity at or below 0.02), ground-floor rooms, upper floors,
+dungeons, death, and loading reset partial exposure. Room footprints are
+cached when houses load or change and removed on demolition, so gaps between
+rooms stay exposed. Official NPCs remain exempt from debuffs.
+
+Continued rain refreshes existing wetness to 450 seconds when less than 300
+seconds remain, including wetness acquired in water. Shelter stops exposure;
+the existing debuff then dries naturally or faster by a lit campfire.
+See [DEBUFF.md](DEBUFF.md) for movement and armor-weight effects.
 
 ### Admin debugging
 
@@ -231,7 +250,10 @@ day from the server's. Per-frame local sample drives:
    Streaks and ground splashes respond to scene lighting, including torch/fire
    color and distance attenuation. Their diffuse scattering ignores billboard
    orientation, keeping nearby rain visible with light behind the drops.
-   `enableRainParticles` preset flag (off on low and mobile). Off
+   High/medium use up to 1,100 streaks and 350 ground splashes. Low and mobile
+   share a 300-streak pool with about 27% of the full spawn rate. They allocate
+   no splash particles, mesh, or texture. Changing presets recreates the rain
+   pools and disposes their previous GPU resources. Rain stays off
    indoors/dungeons; petals stop spawning under rain.
    Rain also accumulates on the terrain as described below.
 3. **Audio** — a sparse droplet loop for light rain, crossfading into the
@@ -283,6 +305,13 @@ Once rain stops, puddles shrink from their edges, leaving damp ground that
 returns to its original appearance within 240 seconds. Rain restarting refills
 the remaining water.
 
+High graphics includes wet ground, puddles, and animated rain ripples.
+Medium keeps wet ground and puddle accumulation/drying, skipping ripple
+animation and lighting calculations. Low and mobile disable all three and
+pause puddle weather sampling. Preset changes apply through shader uniforms
+without recompiling terrain materials. Returning from low restores wetness
+from current weather history; high/medium switches keep accumulated water.
+
 Rain is sampled about once per second at shared 64 m tile corners. Wetness
 advances every frame and its displayed value eases over 0.35 seconds to avoid
 stepping edges. Weather queries, including the initial 330-second history
@@ -306,6 +335,23 @@ Ripple animation uses the continuous render clock. Calm puddles skip ripple math
 `__togglePuddles()` hides/shows just the puddle shader for comparison; wetness
 keeps advancing. `__profile()` reports puddle CPU time separately under
 `puddles`, alongside rain particles, rendering and other scene work.
+
+## NPC shelter
+
+Wick's night stall and Signe's daytime square performance have
+`shelter_from_rain: true` in their schedules. When rain intensity at that
+outdoor destination exceeds 0.02, the agent uses its `at: "rain"` entry:
+Wick rests in chair 42 and Signe in chair 39 on the inn's ground floor.
+They pack up their stall or tip hat and stop playing before moving. Their
+rain routine invites quiet conversation and listening to the rain.
+
+The agent consumes `WeatherSync`, caches the tagged weather-sector endpoint,
+and evaluates the shared weather model against `GameTimeSync`. Admin rain
+and clear overrides apply as well. Rain is sampled at the outdoor work spot,
+so entering the inn does not make the NPC immediately go back outside.
+When rain clears, the current time's routine resumes. Sleep, meals, the
+merchants' meeting, and Signe's indoor evening performance keep their usual
+times. Rain entries never activate from the clock alone.
 
 ## Test plan
 

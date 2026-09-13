@@ -23,7 +23,8 @@
       "pos": [-1472.0, 0.9, 4746.0],
       "rotation": -41.9,
       "floor_level": 0,
-      "label": "night stall on the Aldermark road"
+      "label": "night stall on the Aldermark road",
+      "shelter_from_rain": true
     },
     {
       "at": "breakfast",
@@ -40,6 +41,15 @@
       "rotation": -99.1,
       "floor_level": 0,
       "label": "the merchants' price meeting at Rica's shop"
+    },
+    {
+      "at": "rain",
+      "pos": [-1451.7, 1.3, 4750.3],
+      "rotation": 90.0,
+      "floor_level": 0,
+      "label": "resting and listening to the rain on the inn's ground floor",
+      "action": "chair",
+      "object_id": 42
     }
   ]
 }

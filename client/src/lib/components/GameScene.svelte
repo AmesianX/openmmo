@@ -788,7 +788,7 @@
         loopProfiler.record('rain', performance.now() - rainStart)
       }
 
-      {
+      if (graphicsPreset.enableRainPuddles) {
         const puddleStart = performance.now()
         const weatherNow = $weather
         const gameMinutes = gameMinutesAt(calDate, calendarSystem.getGameHour())
@@ -810,6 +810,8 @@
             weatherNow.rainOverride === null
           )
         loopProfiler.record('puddles', performance.now() - puddleStart)
+      } else {
+        terrainLayerRef?.pauseRainPuddles(realDeltaSeconds)
       }
 
       // Update river-rock spray particles + wake scroll
@@ -857,13 +859,22 @@
         waterCamDir = waterCamDirTmp.clone()
       }
       rainPuddleUniforms.enabled.value =
-        !$isUnderground && puddlesVisible ? 1 : 0
-      updateRainPuddleLighting(
-        rainPuddleUniforms,
-        currentTime / 1000,
-        waterSunDirTmp,
-        waterCamDirTmp
-      )
+        graphicsPreset.enableRainPuddles && !$isUnderground && puddlesVisible
+          ? 1
+          : 0
+      if (
+        rainPuddleUniforms.enabled.value &&
+        graphicsPreset.enablePuddleRipples
+      ) {
+        updateRainPuddleLighting(
+          rainPuddleUniforms,
+          currentTime / 1000,
+          waterSunDirTmp,
+          waterCamDirTmp
+        )
+      } else {
+        rainPuddleUniforms.rippleStrength.value = 0
+      }
 
       runRenderPasses({
         renderer,
@@ -1365,13 +1376,15 @@
   />
 {/if}
 
-{#if graphicsPreset.enableRainParticles}
+{#key `${graphicsPreset.rainParticleLimit}:${graphicsPreset.enableRainSplashes}`}
   <GameSceneRainLayer
     bind:this={rainLayerRef}
     playerPosition={currentPlayer?.position ?? null}
     heightManager={terrainHeightManager}
+    maxDrops={graphicsPreset.rainParticleLimit}
+    enableSplashes={graphicsPreset.enableRainSplashes}
   />
-{/if}
+{/key}
 
 {#if graphicsPreset.enableWaterLayer}
   <GameSceneWaterFieldLayer

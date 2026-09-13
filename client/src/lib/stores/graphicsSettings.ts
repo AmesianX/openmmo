@@ -32,7 +32,10 @@ export interface GraphicsPreset {
   treeInstanceLimit: number
   treeCastsShadow: boolean
   enableWindParticles: boolean
-  enableRainParticles: boolean
+  rainParticleLimit: number
+  enableRainSplashes: boolean
+  enableRainPuddles: boolean
+  enablePuddleRipples: boolean
   /** Footprints behind *other* soaked players. The local player's always
    *  draw; the fan-out is what costs, so only `high` takes it. */
   enableRemoteFootprints: boolean
@@ -84,7 +87,10 @@ const FULL_RENDER_SETTINGS = {
   | 'treeInstanceLimit'
   | 'treeCastsShadow'
   | 'enableWindParticles'
-  | 'enableRainParticles'
+  | 'rainParticleLimit'
+  | 'enableRainSplashes'
+  | 'enableRainPuddles'
+  | 'enablePuddleRipples'
   | 'enableRemoteFootprints'
   | 'worldMapImageCacheLimit'
 >
@@ -105,7 +111,10 @@ const PRESETS: Record<QualityLevel, GraphicsPreset> = {
     treeInstanceLimit: 1024,
     treeCastsShadow: true,
     enableWindParticles: true,
-    enableRainParticles: true,
+    rainParticleLimit: 1100,
+    enableRainSplashes: true,
+    enableRainPuddles: true,
+    enablePuddleRipples: true,
     enableRemoteFootprints: true,
     worldMapImageCacheLimit: 256,
   },
@@ -124,7 +133,10 @@ const PRESETS: Record<QualityLevel, GraphicsPreset> = {
     treeInstanceLimit: 768,
     treeCastsShadow: true,
     enableWindParticles: true,
-    enableRainParticles: true,
+    rainParticleLimit: 1100,
+    enableRainSplashes: true,
+    enableRainPuddles: true,
+    enablePuddleRipples: false,
     enableRemoteFootprints: false,
     worldMapImageCacheLimit: 256,
   },
@@ -143,7 +155,10 @@ const PRESETS: Record<QualityLevel, GraphicsPreset> = {
     treeInstanceLimit: 512,
     treeCastsShadow: false,
     enableWindParticles: false,
-    enableRainParticles: false,
+    rainParticleLimit: 300,
+    enableRainSplashes: false,
+    enableRainPuddles: false,
+    enablePuddleRipples: false,
     enableRemoteFootprints: false,
     worldMapImageCacheLimit: 128,
   },
@@ -221,7 +236,10 @@ function getMobileSafePreset(preset: GraphicsPreset): GraphicsPreset {
     treeInstanceLimit: 384,
     treeCastsShadow: false,
     enableWindParticles: false,
-    enableRainParticles: false,
+    rainParticleLimit: 300,
+    enableRainSplashes: false,
+    enableRainPuddles: false,
+    enablePuddleRipples: false,
     enableRemoteFootprints: false,
     enableHousingLayer: true,
     enableTorchEffects: true,

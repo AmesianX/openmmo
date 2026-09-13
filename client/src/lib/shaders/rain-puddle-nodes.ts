@@ -133,32 +133,39 @@ export function applyRainPuddles(
 
       If(mask.greaterThan(0.001), () => {
         const intensity = interpolate(rain)
-        const rippleSlope = vec2(0).toVar()
-        If(intensity.greaterThan(0.02), () => {
-          const seed = hash(floor(p.mul(1.3)))
-          const age = fract(shared.time.mul(0.72).add(seed))
-          const center = vec2(seed, fract(seed.mul(17.17)))
-            .mul(0.6)
-            .add(0.2)
-          const delta = fract(p.mul(1.3)).sub(center)
-          const radius = length(delta)
-          const ripple = sin(radius.mul(65).sub(age.mul(30)))
-            .mul(
-              float(1).sub(
-                smoothstep(0.04, 0.12, abs(radius.sub(age.mul(0.65))))
+        const rippleHighlight = float(0).toVar()
+        If(
+          intensity.greaterThan(0.02).and(shared.rippleStrength.greaterThan(0)),
+          () => {
+            const seed = hash(floor(p.mul(1.3)))
+            const age = fract(shared.time.mul(0.72).add(seed))
+            const center = vec2(seed, fract(seed.mul(17.17)))
+              .mul(0.6)
+              .add(0.2)
+            const delta = fract(p.mul(1.3)).sub(center)
+            const radius = length(delta)
+            const ripple = sin(radius.mul(65).sub(age.mul(30)))
+              .mul(
+                float(1).sub(
+                  smoothstep(0.04, 0.12, abs(radius.sub(age.mul(0.65))))
+                )
               )
+              .mul(float(1).sub(age))
+              .mul(smoothstep(0, 0.08, age))
+              .mul(intensity)
+            const rippleSlope = delta
+              .div(max(radius, 0.01))
+              .mul(ripple.mul(0.08))
+            rippleHighlight.assign(
+              smoothstep(
+                0.006,
+                0.026,
+                dot(rippleSlope, shared.rippleFacing)
+              ).mul(shared.rippleStrength)
             )
-            .mul(float(1).sub(age))
-            .mul(smoothstep(0, 0.08, age))
-            .mul(intensity)
-          rippleSlope.assign(delta.div(max(radius, 0.01)).mul(ripple.mul(0.08)))
-        })
+          }
+        )
         const water = result.rgb.mul(float(0.72).sub(puddleSurface.y.mul(0.08)))
-        const rippleHighlight = smoothstep(
-          0.006,
-          0.026,
-          dot(rippleSlope, shared.rippleFacing)
-        ).mul(shared.rippleStrength)
         const surface = water.add(vec3(0.65, 0.7, 0.75).mul(rippleHighlight))
         result.rgb.assign(mix(result.rgb, surface, mask))
       })

@@ -757,6 +757,12 @@ fn format_schedule_context(
     if let Some(ref action) = entry.action {
         line.push_str(&format!(" — using {action} (DO NOT move, you are resting)"));
     }
+    if entry.condition == Some(onlinerpg_shared::schedule::ScheduleCondition::Rain) {
+        line.push_str(
+            " Rain has paused your outdoor work. Rest quietly in the inn, chat or listen to \
+             the rain. Keep your stall and instruments packed away until your schedule resumes.",
+        );
+    }
     Some(line)
 }
 
