@@ -1,9 +1,12 @@
 <script lang="ts">
   import ItemLockButton from './ItemLockButton.svelte'
-  import GuardianWardEntry from './GuardianWardEntry.svelte'
-  import DaggerSkillEntry from './DaggerSkillEntry.svelte'
   import SkillIcon from './SkillIcon.svelte'
-  import { RADIANCE, TRUE_AIM } from '../data/abilities'
+  import {
+    DOUBLE_SLASH,
+    GUARDIAN_WARD,
+    RADIANCE,
+    TRUE_AIM,
+  } from '../data/abilities'
   import {
     inventoryStore,
     itemLockMode,
@@ -103,13 +106,7 @@
       : CLASS_LABELS[characterClass]
   )
 
-  const TABS: CharacterPanelTab[] = [
-    'stats',
-    'skills',
-    'abilities',
-    'status',
-    'titles',
-  ]
+  const TABS: CharacterPanelTab[] = ['stats', 'skills', 'status', 'titles']
 
   const draggedItem = $derived(
     $dragMeta && !('skill' in $dragMeta) ? $dragMeta : null
@@ -399,18 +396,14 @@
             {/each}
           </div>
         </div>
-        {#if $characterPanelTab === 'abilities'}
-          <div class="pane-abilities">
-            <div class="skill-grid" role="group" aria-label="Abilities">
-              <GuardianWardEntry />
-              <DaggerSkillEntry />
+        {#if $characterPanelTab === 'skills'}
+          <div class="pane-skills">
+            <div class="skill-grid" role="group" aria-label="Skills">
+              <SkillIcon {...GUARDIAN_WARD} quickslotSkill={GUARDIAN_WARD.id} />
+              <SkillIcon {...DOUBLE_SLASH} quickslotSkill={DOUBLE_SLASH.id} />
               <SkillIcon {...RADIANCE} quickslotSkill={RADIANCE.id} />
               <SkillIcon {...TRUE_AIM} quickslotSkill={TRUE_AIM.id} />
             </div>
-          </div>
-        {/if}
-        {#if $characterPanelTab === 'skills'}
-          <div class="pane-skills">
             {#if trainedSkills.length > 0}
               <div class="skills-list">
                 {#each trainedSkills as [skillId, progress] (skillId)}
@@ -434,8 +427,6 @@
                   </div>
                 {/each}
               </div>
-            {:else}
-              <div class="skills-empty">No skills trained yet</div>
             {/if}
           </div>
         {/if}
@@ -559,12 +550,17 @@
   }
 
   .pane-skills,
-  .pane-abilities,
   .pane-status,
   .pane-titles {
     position: absolute;
     inset: 0;
     overflow-y: auto;
+  }
+
+  .pane-skills {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .titles-list {

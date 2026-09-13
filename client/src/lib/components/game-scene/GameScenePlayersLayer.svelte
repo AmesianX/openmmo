@@ -2,7 +2,7 @@
   import { T } from '@threlte/core'
   import * as THREE from 'three'
   import { get } from 'svelte/store'
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity'
+  import { SvelteMap } from 'svelte/reactivity'
   import PlayerModel from '../PlayerModel.svelte'
   import GameSceneAbilitiesLayer from './GameSceneAbilitiesLayer.svelte'
   import GameSceneEnchantSuccessLayer from './GameSceneEnchantSuccessLayer.svelte'
@@ -268,13 +268,11 @@
 
   let unifiedTorchFlickerTime = 0
   const radianceStrengths = new SvelteMap<number, number>()
-  const radiancePlayerIds = new SvelteSet<number>()
 
   function updateRadianceStrength(
     player: LocalPlayer | RemotePlayer,
     dt: number
   ) {
-    radiancePlayerIds.add(player.id)
     const previous = radianceStrengths.get(player.id) ?? 0
     const next =
       player.health <= 0
@@ -522,12 +520,12 @@
 
   export function updateUnifiedTorchFlicker(deltaTime: number) {
     enchantLayer?.update()
-    radiancePlayerIds.clear()
     if (currentPlayer) updateRadianceStrength(currentPlayer, deltaTime)
     for (const player of otherPlayers.values())
       updateRadianceStrength(player, deltaTime)
     for (const id of radianceStrengths.keys())
-      if (!radiancePlayerIds.has(id)) radianceStrengths.delete(id)
+      if (id !== currentPlayer?.id && !otherPlayers.has(id))
+        radianceStrengths.delete(id)
     const torchSource = isUnderground
       ? wallTorchPositions
       : localHouseId != null

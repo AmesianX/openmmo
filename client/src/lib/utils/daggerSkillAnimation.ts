@@ -1,6 +1,22 @@
 import { AnimationClip, MathUtils, Quaternion } from 'three'
 import { DAGGER_SKILL } from '../data/daggerSkill'
 
+const combos = new WeakMap<
+  AnimationClip,
+  { outward: AnimationClip; clip: AnimationClip }
+>()
+
+export function getDaggerComboClip(
+  inward: AnimationClip,
+  outward: AnimationClip
+) {
+  const cached = combos.get(inward)
+  if (cached?.outward === outward) return cached.clip
+  const clip = createDaggerComboClip(inward, outward)
+  combos.set(inward, { outward, clip })
+  return clip
+}
+
 export function createDaggerComboClip(
   inward: AnimationClip,
   outward: AnimationClip

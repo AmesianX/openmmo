@@ -111,7 +111,7 @@ impl GameState {
 
     pub async fn use_ability(&self, player_id: &PlayerId, ability: AbilityId) {
         let result = match ability {
-            AbilityId::GuardianWard => self.try_guardian_ward(player_id, ability).await,
+            AbilityId::GuardianWard => self.try_guardian_ward(player_id).await,
             AbilityId::Radiance => self.try_radiance(player_id).await,
             AbilityId::BowMark | AbilityId::DaggerDoubleSlash => {
                 Err(AbilityRejectReason::Unavailable)
@@ -334,7 +334,6 @@ impl GameState {
     async fn try_guardian_ward(
         &self,
         player_id: &PlayerId,
-        ability: AbilityId,
     ) -> Result<(onlinerpg_shared::Position, i8, Vec<PlayerId>), AbilityRejectReason> {
         let players = self.players.read().await;
         let caster = players
@@ -378,12 +377,12 @@ impl GameState {
             .map(|p| p.id)
             .collect();
         let mut state = self.abilities.write().await;
-        if state.cooldown_ms(character, ability) > 0 {
+        if state.cooldown_ms(character, AbilityId::GuardianWard) > 0 {
             return Err(AbilityRejectReason::Cooldown);
         }
         let now = Instant::now();
         state.cooldowns.insert(
-            (character, ability),
+            (character, AbilityId::GuardianWard),
             now + Duration::from_millis(GUARDIAN_WARD_COOLDOWN_MS),
         );
         for target in &targets {

@@ -4,10 +4,28 @@ import {
   QuaternionKeyframeTrack,
   VectorKeyframeTrack,
 } from 'three'
-import { createDaggerComboClip } from './daggerSkillAnimation'
+import {
+  createDaggerComboClip,
+  getDaggerComboClip,
+} from './daggerSkillAnimation'
 import { DAGGER_SKILL } from '../data/daggerSkill'
 
 describe('Double Slash animation', () => {
+  it('shares prepared combos without mixing different source clips', () => {
+    const inward = new AnimationClip('dagger_inward', 2, [
+      new VectorKeyframeTrack('Hips.position', [0, 2], [0, 1, 0, 0, 1, 0]),
+    ])
+    const outward = inward.clone()
+    const combo = getDaggerComboClip(inward, outward)
+    expect(getDaggerComboClip(inward, outward)).toBe(combo)
+    expect(combo.tracks).toEqual(createDaggerComboClip(inward, outward).tracks)
+    expect(getDaggerComboClip(inward.clone(), outward)).not.toBe(combo)
+    const otherOutward = outward.clone()
+    otherOutward.tracks[0].values.fill(2)
+    const otherCombo = getDaggerComboClip(inward, otherOutward)
+    expect(otherCombo.tracks[0].values).not.toEqual(combo.tracks[0].values)
+  })
+
   it('preserves the source clips and returns to the ready pose with normalized rotations', () => {
     const first = new AnimationClip('dagger_inward', 2, [
       new VectorKeyframeTrack(

@@ -1,10 +1,7 @@
 import * as THREE from 'three'
 
 const clamp = (value: number) => THREE.MathUtils.clamp(value, 0, 1)
-const smooth = (value: number) => {
-  const t = clamp(value)
-  return t * t * (3 - 2 * t)
-}
+const smooth = (value: number) => THREE.MathUtils.smoothstep(value, 0, 1)
 const shieldPop = (age: number) => {
   if (age < 0.04)
     return THREE.MathUtils.lerp(0.3, 1.46, 1 - (1 - clamp(age / 0.04)) ** 3)

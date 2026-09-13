@@ -51,6 +51,7 @@ export function playDaggerSkill(playerId: number, now = Date.now()) {
 }
 
 export function clearDaggerCast(playerId: number) {
+  if (!get(daggerSkillCasts).has(playerId)) return
   daggerSkillCasts.update((casts) => {
     const next = new Map(casts)
     next.delete(playerId)

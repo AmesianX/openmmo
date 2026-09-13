@@ -5,7 +5,6 @@
     getAbility,
     abilityEquipmentAllowed,
   } from '../data/abilities'
-  import { DAGGER_SKILL } from '../data/daggerSkill'
   import { combatController } from '../managers/combatController'
   import { monsterManager } from '../managers/monsterManager'
   import {
@@ -42,16 +41,10 @@
   import { instrumentPanelVisible } from '../stores/instrumentStore'
 
   interface Props {
-    /** Active character id — used to load that character's saved quickslots. */
     characterId: number | null
   }
 
   let { characterId }: Props = $props()
-
-  const daggerEquipped = $derived(
-    getItemDef($inventoryStore.equipped.main_hand?.item_def_id ?? '')
-      ?.weaponType === DAGGER_SKILL.weaponType
-  )
 
   $effect(() => {
     if (characterId != null) loadQuickslots(characterId)
@@ -92,22 +85,15 @@
         $gameStore.currentPlayer.mounted
       )
         return
-      if (entry.skill.id === DOUBLE_SLASH.id) {
-        if (!daggerEquipped) {
-          addChatMessage({
-            text: abilityRequirementsNotMet(entry.skill.name),
-            sender: 'system',
-          })
-          return
-        }
-        queueDaggerSkill()
-        return
-      }
       if (!abilityEquipmentAllowed(entry.skill.id, $inventoryStore.equipped)) {
         addChatMessage({
           text: abilityRequirementsNotMet(entry.skill.name),
           sender: 'system',
         })
+        return
+      }
+      if (entry.skill.id === DOUBLE_SLASH.id) {
+        queueDaggerSkill()
         return
       }
       const needsTarget =
@@ -205,12 +191,10 @@
             : ($abilityPending[entry.skill.id] ?? 0) > $abilityClock}
         <img
           class="item-icon skill-icon"
-          class:depleted={!(entry.skill.id === DOUBLE_SLASH.id
-            ? daggerEquipped
-            : abilityEquipmentAllowed(
-                entry.skill.id,
-                $inventoryStore.equipped
-              )) || remaining > 0}
+          class:depleted={!abilityEquipmentAllowed(
+            entry.skill.id,
+            $inventoryStore.equipped
+          ) || remaining > 0}
           src={entry.skill.icon}
           alt={entry.skill.name}
           draggable="false"
@@ -264,15 +248,12 @@
     image-rendering: auto;
   }
   .quickslot-bar {
-    /* Wide-screen single-row slot size (~70% of the original 56px). The
-       wrap/phone media queries below shrink it for narrow viewports. */
+    /* Media queries shrink slots on narrow screens. */
     --quickslot-size: 40px;
     --quickslot-gap: 4px;
     display: flex;
     flex-direction: row;
     gap: var(--quickslot-gap);
-    /* No padding or border: the bar's box is exactly the slots, so its bottom
-       edge lines up with the chat panel and menu buttons. */
     border-radius: 10px;
     font-family: 'Courier New', monospace;
     pointer-events: auto;
@@ -314,8 +295,7 @@
   }
 
   .item-icon {
-    /* Slightly inset and centred so edge-to-edge icons (sword, spear) stay
-       inside the slot's border instead of spilling over it. */
+    /* Keep icons inside the slot border. */
     position: absolute;
     inset: 0;
     margin: auto;

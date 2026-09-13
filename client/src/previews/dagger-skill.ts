@@ -32,7 +32,7 @@ async function main() {
   const loader = new GLTFLoader()
   const [character, pack, dagger] = await Promise.all([
     loader.loadAsync('/models/characters/rogue.glb'),
-    loader.loadAsync(DAGGER_SKILL.pack),
+    loader.loadAsync(`/models/${DAGGER_SKILL.pack}`),
     loader.loadAsync('/models/weapons/dagger.glb'),
   ])
   const clips = await groundRetargetedClips(

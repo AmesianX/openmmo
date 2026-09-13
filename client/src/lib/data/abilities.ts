@@ -81,12 +81,13 @@ export function getAbility(id: string) {
 }
 
 export function abilityEquipmentAllowed(
-  id: AbilityId,
+  id: AbilityId | typeof DOUBLE_SLASH.id,
   equipped: PlayerInventory['equipped']
 ) {
-  if (id === TRUE_AIM.id)
+  if (id === TRUE_AIM.id || id === DOUBLE_SLASH.id)
     return (
-      getItemDef(equipped.main_hand?.item_def_id ?? '')?.weaponType === 'bow'
+      getItemDef(equipped.main_hand?.item_def_id ?? '')?.weaponType ===
+      (id === DOUBLE_SLASH.id ? DAGGER_SKILL.weaponType : 'bow')
     )
   return id === RADIANCE.id || guardianWardEquipment(equipped)
 }

@@ -4,7 +4,7 @@ export const DAGGER_SKILL = {
   clip: 'dagger_double_slash',
   icon: '/icons/skills/dagger-double-slash-v2.png',
   weaponType: 'dagger',
-  pack: '/models/animations/dagger_preview.glb',
+  pack: 'animations/dagger_preview.glb',
   duration: timing.dagger_skill_duration.delayMs / 1000,
   hits: [
     timing.dagger_skill_first_hit.delayMs / 1000,

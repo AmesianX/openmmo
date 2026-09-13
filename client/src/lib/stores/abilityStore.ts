@@ -42,22 +42,17 @@ export function updateBowMark(
 export const abilityClock = derived(
   [abilityCooldowns, activeBuffs, abilityPending],
   (states, set) => {
-    set(Date.now())
-    if (
-      !states.some((state) =>
-        Object.values(state).some((until) => until > Date.now())
-      )
+    const until = Math.max(
+      0,
+      ...states.flatMap((state) => Object.values(state))
     )
-      return
+    const now = Date.now()
+    set(now)
+    if (until <= now) return
     const timer = setInterval(() => {
       const now = Date.now()
       set(now)
-      if (
-        !states.some((state) =>
-          Object.values(state).some((until) => until > now)
-        )
-      )
-        clearInterval(timer)
+      if (until <= now) clearInterval(timer)
     }, 100)
     return () => clearInterval(timer)
   },

@@ -7,6 +7,7 @@ import {
 } from '../data/abilities'
 import {
   abilityCooldowns,
+  abilityClock,
   applyAbilityCooldowns,
   abilityPending,
   activeBuffs,
@@ -79,6 +80,42 @@ it('keeps a queued or pending Double Slash when another ability sends a snapshot
   expect(queueDaggerSkill(300)).toBe(false)
   acknowledgeDaggerSkill(8_900, 350)
   expect(get(daggerSkillState).pending).toBe(false)
+})
+
+it('ticks through the longest cooldown, buff or pending deadline and stops when cleared', () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(1_000)
+  abilityCooldowns.set({ guardian_ward: 1_300 })
+  activeBuffs.set({ radiance: 1_200 })
+  abilityPending.set({ bow_mark: 1_400 })
+  const unsubscribe = abilityClock.subscribe(() => {})
+  vi.advanceTimersByTime(300)
+  expect(get(abilityClock)).toBe(1_300)
+  expect(vi.getTimerCount()).toBe(1)
+  vi.advanceTimersByTime(100)
+  expect(get(abilityClock)).toBe(1_400)
+  expect(vi.getTimerCount()).toBe(0)
+  abilityCooldowns.set({ guardian_ward: 1_600 })
+  expect(vi.getTimerCount()).toBe(1)
+  resetAbilities()
+  expect(vi.getTimerCount()).toBe(0)
+  unsubscribe()
+})
+
+it('requires a dagger for Double Slash through the shared equipment check', () => {
+  expect(abilityEquipmentAllowed('dagger_double_slash', {})).toBe(false)
+  expect(
+    abilityEquipmentAllowed('dagger_double_slash', {
+      main_hand: item('dagger'),
+    })
+  ).toBe(true)
+  for (const weapon of ['bow', 'iron_sword', 'morningstar', 'torch']) {
+    expect(
+      abilityEquipmentAllowed('dagger_double_slash', {
+        main_hand: item(weapon),
+      })
+    ).toBe(false)
+  }
 })
 
 it('requires a Bow for True Aim and keeps its private mark separate from buff timers', () => {

@@ -34,6 +34,11 @@
   const markAnchor = new Vector3()
   markEffect.setColor('#ed9984')
   let markPrepared = false
+  const markedModel = $derived.by(() => {
+    const id = $bowMark?.monsterId
+    if (!id) return undefined
+    return monsterModels[[...monsters.keys()].indexOf(id)]
+  })
 
   onMount(() => {
     let disposed = false
@@ -65,8 +70,7 @@
     if (Date.now() >= mark.until + MARK_FADE * 1000) return
     const target = monsters.get(mark.monsterId)
     if (!target || target.state === 'dead' || !isOnViewerFloor(target)) return
-    const index = [...monsters.keys()].indexOf(mark.monsterId)
-    if (!monsterModels[index]?.getMarkAnchor(markAnchor)) return
+    if (!markedModel?.getMarkAnchor(markAnchor)) return
     markEffect.update(
       (Date.now() - mark.startedAt) / 1000,
       markAnchor,

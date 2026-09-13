@@ -90,7 +90,6 @@
     getGltfAnimations,
     retargetOrderedCharacterAnimationsForModel,
     retargetAnimationsForCharacterModel,
-    groundRetargetedClips,
     selectOrderedCharacterAnimations,
   } from '../utils/characterAnimationUtils'
   import {
@@ -109,7 +108,7 @@
     getWeaponModelPath,
   } from '../utils/modelPaths'
   import { loadGLB } from '../utils/gltfCache'
-  import { createDaggerComboClip } from '../utils/daggerSkillAnimation'
+  import { getDaggerComboClip } from '../utils/daggerSkillAnimation'
   import { DaggerBladeTrail } from '../effects/dagger-blade-trail'
   import { DAGGER_SKILL } from '../data/daggerSkill'
   import { daggerSkillCasts } from '../stores/daggerSkillStore'
@@ -561,20 +560,15 @@
     )
       return
     let cancelled = false
-    void loadGLB(DAGGER_SKILL.pack)
-      .then(async (pack) => {
-        const clips = await groundRetargetedClips(
-          root,
-          await retargetAnimationsForCharacterModel(
-            root,
-            pack.scene,
-            pack.animations
-          )
-        )
-        const inward = clips.find((clip) => clip.name === 'dagger_inward')
-        const outward = clips.find((clip) => clip.name === 'dagger_outward')
+    void loadWeaponAnimations(modelPath, root, {
+      id: DAGGER_SKILL.weaponType,
+      pack: DAGGER_SKILL.pack,
+    })
+      .then((clips) => {
+        const inward = clips.get('dagger_inward')
+        const outward = clips.get('dagger_outward')
         if (cancelled || !inward || !outward) return
-        daggerClip = createDaggerComboClip(inward, outward)
+        daggerClip = getDaggerComboClip(inward, outward)
         daggerTrail ??= new DaggerBladeTrail()
         root.add(daggerTrail.group)
         lastAnimKey = undefined
