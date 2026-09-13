@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js'
-import { computeSunLightSnapshot } from '../../utils/celestialSimulation'
+import {
+  computeSunLightSnapshot,
+  SUN_LIGHT_DISTANCE,
+  SUN_MAX_INTENSITY,
+} from '../../utils/celestialSimulation'
 import { setupCsmShadow } from './renderer-quality'
 import {
   createSceneLightingController,
@@ -39,6 +43,67 @@ function initializeCascades(light: THREE.DirectionalLight) {
   expect(csm.lights).toHaveLength(2)
   return csm
 }
+
+describe('lightning', () => {
+  it.each([0, 6, 12, 18])(
+    'flashes at maximum sunlight and restores the weather lighting at hour %s',
+    (hour) => {
+      const { controller, light, params } = createLighting()
+      params.sunLightSnapshot = computeSunLightSnapshot(
+        hour,
+        params.localCalendarDate
+      )
+      params.cloudFactor = 1
+      params.rainIntensity = 1
+      params.currentPlayerPosition = new THREE.Vector3(20, 8, -30)
+      params.lightningDirection = new THREE.Vector3(-1, 1, 1).normalize()
+      controller.update(params)
+      const intensity = light.intensity
+      const color = light.color.clone()
+      const position = light.position.clone()
+      const castsShadow = light.castShadow
+      const ambientIntensity = params.ambientLight!.intensity
+      const environmentIntensity = params.scene.environmentIntensity
+
+      controller.update({ ...params, lightningStrength: 1 })
+      expect(light.intensity).toBe(SUN_MAX_INTENSITY)
+      expect(light.intensity).toBeGreaterThan(intensity)
+      expect(light.color.getHex()).toBe(0xffffff)
+      expect(light.position.y).toBeGreaterThan(light.target.position.y)
+      const flashDirection = light.position.clone().sub(light.target.position)
+      expect(flashDirection.length()).toBeCloseTo(SUN_LIGHT_DISTANCE)
+      expect(
+        flashDirection.normalize().distanceTo(params.lightningDirection)
+      ).toBeLessThan(0.000001)
+      expect(light.castShadow).toBe(castsShadow)
+      expect(params.ambientLight!.intensity).toBe(ambientIntensity)
+      expect(params.scene.environmentIntensity).toBe(environmentIntensity)
+
+      controller.update({ ...params, lightningStrength: 0.35 })
+      expect(light.intensity).toBeGreaterThan(intensity)
+      expect(light.intensity).toBeLessThan(SUN_MAX_INTENSITY)
+      const fadingDistance = light.position.distanceTo(position)
+      controller.update({ ...params, lightningStrength: 0.01 })
+      if (intensity > 0) {
+        expect(light.position.distanceTo(position)).toBeLessThan(fadingDistance)
+      } else {
+        expect(light.position.distanceTo(position)).toBeCloseTo(fadingDistance)
+      }
+
+      controller.update(params)
+      expect(light.intensity).toBe(intensity)
+      expect(light.color.equals(color)).toBe(true)
+      expect(light.position.equals(position)).toBe(true)
+    }
+  )
+
+  it('never lights the dungeon during a flash', () => {
+    const { controller, light, params } = createLighting()
+    controller.update({ ...params, lightningStrength: 1, underground: true })
+    expect(light.intensity).toBe(0)
+    expect(light.castShadow).toBe(false)
+  })
+})
 
 describe('rain shadows', () => {
   it('fades every cascade in light rain and restores clear-weather shadows', () => {

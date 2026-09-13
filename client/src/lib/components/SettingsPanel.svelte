@@ -11,6 +11,7 @@
   import VolumeControl from './VolumeControl.svelte'
   import { minimapEnabled } from '../stores/minimapStore'
   import { alwaysRun } from '../stores/movementSettings'
+  import { lightningEnabled } from '../stores/effectSettings'
   import ToggleSwitch from './ToggleSwitch.svelte'
   import { friendOnlineNoticeEnabled } from '../stores/friendStore'
   import { mountOverlay } from '../stores/overlayStack'
@@ -59,6 +60,11 @@
       $alwaysRun ? 'Hold Shift to walk' : 'Hold Shift to run'
     )}
     {@render toggleRow('Friend Online Notice', friendOnlineNoticeEnabled)}
+    {@render toggleRow(
+      'Lightning Flashes',
+      lightningEnabled,
+      'Bright lighting flashes during storms'
+    )}
 
     <div class="setting-row">
       <span class="setting-label">Graphics Quality</span>

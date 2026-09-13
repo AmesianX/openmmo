@@ -1,3 +1,5 @@
+import { get } from 'svelte/store'
+import { lightningEnabled } from '../stores/effectSettings'
 import { getSfxMultiplier } from './sfxManager'
 
 const DROPS_URL = '/sounds/rain-drops-loop.ogg'
@@ -8,8 +10,34 @@ const HEAVY_RAIN_START = 0.45
 const INDOOR_FACTOR = 0.35
 const SMOOTH_RATE = 1.2
 const THUNDER_MIN_INTENSITY = 0.35
-const THUNDER_FIRST_DELAY = [8, 30]
-const THUNDER_INTERVAL = [25, 70]
+const LIGHTNING_FIRST_DELAY = [16, 60]
+const LIGHTNING_INTERVAL = [50, 140]
+const THUNDER_DELAY = [2, 5]
+const LIGHTNING_HOLD_SECONDS = 0.05
+const LIGHTNING_FADE_SECONDS = 0.45
+
+let lightningStrength = 0
+let lightningAge = 0
+const lightningDirection = { x: 0, y: 1, z: 0 }
+
+lightningEnabled.subscribe((enabled) => {
+  if (!enabled) lightningStrength = 0
+})
+
+export function getLightningStrength(): number {
+  const fade = Math.max(
+    0,
+    Math.min(
+      1,
+      (lightningAge - LIGHTNING_HOLD_SECONDS) / LIGHTNING_FADE_SECONDS
+    )
+  )
+  return lightningStrength * (1 - fade) ** 2
+}
+
+export function getLightningDirection(): Readonly<typeof lightningDirection> {
+  return lightningDirection
+}
 
 let audioCtx: AudioContext | null = null
 let dropsGain: GainNode | null = null
@@ -17,6 +45,7 @@ let rainGain: GainNode | null = null
 let thunderBuffer: AudioBuffer | null = null
 let current = 0
 let currentDrops = 0
+let lightningIn: number | null = null
 let thunderIn: number | null = null
 let resuming = false
 
@@ -91,6 +120,7 @@ export function updateRainAmbience(
   indoor: boolean,
   dtSec: number
 ) {
+  lightningAge += dtSec
   const rain = Math.max(0, Math.min(1, intensity))
   const target = rain * (indoor ? INDOOR_FACTOR : 1)
   if (!audioCtx) {
@@ -112,30 +142,54 @@ export function updateRainAmbience(
   dropsGain.gain.value = currentDrops * volume
   rainGain.gain.value = current * volume
 
-  if (intensity > THUNDER_MIN_INTENSITY) {
-    if (thunderIn === null) {
-      thunderIn = randBetween(THUNDER_FIRST_DELAY)
-    } else {
-      thunderIn -= dtSec
-      if (thunderIn <= 0) {
-        playThunder(indoor)
-        thunderIn = randBetween(THUNDER_INTERVAL)
-      }
-    }
-  } else {
+  if (!(intensity > THUNDER_MIN_INTENSITY)) {
+    lightningIn = null
     thunderIn = null
+    lightningStrength = 0
+    return
   }
+
+  if (thunderIn !== null) {
+    thunderIn -= dtSec
+    if (thunderIn <= 0) {
+      playThunder(indoor)
+      thunderIn = null
+      lightningStrength = 0
+    }
+  }
+  if (lightningIn === null) {
+    lightningIn = randBetween(LIGHTNING_FIRST_DELAY)
+    return
+  }
+
+  lightningIn -= dtSec
+  if (lightningIn > 0) return
+
+  if (get(lightningEnabled)) {
+    lightningStrength = indoor ? INDOOR_FACTOR : 1
+    lightningAge = 0
+    const azimuth = Math.random() * Math.PI * 2
+    const elevation = randBetween([Math.PI / 6, (Math.PI * 5) / 12])
+    const horizontal = Math.cos(elevation)
+    lightningDirection.x = Math.cos(azimuth) * horizontal
+    lightningDirection.y = Math.sin(elevation)
+    lightningDirection.z = Math.sin(azimuth) * horizontal
+  }
+  thunderIn = randBetween(THUNDER_DELAY)
+  lightningIn = randBetween(LIGHTNING_INTERVAL)
 }
 
 export function stopRainAmbience() {
-  if (!audioCtx) return
-  void audioCtx.close()
+  void audioCtx?.close()
   audioCtx = null
   dropsGain = null
   rainGain = null
   thunderBuffer = null
   current = 0
   currentDrops = 0
+  lightningIn = null
   thunderIn = null
+  lightningStrength = 0
+  lightningAge = 0
   resuming = false
 }

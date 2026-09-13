@@ -1,11 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { get } from 'svelte/store'
 
 vi.mock('./sfxManager', () => ({
   getSfxMultiplier: vi.fn(() => 1),
 }))
 
-import { stopRainAmbience, updateRainAmbience } from './rainAmbienceManager'
+import {
+  getLightningDirection,
+  getLightningStrength,
+  stopRainAmbience,
+  updateRainAmbience,
+} from './rainAmbienceManager'
 import { getSfxMultiplier } from './sfxManager'
+import { lightningEnabled } from '../stores/effectSettings'
 
 interface FakeGain {
   gain: { value: number }
@@ -73,11 +80,14 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 describe('rainAmbienceManager', () => {
   beforeEach(() => {
     contexts.length = 0
+    lightningEnabled.set(true)
     vi.mocked(getSfxMultiplier).mockReturnValue(1)
+    vi.spyOn(Math, 'random').mockReturnValue(0)
     installFakeAudio()
   })
   afterEach(() => {
     stopRainAmbience()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -165,6 +175,170 @@ describe('rainAmbienceManager', () => {
     contexts[0].release(url)
     await flush()
     expect(contexts[0].started).toBe(started)
+  })
+
+  it.each([0, 0.5, 0.999])(
+    'flashes before thunder with random timing %s',
+    async (random) => {
+      vi.mocked(Math.random).mockReturnValue(random)
+      updateRainAmbience(1, false, 0.016)
+      contexts[0].release()
+      await flush()
+
+      updateRainAmbience(1, false, 8 + random * 22)
+      expect(getLightningStrength()).toBe(0)
+      expect(contexts[0].started).toBe(2)
+
+      updateRainAmbience(1, false, 8 + random * 22)
+      expect(getLightningStrength()).toBe(1)
+      expect(contexts[0].started).toBe(2)
+
+      updateRainAmbience(1, false, 2 + random * 3 - 0.1)
+      expect(contexts[0].started).toBe(2)
+      expect(getLightningStrength()).toBe(0)
+
+      updateRainAmbience(1, false, 0.101)
+      expect(contexts[0].started).toBe(3)
+      expect(getLightningStrength()).toBe(0)
+    }
+  )
+
+  it('starts a new flash after the storm interval', async () => {
+    updateRainAmbience(1, false, 0.016)
+    contexts[0].release()
+    await flush()
+    updateRainAmbience(1, false, 16)
+    expect(getLightningStrength()).toBe(1)
+    updateRainAmbience(1, false, 2)
+    updateRainAmbience(1, false, 47.9)
+    expect(getLightningStrength()).toBe(0)
+
+    updateRainAmbience(1, false, 0.11)
+    expect(getLightningStrength()).toBeGreaterThan(0)
+    expect(contexts[0].started).toBe(3)
+    updateRainAmbience(1, false, 2)
+    expect(contexts[0].started).toBe(4)
+  })
+
+  it('keeps lightning visible while SFX are muted', async () => {
+    vi.mocked(getSfxMultiplier).mockReturnValue(0)
+    updateRainAmbience(1, false, 0.016)
+    contexts[0].release()
+    await flush()
+    updateRainAmbience(1, false, 16)
+    expect(getLightningStrength()).toBeGreaterThan(0)
+    updateRainAmbience(1, false, 2)
+    expect(contexts[0].started).toBe(2)
+  })
+
+  it('attenuates lightning indoors', () => {
+    updateRainAmbience(1, true, 0.016)
+    updateRainAmbience(1, true, 16)
+    expect(getLightningStrength()).toBeCloseTo(0.35)
+  })
+
+  it('picks a sky direction per strike and keeps it stable during the fade', () => {
+    updateRainAmbience(1, false, 0.016)
+    updateRainAmbience(1, false, 16)
+    const first = { ...getLightningDirection() }
+    expect(Math.hypot(first.x, first.y, first.z)).toBeCloseTo(1)
+    expect(first.y).toBeGreaterThan(0)
+
+    vi.mocked(Math.random).mockReturnValue(0.5)
+    updateRainAmbience(1, false, 0.3)
+    expect(getLightningDirection()).toEqual(first)
+    updateRainAmbience(1, false, 49.7)
+    const next = getLightningDirection()
+    expect(next).not.toEqual(first)
+    expect(Math.hypot(next.x, next.y, next.z)).toBeCloseTo(1)
+    expect(next.y).toBeGreaterThan(0)
+    expect(getLightningStrength()).toBe(1)
+  })
+
+  it('holds the light briefly and fades out before thunder', async () => {
+    updateRainAmbience(1, false, 0.016)
+    contexts[0].release()
+    await flush()
+    updateRainAmbience(1, false, 16)
+    expect(getLightningStrength()).toBe(1)
+    updateRainAmbience(1, false, 0.05)
+    expect(getLightningStrength()).toBe(1)
+    updateRainAmbience(1, false, 0.225)
+    expect(getLightningStrength()).toBeCloseTo(0.25)
+    updateRainAmbience(1, false, 0.225)
+    expect(getLightningStrength()).toBeCloseTo(0)
+    expect(contexts[0].started).toBe(2)
+  })
+
+  it('keeps rain and thunder playing with lightning disabled', async () => {
+    lightningEnabled.set(false)
+    updateRainAmbience(1, false, 0.016)
+    contexts[0].release()
+    await flush()
+    updateRainAmbience(1, false, 16)
+    expect(getLightningStrength()).toBe(0)
+    expect(contexts[0].started).toBe(2)
+    expect(contexts[0].gains[1].gain.value).toBeCloseTo(0.5)
+
+    updateRainAmbience(1, false, 2)
+    expect(contexts[0].started).toBe(3)
+    stopRainAmbience()
+    updateRainAmbience(1, false, 0.016)
+    updateRainAmbience(1, false, 16)
+    expect(get(lightningEnabled)).toBe(false)
+    expect(getLightningStrength()).toBe(0)
+  })
+
+  it('clears an active flash immediately and resumes at the next strike', async () => {
+    updateRainAmbience(1, false, 0.016)
+    contexts[0].release()
+    await flush()
+    updateRainAmbience(1, false, 16)
+    expect(getLightningStrength()).toBeGreaterThan(0)
+
+    lightningEnabled.set(false)
+    expect(getLightningStrength()).toBe(0)
+    lightningEnabled.set(true)
+    expect(getLightningStrength()).toBe(0)
+
+    updateRainAmbience(1, false, 2)
+    expect(contexts[0].started).toBe(3)
+    expect(getLightningStrength()).toBe(0)
+    updateRainAmbience(1, false, 48)
+    expect(getLightningStrength()).toBeGreaterThan(0)
+  })
+
+  it.each([0, 0.35])(
+    'cancels pending thunder when rain drops to %s',
+    async (rain) => {
+      updateRainAmbience(1, false, 0.016)
+      contexts[0].release()
+      await flush()
+      updateRainAmbience(1, false, 16)
+      expect(getLightningStrength()).toBeGreaterThan(0)
+
+      updateRainAmbience(rain, false, 0.016)
+      expect(getLightningStrength()).toBe(0)
+      updateRainAmbience(1, false, 0.016)
+      updateRainAmbience(1, false, 2)
+      expect(contexts[0].started).toBe(2)
+      expect(getLightningStrength()).toBe(0)
+    }
+  )
+
+  it('clears lightning and pending thunder on restart', async () => {
+    updateRainAmbience(1, false, 0.016)
+    updateRainAmbience(1, false, 16)
+    expect(getLightningStrength()).toBeGreaterThan(0)
+    stopRainAmbience()
+    expect(getLightningStrength()).toBe(0)
+
+    updateRainAmbience(1, false, 0.016)
+    contexts[1].release()
+    await flush()
+    updateRainAmbience(1, false, 2)
+    expect(contexts[1].started).toBe(2)
+    expect(getLightningStrength()).toBe(0)
   })
 
   it('drops a load whose context was stopped before the files arrived', async () => {

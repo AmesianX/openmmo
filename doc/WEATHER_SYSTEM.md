@@ -12,7 +12,7 @@ quarter-view look — not a gray realism filter. Because every cell is a pure
 function of time, a map forecast can be added later without touching the
 model; the world map is left as it is for now.
 
-Non-goals (v1): snow, lightning visuals, wetness debuffs, weather-dependent
+Non-goals (v1): snow, wetness debuffs, weather-dependent
 fishing, sky dome (quarter view — the sky is never on screen).
 
 ## Why stationary cells, not travelling clouds
@@ -242,6 +242,19 @@ day from the server's. Per-frame local sample drives:
    unchanged. Ducked indoors; the BGM playlist goes quiet
    through the same quiet-zone path as bard performances, with hysteresis
    (on above 0.35, off below 0.2) so it does not flap at a cell edge.
+4. **Lightning** — above rain intensity 0.35, the existing directional light
+   flashes white at the game's maximum sunlight intensity (10), holds for
+   50 ms, then fades back to the current sun/moon lighting over 450 ms.
+   Thunder follows 2–5 seconds after the flash. The first flash comes after
+   16–60 seconds, then repeats every 50–140 seconds. Each strike picks an
+   independent sky direction (any azimuth, elevation 30–75°), with the same
+   sampled direction throughout the strike. As it fades, direction and color
+   blend back to sunlight/moonlight by their intensity contributions.
+   The flash is weaker indoors.
+   It lights scene surfaces on every graphics preset, even with SFX muted.
+   Dry weather, dungeons, and leaving the game cancel pending strikes.
+   Settings → Lightning Flashes disables current and future flashes without
+   changing rain or thunder audio. It defaults to on and is saved per browser.
 
 The world map is deliberately untouched. A forecast layer (cells as soft
 discs in the atlas pass, a slider that evaluates the same function at a later

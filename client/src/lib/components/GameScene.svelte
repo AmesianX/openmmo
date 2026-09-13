@@ -42,6 +42,8 @@
   import GameSceneWindParticles from './game-scene/GameSceneWindParticles.svelte'
   import GameSceneRainLayer from './game-scene/GameSceneRainLayer.svelte'
   import {
+    getLightningDirection,
+    getLightningStrength,
     stopRainAmbience,
     updateRainAmbience,
   } from '../managers/rainAmbienceManager'
@@ -1023,6 +1025,8 @@
       eclipseFactor: eclipseState.factor,
       cloudFactor: localWeather.cloud,
       rainIntensity: localWeather.rain,
+      lightningStrength: getLightningStrength(),
+      lightningDirection: getLightningDirection(),
       underground: $isUnderground,
     })
   }
