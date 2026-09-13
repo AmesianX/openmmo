@@ -9,7 +9,10 @@ include!("src/fnv.rs");
 const SKIP: &str = "tests.rs";
 
 fn main() {
-    let mut inputs = vec![std::path::PathBuf::from("../data-src/dungeons.csv")];
+    let mut inputs = vec![
+        std::path::PathBuf::from("../data-src/dungeons.csv"),
+        std::path::PathBuf::from("../data-src/monsters.csv"),
+    ];
     println!("cargo:rerun-if-changed=src/dungeon");
     let dir = std::fs::read_dir("src/dungeon").expect("shared/src/dungeon");
     inputs.extend(

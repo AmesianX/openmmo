@@ -461,9 +461,10 @@ slash4(1.3초)도 마찬가지다.
 
 ### 양손 무기
 
-`hands: 2` 무기를 착용하면 오프핸드 아이템이 가방으로 내려가고, 착용 중에는
-오프핸드 착용 요청이 거절된다. 규칙은 착용 로직에 있어 앞으로 추가될 어떤
-양손 무기에도 그대로 적용된다.
+`hands: 2` 무기를 착용하면 오프핸드 아이템이 가방으로 내려간다. 양손 무기를 든
+상태에서 토치(`torch`·`worn_torch`)를 장착하면 양손 무기를 가방으로 옮기고 왼손에
+토치를 든다. 인벤토리·퀵슬롯 사용과 왼손 슬롯으로 끌어놓기에 적용된다.
+방패 등 다른 오프핸드 아이템은 양손 무기를 든 상태에서 장착할 수 없다.
 
 - 구현: [server/src/game_state/combat.rs](../server/src/game_state/combat.rs),
   [server/src/game_state/inventory.rs](../server/src/game_state/inventory.rs),

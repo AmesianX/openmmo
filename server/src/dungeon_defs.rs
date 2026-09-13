@@ -12,7 +12,7 @@ use tracing::info;
 
 pub use onlinerpg_shared::dungeon::DungeonEntranceDef;
 use onlinerpg_shared::dungeon::{
-    entrance, entrance_at, entrances, generate_dungeon_for, locked_depths,
+    entrance, entrance_at, entrances, generate_dungeon_for, locked_depths, spawn_table_for,
 };
 use onlinerpg_shared::Position;
 
@@ -57,6 +57,23 @@ impl DungeonDefs {
             );
             // Generated depth: a dead-end floor can cut a dungeon short.
             let total = generate_dungeon_for(&def.id).len() as u8;
+            for depth in 1..=total {
+                let table = spawn_table_for(&def.spawn_group, depth);
+                assert!(
+                    !table.is_empty(),
+                    "dungeon '{}' has no spawn group '{}' entries at depth {depth}",
+                    def.id,
+                    def.spawn_group
+                );
+                for spawn in table {
+                    assert!(
+                        monster_defs.get(&spawn.monster_type).is_some(),
+                        "dungeon '{}' spawns unknown monster '{}'",
+                        def.id,
+                        spawn.monster_type
+                    );
+                }
+            }
             for depth in locked_depths(total) {
                 assert!(
                     item_defs.get(&def.key_item_id(depth)).is_some(),

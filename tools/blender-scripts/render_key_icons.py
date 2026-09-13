@@ -1,13 +1,4 @@
-"""Render the six dungeon floor-key icons (doc/DUNGEON_REWARD.md).
-
-The key is modelled here — a torus bow, a shaft and one tooth per five
-floors, so a 10F key shows two teeth and a 15F key three — and tinted per
-dungeon. Keys are icon-only items (no ground GLB: the client floats the icon
-over the drop), so this writes just the 128² icons, per the recipe in
-.claude/skills/blender-item-asset.
-
-    ~/opt/blender/blender -b -P tools/blender-scripts/render_key_icons.py
-"""
+"""Render the six dungeon floor-key icons."""
 
 import math
 import os

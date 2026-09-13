@@ -42,7 +42,7 @@ pub use stairs::{
 };
 
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use crate::pathfinding::{
@@ -239,8 +239,7 @@ pub struct SpawnSpec {
     pub z: i32,
     pub monster_type: String,
     pub is_boss: bool,
-    /// Proactive (선공형) monster: attacks players on sight instead of only
-    /// retaliating when hit. Designated per entry in [`spawn_table`].
+    /// Attacks on sight, as configured by [`spawn_table_for`].
     pub aggressive: bool,
 }
 
@@ -414,14 +413,10 @@ pub(crate) fn dungeon_depth(seed: u64) -> u8 {
     gen::dungeon_depth(seed)
 }
 
-/// Generate every floor of the dungeon. Cheap enough (≤20 grids of 56×56
-/// cells) that callers always generate the full dungeon and index into it.
-/// Test-only: real dungeons must go through `generate_dungeon_for` so the
-/// csv floor override applies; this seed-only form exists for property tests
-/// over arbitrary seeds.
+/// Seed-only generation for property tests; real dungeons use the registry.
 #[cfg(test)]
 pub(crate) fn generate_dungeon(seed: u64) -> Vec<FloorLayout> {
-    gen::generate_dungeon_with(seed, None, BOSS_MONSTER_TYPE, None)
+    gen::generate_dungeon_with(seed, None, BOSS_MONSTER_TYPE, None, "")
 }
 
 /// Generate a dungeon by entrance id: seed derived from the id, floor count,
@@ -433,7 +428,8 @@ pub fn generate_dungeon_for(entrance_id: &str) -> Vec<FloorLayout> {
     let floors = def.and_then(|d| d.floors);
     let boss = def.map_or(BOSS_MONSTER_TYPE, |d| d.boss.as_str());
     let dir = def.and_then(|d| d.entrance_dir);
-    gen::generate_dungeon_with(dungeon_seed(entrance_id), floors, boss, dir)
+    let group = def.map_or("", |d| d.spawn_group.as_str());
+    gen::generate_dungeon_with(dungeon_seed(entrance_id), floors, boss, dir, group)
 }
 
 pub fn passability_floor_for_depth(depth: u8) -> u8 {
@@ -530,23 +526,15 @@ pub struct SpawnEntry {
     pub aggressive: bool,
 }
 
-/// Per-depth spawn tables indexed by depth (`0..=MAX_DEPTH`), built once from
-/// the monster table. The dungeon generator runs in the shared crate on both
-/// native (server) and wasm32 (client), so the data is baked in at compile
-/// time via `include_str!` — runtime file IO would risk desync. We read the
-/// SOURCE csv directly (not the generated `data/monsters.json`) because that
-/// JSON is produced by a build script whose ordering relative to this crate
-/// isn't guaranteed; reading the csv keeps a `cargo build` after a csv edit
-/// self-consistent. Entries stay in csv row order — stable and identical on
-/// both sides — which the weighted pick in `roll_spawns` relies on.
-static SPAWN_TABLES: LazyLock<Vec<Vec<SpawnEntry>>> =
+/// Embedded groups preserve CSV order for identical native/WASM draws.
+static SPAWN_TABLES: LazyLock<HashMap<String, Vec<Vec<SpawnEntry>>>> =
     LazyLock::new(|| build_spawn_tables(include_str!("../../../data-src/monsters.csv")));
 
-fn build_spawn_tables(csv: &str) -> Vec<Vec<SpawnEntry>> {
-    let mut tables: Vec<Vec<SpawnEntry>> = vec![Vec::new(); MAX_DEPTH as usize + 1];
+fn build_spawn_tables(csv: &str) -> HashMap<String, Vec<Vec<SpawnEntry>>> {
+    let mut groups = HashMap::new();
     let mut lines = csv.lines();
     let Some(header) = lines.next() else {
-        return tables;
+        return groups;
     };
     let cols: Vec<&str> = header.split(',').map(str::trim).collect();
     let col = |name: &str| {
@@ -554,12 +542,13 @@ fn build_spawn_tables(csv: &str) -> Vec<Vec<SpawnEntry>> {
             .position(|c| *c == name)
             .unwrap_or_else(|| panic!("monsters.csv missing `{name}` column"))
     };
-    let (id_col, min_col, max_col, weight_col, aggr_col) = (
+    let (id_col, min_col, max_col, weight_col, aggr_col, group_col) = (
         col("id"),
         col("dungeonMinDepth"),
         col("dungeonMaxDepth"),
         col("dungeonWeight"),
         col("dungeonAggressive"),
+        col("dungeonGroup"),
     );
 
     for line in lines {
@@ -585,31 +574,31 @@ fn build_spawn_tables(csv: &str) -> Vec<Vec<SpawnEntry>> {
             weight,
             aggressive: field(aggr_col) == "true",
         };
+        let tables = groups
+            .entry(field(group_col).to_string())
+            .or_insert_with(|| vec![Vec::new(); MAX_DEPTH as usize + 1]);
         for depth in min..=max {
             tables[depth as usize].push(entry.clone());
         }
     }
-    tables
+    groups
 }
 
-/// Weighted monster entries that can spawn at `depth`, in stable csv order, or
-/// an empty slice if none cover it. Tune via the `dungeon*` columns of
-/// monsters.csv.
-pub fn spawn_table(depth: u8) -> &'static [SpawnEntry] {
+/// Weighted entries for a group and depth, in stable CSV order.
+pub fn spawn_table_for(group: &str, depth: u8) -> &'static [SpawnEntry] {
     SPAWN_TABLES
-        .get(depth as usize)
+        .get(group)
+        .and_then(|tables| tables.get(depth as usize))
         .map(Vec::as_slice)
         .unwrap_or(&[])
 }
 
-/// Effective monster level at a given depth. Shallow floors use the
-/// definition level untouched; below depth 4 monsters gain +1 level per
-/// two floors, capped at 20.
+/// Depth bonuses cap at 20 without lowering a monster's base level.
 pub fn monster_level_for_depth(def_level: u8, depth: u8) -> u8 {
     if depth <= 4 {
         def_level
     } else {
-        (def_level as u32 + (depth as u32 - 4) / 2).min(20) as u8
+        ((def_level as u32 + (depth as u32 - 4) / 2).min(20) as u8).max(def_level)
     }
 }
 

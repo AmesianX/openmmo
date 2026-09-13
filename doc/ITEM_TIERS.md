@@ -11,7 +11,7 @@
 | 1 | Old Crypt | 가죽 세트 일부 (투구·바지·벨트) + goblin_sword | 운영 중 |
 | 2 | Orc Warrens | 가죽 세트 완성 (몸통·장갑·부츠) + 체인 세트 일부 (철 부츠·철 투구) + iron_sword | 운영 중 |
 | 3 | Ogre Stronghold (15층, ogre_boss) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 운영 중 |
-| 4 | (신규 던전) | 판금 세트 완성 (흉갑·투구·건틀릿) + great_sword | 던전 미구현 |
+| 4 | Skeleton Crypt (20층, skeleton_knight) | 판금 세트 완성 (흉갑·투구·건틀릿) + great_sword | 구현 완료·운영 배포 대기 |
 | 5 | (신규 던전) | ring_of_protection + rune_blade | 던전 미구현 |
 
 특수 망토(투명·보호 등)·셔츠·amulet_of_life_saving·ring_of_regeneration은 던전 풀에 넣지 않는다 — **월드 드랍 전용 희소템**으로 유저 간 거래의 축을 만든다 (아래 참조).
@@ -82,7 +82,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 
 ### 체스트 풀 규칙
 
-**`chestTier`가 명시된 장비만 풀에 들어간다** (opt-in). 무기·환금템·소모품은 chestTier 미지정으로 체스트에서 제외 — 무기는 몬스터 드랍(아래 무기 섹션), 환금템·소모품은 상점·필드 경로.
+**`chestTier`가 명시된 장비만 풀에 들어간다** (opt-in). 보스 무기는 상자의 확정 보상이다. 나머지 무기·환금템·소모품은 chestTier 미지정으로 체스트에서 제외한다.
 
 ### 드랍 방식: 시그니처 + 아이템별 독립 롤
 
@@ -103,7 +103,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 | Old Crypt (T1) | leather_helmet | leather_pants·leather_belt 각 30% | ≈4.7회 |
 | Orc Warrens (T2) | leather_armor | leather_gloves·leather_boots·iron_boots·iron_helmet 각 37% | ≈5.0회 |
 | Ogre Stronghold (T3) | chain_mail | iron_gauntlets·plate_greaves·plate_boots·기본 망토 각 37% | ≈5.0회 |
-| 티어 4 던전 | breastplate | plate_helmet·plate_gauntlets 각 30% | ≈4.7회 |
+| Skeleton Crypt (T4) | breastplate·great_sword | plate_helmet·plate_gauntlets 각 30% | ≈4.7회 |
 | 티어 5 던전 | (시그니처 없음) | ring_of_protection 20% | ≈5.0회 |
 
 확률 상수는 아이템 데이터에 `chestChance`로 명시하고, 완성 기대 횟수는 테스트로 고정(시뮬레이션 또는 닫힌식 검증).

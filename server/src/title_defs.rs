@@ -109,7 +109,10 @@ mod tests {
 
     #[test]
     fn every_boss_has_a_shared_and_a_solo_title() {
-        for boss in ["goblin_boss", "orc_boss", "ogre_boss"] {
+        for boss in onlinerpg_shared::dungeon::entrances()
+            .iter()
+            .map(|entrance| entrance.boss.as_str())
+        {
             let (shared, solo) = boss_kill_titles(boss);
             assert!(shared.is_some_and(|d| !d.solo), "{boss} shared");
             assert!(solo.is_some_and(|d| d.solo), "{boss} solo");

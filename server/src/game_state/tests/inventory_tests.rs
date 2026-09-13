@@ -390,8 +390,7 @@ async fn dropping_from_a_stack_sheds_one_unit() {
 
 // --- Two-handed weapons (doc/COMBAT.md 원거리 전투) ---
 
-/// A player carrying a bow and a shield in the bag, plus a direct channel for
-/// the refusal message.
+/// A wielder with a bow, shield and a direct-message channel.
 async fn setup_two_hand_wielder(game_state: &GameState) -> DirectRx {
     game_state
         .add_player(make_player("wielder", 0.0, 0.0))
@@ -408,7 +407,7 @@ async fn setup_two_hand_wielder(game_state: &GameState) -> DirectRx {
 }
 
 #[tokio::test]
-async fn great_sword_clears_and_blocks_off_hand_until_replaced() {
+async fn great_sword_clears_and_blocks_shields_until_replaced() {
     let game_state = make_test_game_state("great_sword_off_hand");
     let _rx = setup_two_hand_wielder(&game_state).await;
     {
@@ -416,12 +415,10 @@ async fn great_sword_clears_and_blocks_off_hand_until_replaced() {
         let inv = inventories.get_mut(&pid("wielder")).unwrap();
         inv.bag[0].item_def_id = "great_sword".into();
         inv.bag.push(bag_item(3, "iron_sword", 1));
-        inv.bag.push(bag_item(4, "torch", 1));
     }
     game_state.equip_item(&pid("wielder"), 2).await;
     game_state.equip_item(&pid("wielder"), 1).await;
     game_state.equip_item(&pid("wielder"), 2).await;
-    game_state.equip_item(&pid("wielder"), 4).await;
     {
         let inventories = game_state.inventories.read().await;
         let inv = &inventories[&pid("wielder")];
@@ -431,7 +428,6 @@ async fn great_sword_clears_and_blocks_off_hand_until_replaced() {
         );
         assert!(!inv.equipped.contains_key(&EquipSlot::OffHand));
         assert!(inv.bag.iter().any(|item| item.instance_id == 2));
-        assert!(inv.bag.iter().any(|item| item.instance_id == 4));
     }
     game_state.equip_item(&pid("wielder"), 3).await;
     game_state.equip_item(&pid("wielder"), 2).await;
@@ -442,6 +438,92 @@ async fn great_sword_clears_and_blocks_off_hand_until_replaced() {
         "wooden_shield"
     );
     assert!(inv.bag.iter().any(|item| item.item_def_id == "great_sword"));
+}
+
+#[tokio::test]
+async fn equipping_a_torch_puts_away_two_handers_and_syncs_the_light() {
+    for weapon in ["great_sword", "bow", "iron_sword"] {
+        for torch in ["torch", "worn_torch"] {
+            let game_state = make_test_game_state(&format!("torch_swap_{weapon}_{torch}"));
+            let wielder = pid("wielder");
+            let observer = pid("observer");
+            game_state
+                .add_player(make_player("wielder", 0.0, 0.0))
+                .await;
+            game_state
+                .add_player(make_player("observer", 1.0, 0.0))
+                .await;
+            let enchanted = ItemInstance {
+                enchant: 6,
+                locked: true,
+                ..bag_item(1, weapon, 1)
+            };
+            game_state.inventories.write().await.insert(
+                wielder,
+                PlayerInventory {
+                    bag: vec![enchanted, bag_item(2, torch, 1)],
+                    ..Default::default()
+                },
+            );
+            game_state.equip_item(&wielder, 1).await;
+            let mut owner_rx = game_state.register_direct_channel(&wielder).await;
+            let mut observer_rx = game_state.register_direct_channel(&observer).await;
+
+            game_state.equip_item(&wielder, 2).await;
+
+            let two_handed = weapon != "iron_sword";
+            {
+                let inventories = game_state.inventories.read().await;
+                let inv = &inventories[&wielder];
+                assert_eq!(inv.equipped[&EquipSlot::OffHand].instance_id, 2);
+                assert_eq!(
+                    inv.equipped_def_id(EquipSlot::OffHand).as_deref(),
+                    Some(torch)
+                );
+                assert_eq!(inv.bag.len() + inv.equipped.len(), 2);
+                let retained = if two_handed {
+                    assert!(!inv.equipped.contains_key(&EquipSlot::MainHand));
+                    inv.bag.iter().find(|item| item.instance_id == 1).unwrap()
+                } else {
+                    &inv.equipped[&EquipSlot::MainHand]
+                };
+                assert_eq!(retained.item_def_id, weapon);
+                assert_eq!(retained.enchant, 6);
+                assert!(retained.locked);
+            }
+            let players = game_state.get_all_players().await;
+            assert!(players[&wielder].torch_on);
+            assert_eq!(
+                players[&wielder].main_hand.as_deref(),
+                (!two_handed).then_some(weapon)
+            );
+            assert!(drain(&mut owner_rx).iter().any(|message| matches!(
+                message, ServerMessage::InventoryUpdated { inventory }
+                    if inventory.is_torch_lit()
+                        && inventory.equipped.contains_key(&EquipSlot::MainHand) != two_handed
+            )));
+            let messages = drain(&mut observer_rx);
+            assert!(messages.iter().any(|message| matches!(message,
+                ServerMessage::PlayerTorchToggled { player_id, enabled: true } if *player_id == wielder
+            )));
+            if two_handed {
+                assert!(messages.iter().any(|message| matches!(message,
+                    ServerMessage::PlayerMainHandChanged { player_id, item_def_id: None } if *player_id == wielder
+                )));
+                game_state.equip_item(&wielder, 1).await;
+                let players = game_state.get_all_players().await;
+                assert!(!players[&wielder].torch_on);
+                assert_eq!(players[&wielder].main_hand.as_deref(), Some(weapon));
+                let inventories = game_state.inventories.read().await;
+                let inv = &inventories[&wielder];
+                assert!(!inv.equipped.contains_key(&EquipSlot::OffHand));
+                assert_eq!(
+                    inv.bag.iter().filter(|item| item.instance_id == 2).count(),
+                    1
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -469,7 +551,7 @@ async fn equipping_a_two_hander_empties_the_off_hand() {
 }
 
 #[tokio::test]
-async fn an_off_hand_equip_is_refused_under_a_two_hander() {
+async fn a_shield_equip_is_refused_under_a_two_hander() {
     let game_state = make_test_game_state("two_hand_blocks_off_hand");
     let _rx = setup_two_hand_wielder(&game_state).await;
 
@@ -480,13 +562,12 @@ async fn an_off_hand_equip_is_refused_under_a_two_hander() {
     let inv = &inventories[&pid("wielder")];
     assert!(
         !inv.equipped.contains_key(&EquipSlot::OffHand),
-        "no off-hand item may join a two-hander"
+        "a shield cannot join a two-hander"
     );
     assert!(inv.bag.iter().any(|i| i.item_def_id == "wooden_shield"));
 }
 
-/// A one-handed weapon leaves the off-hand alone, so the rule costs today's
-/// sword-and-shield nothing.
+/// One-handed weapons keep the off-hand equipment.
 #[tokio::test]
 async fn a_one_handed_weapon_keeps_the_off_hand() {
     let game_state = make_test_game_state("one_hand_keeps_off_hand");

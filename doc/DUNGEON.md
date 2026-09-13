@@ -3,6 +3,23 @@
 던전에서 **누가 층을 정하고 누가 Y를 정하는가**를 다룬다. 지형 생성과 맵 포맷은
 [MAP_DESIGN.md](MAP_DESIGN.md), 몬스터 배치는 [NPC_MONSTER_AI.md](NPC_MONSTER_AI.md), 보스 상자 규칙은 [DUNGEON_REWARD.md](DUNGEON_REWARD.md)에 있다.
 
+## Skeleton Crypt — 티어 4
+
+- 입구: `world(-1064, 0.95, 4248)`, 서쪽 도로를 향하는 입구(`entranceDir=w`). 20층, 최종 보스 `skeleton_knight`(레벨 25·HP 350).
+- 1–5층: 잊힌 망자(Forgotten Dead, `skeleton_weak`, 레벨 8·HP 40·방어 14·피해 3d6). 기존 Skeleton 모델·애니메이션·소리를 재사용한다.
+- 6–10층: 기존 Skeleton만 배치한다(기본 레벨 16·방어 20·명중 보너스 +20·피해 6d8, 깊이 보정 적용). 11–15층: Skeleton과 Skeleton Warrior(가중치 3:2). 16–20층: Skeleton Warrior. 기사는 20층에 한 마리만 배치한다. 모두 선공형이다.
+- `dungeons.csv`의 `spawnGroup=skeleton`과 `monsters.csv`의 `dungeonGroup`으로 전용 몬스터 풀을 연결한다. 빈 그룹은 기존 던전의 공용 풀이다.
+- 5·10·15·20층 문에 각각 `skeleton_key_5/10/15/20`을 사용한다. 각 문 바로 앞 네 층에서 기존 확률(몬스터 5%, 잡동사니 1%)로 열쇠를 얻는다.
+- 최종 상자: `breastplate`·`great_sword` 확정, `plate_helmet`·`plate_gauntlets` 각 30%, 하위 티어 장비 각 10%, 10,000–30,000c. 20층 열쇠를 포함해 소지한 해당 던전 열쇠를 소모한다. 캐릭터별 게임 하룻밤 1회이며 보스 생사는 무관하다.
+- 기사 처치 칭호: `skeleton_slayer`, 단독 처치 `skeleton_slayer_solo`.
+- 입구 주변 60m 미만은 Reserved, 150m 이내는 Crown 기본 규칙을 따른다. 편집된 토지 등급 파일은 기본값을 덮으므로 `tools/reserve-dungeon-land.mjs`로 해당 구획만 갱신한다. 소유지와 150m 범위가 겹치면 중단하며 기존 Reserved와 범위 밖 편집은 유지한다.
+
+운영 반영 시 서버 정지 중 최신 `land_plots`를 JSON으로 추출하고 아래 명령을 실행한다. `--apply`를 빼면 미리보기이며, 적용 시 원본 백업을 남긴다. 개발 토지 등급 파일 전체를 운영으로 복사하지 않는다.
+
+```sh
+node tools/reserve-dungeon-land.mjs --dungeon skeleton_crypt --ownership /tmp/owned-plots.json --apply
+```
+
 ## 모델
 
 - **층은 서버가 들고 있는 상태다.** 클라이언트는 `PlayerFloorChanged`로 요청할 뿐이고,

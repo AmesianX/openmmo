@@ -4,6 +4,7 @@
 
   const HEALTH_BAR_WIDTH = 1.0
   const HEALTH_BAR_HEIGHT = 0.08
+  const LOCAL_NAMETAG_RENDER_ORDER = 1000
 
   // Fixed character-sized hover box; every player shares the skeleton, so the
   // never-rendered proxy geometry/material are shared across instances too.
@@ -1770,7 +1771,10 @@
 {/if}
 
 <!-- Name tag (separate from character to avoid rotation inheritance) -->
-<T.Group bind:ref={nametagGroup}>
+<T.Group
+  bind:ref={nametagGroup}
+  renderOrder={isCurrentPlayer ? LOCAL_NAMETAG_RENDER_ORDER : 0}
+>
   {#if title}
     <TextLabel
       text={$titleName(title)}
@@ -1781,6 +1785,7 @@
       anchorX="center"
       anchorY="middle"
       position={[0, 0.3, 0]}
+      depthTest={!isCurrentPlayer}
     />
   {/if}
   <TextLabel
@@ -1791,24 +1796,37 @@
     outlineWidth={7}
     anchorX="center"
     anchorY="middle"
+    depthTest={!isCurrentPlayer}
   />
 
   <!-- Health Bar -->
   {#if isCurrentPlayer}
-    <T.Group position.y={-0.3}>
+    <T.Group position.y={-0.3} renderOrder={LOCAL_NAMETAG_RENDER_ORDER}>
       <!-- Background (black) -->
       <T.Mesh>
         <T.PlaneGeometry args={[HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT]} />
-        <T.MeshBasicMaterial color="#000000" transparent opacity={0.5} />
+        <T.MeshBasicMaterial
+          color="#000000"
+          transparent
+          opacity={0.5}
+          depthTest={false}
+          depthWrite={false}
+        />
       </T.Mesh>
       <!-- Foreground (red) -->
       <T.Mesh
         position.x={-HEALTH_BAR_WIDTH / 2}
         position.z={0.001}
         scale.x={Math.max(0.001, displayedHealthRatio)}
+        renderOrder={1}
       >
         <T is={healthBarFillGeometry} />
-        <T.MeshBasicMaterial color="#ff0000" />
+        <T.MeshBasicMaterial
+          color="#ff0000"
+          transparent
+          depthTest={false}
+          depthWrite={false}
+        />
       </T.Mesh>
     </T.Group>
   {/if}
@@ -1821,6 +1839,7 @@
       position={[0, 0.4, 0]}
       anchorX="center"
       anchorY="middle"
+      depthTest={!isCurrentPlayer}
     />
   {/if}
 </T.Group>

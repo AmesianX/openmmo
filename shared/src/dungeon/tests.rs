@@ -102,6 +102,54 @@ fn per_dungeon_boss_floors_and_entrance_dir() {
     );
 }
 
+#[test]
+fn skeleton_crypt_has_twenty_floors_and_its_own_monsters() {
+    let floors = generate_dungeon_for("skeleton_crypt");
+    assert_eq!(floors.len(), 20);
+    assert!(!floors[0].up_shaft.along_z && !floors[0].up_shaft.reversed);
+    assert_eq!(
+        locked_depths(floors.len() as u8).collect::<Vec<_>>(),
+        [5, 10, 15, 20]
+    );
+    assert_eq!(
+        floors.iter().filter(|floor| floor.chest.is_some()).count(),
+        1
+    );
+    let mut bosses = Vec::new();
+    for floor in &floors {
+        let mut regular = 0;
+        for spawn in &floor.spawns {
+            assert!(spawn.aggressive);
+            if spawn.is_boss {
+                bosses.push((floor.depth, spawn.monster_type.as_str()));
+                continue;
+            }
+            regular += 1;
+            match floor.depth {
+                1..=5 => assert_eq!(spawn.monster_type, "skeleton_weak"),
+                6..=10 => assert_eq!(spawn.monster_type, "skeleton"),
+                11..=15 => assert!(matches!(
+                    spawn.monster_type.as_str(),
+                    "skeleton" | "skeleton_warrior"
+                )),
+                _ => assert_eq!(spawn.monster_type, "skeleton_warrior"),
+            }
+        }
+        assert!(regular > 0, "empty floor {}", floor.depth);
+    }
+    assert_eq!(bosses, [(20, "skeleton_knight")]);
+    assert_eq!(
+        layout_hash(&floors),
+        layout_hash(&generate_dungeon_for("skeleton_crypt"))
+    );
+    for id in ["old_crypt", "orc_warrens", "ogre_stronghold"] {
+        assert!(generate_dungeon_for(id)
+            .iter()
+            .flat_map(|floor| &floor.spawns)
+            .all(|spawn| !spawn.monster_type.starts_with("skeleton")));
+    }
+}
+
 // Captured from the first blessed run; see golden_layout_hash. Re-blessed when
 // the spawn table moved from depth-band arrays (dungeon_spawns.json) to the
 // per-monster `dungeon*` columns of monsters.csv: same monster presence per
@@ -363,13 +411,25 @@ fn a_room_cell_never_opens_onto_a_shaft_cell_of_another_floor() {
     }
 }
 
-/// End-to-end pathfinding through the real passability machinery: from
-/// the surface entrance, walk down every floor to the chest.
+/// Verify the descent from the surface to the chest with real passability.
 #[test]
 fn full_descent_path_through_passability() {
-    let entrance = test_entrance();
-    for seed in 0..40u64 {
-        let floors = generate_dungeon(seed);
+    let cases = (0..40u64)
+        .map(|seed| {
+            (
+                format!("seed {seed}"),
+                test_entrance(),
+                generate_dungeon(seed),
+            )
+        })
+        .chain(entrances().iter().map(|def| {
+            (
+                def.id.clone(),
+                def.position(),
+                generate_dungeon_for(&def.id),
+            )
+        }));
+    for (case, entrance, floors) in cases {
         let rp = passability_with_doors_open(&entrance, &floors);
         let mut cache = PassabilityCache::new();
         cache.insert(dungeon_cache_key("t"), rp);
@@ -387,7 +447,7 @@ fn full_descent_path_through_passability() {
             &cache,
             DUNGEON_PATH_MAX_NODES,
         );
-        assert!(res.found, "seed {seed}: surface → depth 1 path not found");
+        assert!(res.found, "{case}: surface → depth 1 path not found");
 
         for f in &floors {
             let from = cell_center(&entrance, f.depth, f.up_shaft.exit_cell());
@@ -409,7 +469,7 @@ fn full_descent_path_through_passability() {
             );
             assert!(
                 res.found,
-                "seed {seed} depth {}: arrival → {} unreachable",
+                "{case} depth {}: arrival → {} unreachable",
                 f.depth,
                 if f.down_shaft.is_some() {
                     "down stairs"
@@ -726,8 +786,10 @@ fn monster_level_scaling() {
     assert_eq!(monster_level_for_depth(2, 6), 3);
     assert_eq!(monster_level_for_depth(4, 20), 12);
     assert_eq!(monster_level_for_depth(19, 20), 20); // cap
+    assert_eq!(monster_level_for_depth(25, 20), 25);
+    assert_eq!(monster_level_for_depth(25, 5), 25);
     for depth in 1..=MAX_DEPTH {
-        assert!(!spawn_table(depth).is_empty());
+        assert!(!spawn_table_for("", depth).is_empty());
     }
 }
 

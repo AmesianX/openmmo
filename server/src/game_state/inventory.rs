@@ -1,7 +1,9 @@
 use crate::auth::{AuthService, ItemRow};
 use crate::item_defs::{AuthenticatedUseAction, UseEffect};
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
+use onlinerpg_shared::inventory::{
+    EquipSlot, GroundItem, ItemInstance, PlayerInventory, TORCH_ITEM_IDS,
+};
 use onlinerpg_shared::messages::BagLineItem;
 use rand::Rng;
 use tracing::{info, warn};
@@ -678,8 +680,7 @@ impl super::GameState {
             .map(|(item, _)| item)
     }
 
-    /// Whether the wielded main-hand weapon claims both hands, sealing the
-    /// off-hand slot.
+    /// Whether the main-hand weapon requires both hands.
     fn main_hand_is_two_handed(&self, inv: &PlayerInventory) -> bool {
         inv.equipped
             .get(&EquipSlot::MainHand)
@@ -769,13 +770,17 @@ impl super::GameState {
                 }
             };
 
-            // Two-handed weapons own the off-hand slot: equipping one empties
-            // it, and nothing may move back in while it is wielded.
             if equip_slot == EquipSlot::OffHand && self.main_hand_is_two_handed(inv) {
-                drop(inventories);
-                self.send_system_message(player_id, "Both hands are on your weapon")
-                    .await;
-                return;
+                if TORCH_ITEM_IDS.contains(&item_def_id.as_str()) {
+                    if let Some(weapon) = inv.equipped.remove(&EquipSlot::MainHand) {
+                        inv.bag.push(weapon);
+                    }
+                } else {
+                    drop(inventories);
+                    self.send_system_message(player_id, "Both hands are on your weapon")
+                        .await;
+                    return;
+                }
             }
 
             let target_slot = if inv.equipped.contains_key(&equip_slot) {

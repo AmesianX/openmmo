@@ -9,6 +9,7 @@
   } from '../data/abilities'
   import {
     inventoryStore,
+    isTorchItemDefId,
     itemLockMode,
     playerEffectiveStats,
     wornAmmoStack,
@@ -336,34 +337,48 @@
             />
             {#each VISIBLE_SLOTS as { slot, top, left } (slot)}
               {@const stored = slotBehind(slot)}
-              {@const blocked = offHandBlocked && slot === 'off_hand'}
+              {@const torchSwapTarget =
+                slot === 'off_hand' &&
+                isTwoHanded(mainHandId) &&
+                draggedItem?.source.type === 'bag' &&
+                isTorchItemDefId(draggedItem.defId)}
+              {@const blocked =
+                offHandBlocked && slot === 'off_hand' && !torchSwapTarget}
               {@const isQuiverCell = heldInLeft && slot === 'main_hand'}
               {@const ammo = isQuiverCell ? ammoCell : null}
               {@const item = isQuiverCell
                 ? ammo
                 : $inventoryStore.equipped[stored]}
               {@const def = item ? getItemDef(item.item_def_id) : null}
-              {@const isDropTarget = isQuiverCell
-                ? draggedItem !== null &&
-                  ammoKind !== undefined &&
-                  getItemDef(draggedItem.defId)?.ammoKind === ammoKind
-                : !blocked &&
-                  draggedItem &&
-                  isSlotCompatible(draggedItem.equipSlot, stored)}
+              {@const isDropTarget =
+                torchSwapTarget ||
+                (isQuiverCell
+                  ? draggedItem !== null &&
+                    ammoKind !== undefined &&
+                    getItemDef(draggedItem.defId)?.ammoKind === ammoKind
+                  : !blocked &&
+                    draggedItem &&
+                    isSlotCompatible(draggedItem.equipSlot, stored))}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 class="equip-slot"
                 class:blocked
                 class:drop-target={isDropTarget}
                 style="top:{top}%;left:{left}%"
-                title={blocked
-                  ? 'Both hands are on your weapon'
-                  : item
+                title={torchSwapTarget
+                  ? 'Equip torch and put away weapon'
+                  : blocked
+                    ? 'Both hands are on your weapon'
+                    : item
+                      ? undefined
+                      : isQuiverCell
+                        ? 'No arrows'
+                        : EQUIP_SLOT_LABELS[slot]}
+                data-equip-slot={torchSwapTarget
+                  ? 'off_hand'
+                  : isQuiverCell || blocked
                     ? undefined
-                    : isQuiverCell
-                      ? 'No arrows'
-                      : EQUIP_SLOT_LABELS[slot]}
-                data-equip-slot={isQuiverCell || blocked ? undefined : stored}
+                    : stored}
                 data-ammo-kind={isQuiverCell ? ammoKind : undefined}
                 use:itemTooltip={item && def
                   ? { def, item, side: left > 50 ? 'left' : 'right' }

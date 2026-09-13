@@ -47,6 +47,7 @@ pub struct DungeonEntranceDef {
     /// Item id stem of this dungeon's floor keys: `{key_prefix}_{depth}`
     /// (doc/DUNGEON_REWARD.md). Validated by the server on load.
     pub key_prefix: String,
+    pub spawn_group: String,
 }
 
 impl DungeonEntranceDef {
@@ -144,6 +145,7 @@ fn parse_entrances(csv: &str) -> Vec<DungeonEntranceDef> {
                     d => panic!("dungeon '{id}' has an invalid entranceDir '{d}'"),
                 },
                 key_prefix: field("keyPrefix").to_string(),
+                spawn_group: field("spawnGroup").to_string(),
             })
         })
         .collect()
@@ -169,9 +171,10 @@ mod tests {
 
     #[test]
     fn parses_drops_lists_and_optional_floor_override() {
-        let csv = "id,name,x,y,z,chestDrops,floors,boss,chestTier,entranceDir,keyPrefix\n\
-                   a,A Place,-1450,0.7,4720,shield;armor,5,orc_boss,2,s,a_key\n\
-                   b,B Place,10,0,20,,,,,,\n";
+        let csv =
+            "id,name,x,y,z,chestDrops,floors,boss,chestTier,entranceDir,keyPrefix,spawnGroup\n\
+                   a,A Place,-1450,0.7,4720,shield;armor,5,orc_boss,2,s,a_key,skeleton\n\
+                   b,B Place,10,0,20,,,,,,,\n";
         let defs = parse_entrances(csv);
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].chest_drops, ["shield", "armor"]);
@@ -180,6 +183,8 @@ mod tests {
         assert_eq!(defs[0].chest_tier, 2);
         assert_eq!(defs[0].entrance_dir, Some(WallDirection::South));
         assert_eq!(defs[0].key_item_id(5), "a_key_5");
+        assert_eq!(defs[0].spawn_group, "skeleton");
+        assert!(defs[1].spawn_group.is_empty());
         assert!(defs[1].chest_drops.is_empty());
         assert_eq!(defs[1].floors, None, "blank floors = seed-derived depth");
         assert_eq!(defs[1].boss, super::super::BOSS_MONSTER_TYPE);
