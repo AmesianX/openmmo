@@ -1,9 +1,10 @@
 import { getSfxMultiplier } from './sfxManager'
 
-// WebAudio ambience follows the shared SFX volume/mute settings.
+const DROPS_URL = '/sounds/rain-drops-loop.ogg'
 const RAIN_URL = '/sounds/rain-loop.ogg'
 const THUNDER_URL = '/sounds/thunder-distant.ogg'
 const RAIN_VOLUME = 0.5
+const HEAVY_RAIN_START = 0.45
 const INDOOR_FACTOR = 0.35
 const SMOOTH_RATE = 1.2
 const THUNDER_MIN_INTENSITY = 0.35
@@ -11,9 +12,11 @@ const THUNDER_FIRST_DELAY = [8, 30]
 const THUNDER_INTERVAL = [25, 70]
 
 let audioCtx: AudioContext | null = null
+let dropsGain: GainNode | null = null
 let rainGain: GainNode | null = null
 let thunderBuffer: AudioBuffer | null = null
 let current = 0
+let currentDrops = 0
 let thunderIn: number | null = null
 let resuming = false
 
@@ -23,34 +26,43 @@ function randBetween([lo, hi]: number[]): number {
 
 function init() {
   const ctx = new AudioContext()
+  const drops = ctx.createGain()
+  drops.gain.value = 0
+  drops.connect(ctx.destination)
   const gain = ctx.createGain()
   gain.gain.value = 0
   gain.connect(ctx.destination)
   audioCtx = ctx
+  dropsGain = drops
   rainGain = gain
 
-  // Ignore loads from a stopped context.
-  const load = async () => {
-    const [rainData, thunderData] = await Promise.all([
-      fetch(RAIN_URL).then((r) => r.arrayBuffer()),
-      fetch(THUNDER_URL).then((r) => r.arrayBuffer()),
-    ])
-    if (audioCtx !== ctx) return
-    const rainBuffer = await ctx.decodeAudioData(rainData)
-    const thunder = await ctx.decodeAudioData(thunderData)
-    if (audioCtx !== ctx) return
-    thunderBuffer = thunder
+  const loadBuffer = async (url: string) => {
+    const response = await fetch(url)
+    if (!response.ok)
+      throw new Error(`Failed to load ${url}: ${response.status}`)
+    const data = await response.arrayBuffer()
+    if (audioCtx !== ctx) return null
+    const buffer = await ctx.decodeAudioData(data)
+    return audioCtx === ctx ? buffer : null
+  }
+  const loadLoop = async (url: string, output: GainNode) => {
+    const buffer = await loadBuffer(url)
+    if (!buffer || audioCtx !== ctx) return
     const src = ctx.createBufferSource()
-    src.buffer = rainBuffer
+    src.buffer = buffer
     src.loop = true
-    src.connect(gain)
+    src.connect(output)
     src.start()
   }
-  // Missing audio files must never break the game loop
-  void load().catch(() => {})
+  void loadLoop(DROPS_URL, drops).catch(() => {})
+  void loadLoop(RAIN_URL, gain).catch(() => {})
+  void loadBuffer(THUNDER_URL)
+    .then((buffer) => {
+      if (audioCtx === ctx) thunderBuffer = buffer
+    })
+    .catch(() => {})
 }
 
-/** Soft distant rumble: random pitch, muffling, and volume every time. */
 function playThunder(indoor: boolean) {
   if (!audioCtx || !thunderBuffer) return
   const volume = getSfxMultiplier()
@@ -74,26 +86,31 @@ function playThunder(indoor: boolean) {
   src.start()
 }
 
-/** Called every frame; smooths toward the target so rain fades in/out. */
 export function updateRainAmbience(
   intensity: number,
   indoor: boolean,
   dtSec: number
 ) {
-  const target = intensity * (indoor ? INDOOR_FACTOR : 1)
+  const rain = Math.max(0, Math.min(1, intensity))
+  const target = rain * (indoor ? INDOOR_FACTOR : 1)
   if (!audioCtx) {
     if (target <= 0.01) return
     init()
   }
-  if (!audioCtx || !rainGain) return
+  if (!audioCtx || !dropsGain || !rainGain) return
   if (audioCtx.state === 'suspended' && !resuming) {
     resuming = true
     audioCtx.resume().finally(() => (resuming = false))
   }
 
   const k = Math.min(1, SMOOTH_RATE * dtSec)
-  current += (target - current) * k
-  rainGain.gain.value = current * getSfxMultiplier() * RAIN_VOLUME
+  const heavy = Math.max(0, (rain - HEAVY_RAIN_START) / (1 - HEAVY_RAIN_START))
+  const blend = heavy * heavy * (3 - 2 * heavy)
+  currentDrops += (target * (1 - blend) - currentDrops) * k
+  current += (target * blend - current) * k
+  const volume = getSfxMultiplier() * RAIN_VOLUME
+  dropsGain.gain.value = currentDrops * volume
+  rainGain.gain.value = current * volume
 
   if (intensity > THUNDER_MIN_INTENSITY) {
     if (thunderIn === null) {
@@ -114,9 +131,11 @@ export function stopRainAmbience() {
   if (!audioCtx) return
   void audioCtx.close()
   audioCtx = null
+  dropsGain = null
   rainGain = null
   thunderBuffer = null
   current = 0
+  currentDrops = 0
   thunderIn = null
   resuming = false
 }

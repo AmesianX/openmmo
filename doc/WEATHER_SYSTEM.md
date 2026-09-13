@@ -233,10 +233,12 @@ day from the server's. Per-frame local sample drives:
    orientation, keeping nearby rain visible with light behind the drops.
    `enableRainParticles` preset flag (off on low and mobile). Off
    indoors/dungeons; petals stop spawning under rain.
-3. **Audio** — rain loop + distant thunder one-shots from the prototype's
-   ambience manager (CC0 assets recorded in `doc/assets/sfx.md`), following
-   the SFX volume/mute settings; the rain loop has a 0.5 gain multiplier,
-   with thunder volume unchanged. Ducked indoors; the BGM playlist goes quiet
+3. **Audio** — a sparse droplet loop for light rain, crossfading into the
+   original heavy-rain recording above intensity 0.45 (smoothstep, fully
+   replaced at 1), plus distant thunder one-shots. Sources and licenses are
+   recorded in `doc/assets/sfx.md`. Both loops follow the SFX volume/mute
+   settings and share the existing 0.5 gain multiplier, with thunder volume
+   unchanged. Ducked indoors; the BGM playlist goes quiet
    through the same quiet-zone path as bard performances, with hysteresis
    (on above 0.35, off below 0.2) so it does not flap at a cell edge.
 

@@ -8,6 +8,14 @@ Candidates land in sfx-candidates/<subject>-<n>.mp3 (gitignored).
 import argparse, json, os, pathlib, sys, time, urllib.request
 
 PROMPTS = {
+    "rain_drops": (
+        "Very light rain beginning: sparse tiny raindrops softly tapping leaves "
+        "and dry earth. Delicate irregular ticks and pits, distinct individual "
+        "droplet impacts with quiet gaps. Natural close-up foley, steady sparse "
+        "density, seamless loop, otherwise silent background. No flowing water, "
+        "stream, trickling, runoff, gurgling, puddle splashes, continuous wash "
+        "or hiss, heavy rain, wind, thunder, birds, voices, music or metallic taps."
+    ),
     "metal_hit": (
         'A single steel weapon striking a worn iron breastplate: an immediate hard '
         'dry metallic clang with a short rattling ring of loose armor plates. One '
@@ -70,10 +78,11 @@ def credits(k):
     return d["character_limit"] - d["character_count"]
 
 
-def generate(k, text, duration, influence):
-    body = json.dumps(
-        {"text": text, "duration_seconds": duration, "prompt_influence": influence}
-    ).encode()
+def generate(k, text, duration, influence, loop=False):
+    params = {"text": text, "duration_seconds": duration, "prompt_influence": influence}
+    if loop:
+        params.update(model_id="eleven_text_to_sound_v2", loop=True)
+    body = json.dumps(params).encode()
     req = urllib.request.Request(
         API, data=body, headers={"xi-api-key": k, "Content-Type": "application/json"}
     )
@@ -87,6 +96,7 @@ def main():
     ap.add_argument("--takes", type=int, default=3)
     ap.add_argument("--duration", type=float, default=1.5)
     ap.add_argument("--influence", type=float, default=0.4)
+    ap.add_argument("--loop", action="store_true")
     ap.add_argument("--out", default="sfx-candidates")
     args = ap.parse_args()
 
@@ -108,7 +118,7 @@ def main():
             if dest.exists():
                 print(f"skip {dest}")
                 continue
-            audio = generate(k, PROMPTS[m], args.duration, args.influence)
+            audio = generate(k, PROMPTS[m], args.duration, args.influence, args.loop)
             dest.write_bytes(audio)
             generated += 1
             print(f"{dest}  {len(audio)} bytes")

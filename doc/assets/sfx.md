@@ -19,12 +19,30 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
 
 ## Weather
 
-- rain-loop.ogg — the calmest stretch (505–545 s) of [AMB Rain Loop 2](https://opengameart.org/content/amb-rain-loop-2) by Kresiek The Furry (CC0), an outdoor GoPro rain recording; made seamlessly loopable with a 3 s self-crossfade (37 s loop)
+- rain-drops-loop.ogg — 약한 비와 비가 시작할 때 사용하는 독립 빗방울 레이어.
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) API로 2026-09-13 직접 생성.
+  Starter 유료 플랜(API 구독 조회로 확인),
+  [유료 플랜 상업 이용 라이선스](https://help.elevenlabs.io/hc/en-us/articles/13313564601361-Can-I-publish-the-content-I-generate-on-the-platform) 적용.
+  `eleven_text_to_sound_v2`, 24초, `prompt_influence=0.65`, `loop=true`, 1테이크.
+  `tools/gen-death-sfx.py --takes 1 --duration 24 --influence 0.65 --loop rain_drops`로 생성.
+  원본과 생성 메타데이터는 `~/assets_original/sfx/rain-drops-loop_take1_2026-09-13.mp3`
+  및 같은 이름의 `.json`에 보관. 44.1 kHz 스테레오 Ogg Vorbis q5로 변환,
+  +2.443669 dB로 인코딩 전 피크 −3 dB 정규화, 양끝 5 ms 페이드로 반복 경계 클릭 방지.
+  프롬프트: "Very light rain beginning: sparse tiny raindrops softly tapping leaves
+  and dry earth. Delicate irregular ticks and pits, distinct individual
+  droplet impacts with quiet gaps. Natural close-up foley, steady sparse
+  density, seamless loop, otherwise silent background. No flowing water,
+  stream, trickling, runoff, gurgling, puddle splashes, continuous wash
+  or hiss, heavy rain, wind, thunder, birds, voices, music or metallic taps."
+- rain-loop.ogg — the calmest stretch (505–545 s) of [AMB Rain Loop 2](https://opengameart.org/content/amb-rain-loop-2) by Kresiek The Furry (CC0), an outdoor GoPro rain recording; made seamlessly loopable with a 3 s self-crossfade (37 s loop). Used only for stronger rain, blending in above intensity 0.45.
 - thunder-distant.ogg — `sfx100v2_thunder_01` from [100 CC0 SFX #2](https://opengameart.org/content/100-cc0-sfx-2) by rubberduck (CC0), unmodified; variety comes from a randomized playback rate, low-pass cutoff, and volume
 
-Both route through `rainAmbienceManager.ts` (WebAudio for the seamless loop
-and thunder scheduling), which follows the same SFX volume/mute settings as
-`sfxManager.ts`.
+All weather sounds route through `rainAmbienceManager.ts` (WebAudio loops
+and thunder scheduling), following the SFX volume/mute settings. At intensity
+≤ 0.45, only the droplet loop contributes to the rain ambience. Above 0.45,
+a smoothstep crossfade gradually replaces it with the original recording,
+reaching the original rain volume at intensity 1. Both layers fade with weather
+changes and are attenuated indoors.
 
 ## Combat
 
