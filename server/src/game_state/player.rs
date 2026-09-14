@@ -238,6 +238,7 @@ pub(super) fn build_save_data(
     gold: i64,
     satiation: u32,
     active_ammo: Option<String>,
+    mana: Option<u32>,
 ) -> CharacterSaveData {
     CharacterSaveData {
         character_id,
@@ -249,6 +250,7 @@ pub(super) fn build_save_data(
         level: player.level,
         max_hp: player.max_health,
         health: player.health,
+        mana,
         floor_level: player.floor_level,
         gold,
         satiation,
@@ -430,6 +432,7 @@ impl super::GameState {
         self.forget_player_skills(player_id).await;
         self.remove_dungeon_discoveries(player_id).await;
         self.forget_hunger(player_id).await;
+        self.mana.write().await.remove(player_id);
     }
 
     /// Serializes account replacement and character deletion with game entry.
@@ -750,6 +753,7 @@ impl super::GameState {
         let hunger = self.hunger.read().await;
         let inventories = self.inventories.read().await;
 
+        let mana = self.mana.read().await;
         let mut characters = Vec::with_capacity(player_characters.len());
         let mut inventory_rows = Vec::with_capacity(player_characters.len());
 
@@ -764,6 +768,7 @@ impl super::GameState {
                     inventories
                         .get(player_id)
                         .and_then(|inv| inv.active_ammo.clone()),
+                    mana.get(player_id).map(|data| data.mana),
                 ));
             }
             if let Some(inventory) = inventories.get(player_id) {
@@ -2298,6 +2303,7 @@ impl super::GameState {
             let free_bed = beds.iter().find(|bed| !taken.contains(&bed.id));
             let player = players.get_mut(player_id).expect("looked up above");
             let old_health = player.health;
+            self.delay_mana_regeneration(player_id).await;
             player.health = player.max_health;
             self.combat_audit.health(old_health, player, "respawn");
             let old_floor = player.floor_level;
@@ -2363,6 +2369,7 @@ impl super::GameState {
             let Some(player) = players.get_mut(player_id).filter(|p| p.health == 0) else {
                 return false;
             };
+            self.delay_mana_regeneration(player_id).await;
             player.health = (player.max_health * hp_percent / 100).max(1);
             self.combat_audit.health(0, player, "revive");
             player.clone()
@@ -2580,6 +2587,7 @@ impl super::GameState {
         let hunger = self.hunger.read().await;
 
         let inventories = self.inventories.read().await;
+        let mana = self.mana.read().await;
         let mut result = Vec::with_capacity(dirty_ids.len());
         for pid in &dirty_ids {
             if let (Some(player), Some((char_id, xp, _))) =
@@ -2589,7 +2597,13 @@ impl super::GameState {
                 let satiation = super::hunger::satiation_for_save(&hunger, pid);
                 let ammo = inventories.get(pid).and_then(|inv| inv.active_ammo.clone());
                 result.push(build_save_data(
-                    player, *char_id, *xp, gold, satiation, ammo,
+                    player,
+                    *char_id,
+                    *xp,
+                    gold,
+                    satiation,
+                    ammo,
+                    mana.get(pid).map(|data| data.mana),
                 ));
             }
         }
@@ -2614,8 +2628,9 @@ impl super::GameState {
             .get(player_id)
             .and_then(|inv| inv.active_ammo.clone());
 
+        let mana = self.mana.read().await.get(player_id).map(|data| data.mana);
         Some(build_save_data(
-            player, *char_id, *xp, gold, satiation, ammo,
+            player, *char_id, *xp, gold, satiation, ammo, mana,
         ))
     }
 

@@ -123,6 +123,7 @@ impl SharedState {
 
             // State-only: tracked on SharedState, shown in the world state.
             ServerMessage::GoldUpdate { .. }
+            | ServerMessage::ManaUpdate { .. }
             | ServerMessage::GoldGained { .. }
             | ServerMessage::InventoryState { .. }
             | ServerMessage::InventoryUpdated { .. }
@@ -333,6 +334,7 @@ impl SharedState {
                 self.in_game = true;
                 self.self_player_id = Some(player.id);
                 self.self_player = Some(player.clone());
+                self.self_mana = None;
                 self.self_fishing = false;
                 // A character saved underground rejoins there (the server
                 // rehydrates it), so adopt the floor instead of assuming 0.
@@ -740,6 +742,9 @@ impl SharedState {
             }
             ServerMessage::GoldUpdate { gold } => {
                 self.self_gold = Some(*gold);
+            }
+            ServerMessage::ManaUpdate { mana, max_mana } => {
+                self.self_mana = Some((*mana, *max_mana));
             }
             ServerMessage::HungerUpdate {
                 satiation,

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const GUARDIAN_WARD_RADIUS: f32 = 20.0;
 pub const GUARDIAN_WARD_DURATION_MS: u64 = 60_000;
 pub const GUARDIAN_WARD_COOLDOWN_MS: u64 = 45_000;
+pub const GUARDIAN_WARD_MANA_COST: u32 = 2;
 pub const RADIANCE_DURATION_MS: u64 = 120_000;
 pub const RADIANCE_COOLDOWN_MS: u64 = 800;
 pub const BOW_MARK_DURATION_MS: u64 = 5_000;
@@ -15,6 +16,15 @@ pub enum AbilityId {
     Radiance,
     BowMark,
     DaggerDoubleSlash,
+}
+
+impl AbilityId {
+    pub fn mana_cost(self) -> u32 {
+        match self {
+            Self::GuardianWard => GUARDIAN_WARD_MANA_COST,
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,4 +40,5 @@ pub enum AbilityRejectReason {
     Equipment,
     Cooldown,
     OutOfRange,
+    NotEnoughMana,
 }

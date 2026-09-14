@@ -35,6 +35,10 @@
   } from '../stores/daggerSkillStore'
   import { DAGGER_SKILL } from '../data/daggerSkill'
   import {
+    abilityEquipmentAllowed,
+    isAbilityAvailable,
+  } from '../data/abilities'
+  import {
     playPropSound,
     preloadFishingSounds,
     preloadBowSounds,
@@ -936,14 +940,14 @@
   }
 
   function sendCombatAttack(monsterId: string) {
-    const isDagger =
-      getItemDef($inventoryStore.equipped.main_hand?.item_def_id ?? '')
-        ?.weaponType === DAGGER_SKILL.weaponType
-    if (isDagger && currentPlayer && consumeDaggerSkill()) {
+    const canUseDaggerSkill =
+      isAbilityAvailable(DAGGER_SKILL.clip, currentPlayer?.characterClass) &&
+      abilityEquipmentAllowed(DAGGER_SKILL.clip, $inventoryStore.equipped)
+    if (canUseDaggerSkill && currentPlayer && consumeDaggerSkill()) {
       playDaggerSkill(currentPlayer.id)
       networkManager.sendDaggerDoubleSlash(monsterId)
     } else {
-      if (!isDagger)
+      if (!canUseDaggerSkill)
         daggerSkillState.update((state) => ({ ...state, queued: false }))
       if (currentPlayer) clearDaggerCast(currentPlayer.id)
       networkManager.sendPlayerAttack(monsterId)
@@ -2356,12 +2360,14 @@
   ) {
     if (options.editorMode) cancelAutoTravel()
     const skillState = get(daggerSkillState)
-    const hasDagger =
-      getItemDef($inventoryStore.equipped.main_hand?.item_def_id ?? '')
-        ?.weaponType === DAGGER_SKILL.weaponType
+    const hasDagger = abilityEquipmentAllowed(
+      DAGGER_SKILL.clip,
+      $inventoryStore.equipped
+    )
     if (
       options.editorMode ||
       !currentPlayer ||
+      !isAbilityAvailable(DAGGER_SKILL.clip, currentPlayer.characterClass) ||
       currentPlayer.health <= 0 ||
       !hasDagger ||
       currentPlayer.mounted

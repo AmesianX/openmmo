@@ -1,25 +1,37 @@
+import { ability_mana_cost } from '../wasm/onlinerpg_shared'
 import { getItemDef } from './itemDefs'
 import { DAGGER_SKILL } from './daggerSkill'
-import type { PlayerInventory } from '../network/networkTypes'
+import type { CharacterClass, PlayerInventory } from '../network/networkTypes'
 
 export const GUARDIAN_WARD = {
+  get manaCost() {
+    return ability_mana_cost('guardian_ward')
+  },
   id: 'guardian_ward',
   name: 'Guardian Ward',
   icon: '/icons/skills/guardian-ward.png',
   description: 'Protect yourself and nearby party members.',
   buffDescription: 'Guard +10%',
-  stats: [
-    { label: 'Guard', value: '+10%' },
-    { label: 'Weapon', value: 'Sword or Mace' },
-    { label: 'Off hand', value: 'Shield' },
-    { label: 'Radius', value: '20 m' },
-    { label: 'Duration', value: '60 s' },
-    { label: 'Cooldown', value: '45 s' },
-  ],
+  get stats() {
+    return [
+      { label: 'Guard', value: '+10%' },
+      { label: 'Class', value: 'Knight' },
+      { label: 'Weapon', value: 'Sword or Mace' },
+      { label: 'Off hand', value: 'Shield' },
+      { label: 'Type', value: 'Magic' },
+      { label: 'Cost', value: `${this.manaCost} MP` },
+      { label: 'Radius', value: '20 m' },
+      { label: 'Duration', value: '60 s' },
+      { label: 'Cooldown', value: '45 s' },
+    ]
+  },
   details: ['Reapplying refreshes the duration. Does not stack.'],
 } as const
 
 export const RADIANCE = {
+  get manaCost() {
+    return ability_mana_cost('radiance')
+  },
   id: 'radiance',
   name: 'Radiance',
   icon: '/icons/skills/radiance.png',
@@ -36,6 +48,9 @@ export const RADIANCE = {
 } as const
 
 export const TRUE_AIM = {
+  get manaCost() {
+    return ability_mana_cost('bow_mark')
+  },
   id: 'bow_mark',
   target: 'monster',
   name: 'True Aim',
@@ -61,23 +76,41 @@ export type AbilityTimer = {
 }
 
 export const DOUBLE_SLASH = {
+  get manaCost() {
+    return ability_mana_cost(DAGGER_SKILL.clip)
+  },
   id: DAGGER_SKILL.clip,
   name: 'Double Slash',
   icon: DAGGER_SKILL.icon,
   description: 'Strike twice in quick succession.',
   stats: [
+    { label: 'Type', value: 'Combat Skill' },
     { label: 'Damage', value: '100% × 2' },
+    { label: 'Class', value: 'Rogue' },
     { label: 'Weapon', value: 'Dagger' },
     { label: 'Cooldown', value: `${DAGGER_SKILL.cooldownMs / 1000} s` },
   ],
 } as const
 
+export const ABILITIES = [
+  GUARDIAN_WARD,
+  DOUBLE_SLASH,
+  RADIANCE,
+  TRUE_AIM,
+] as const
+
+export function isAbilityAvailable(
+  id: string,
+  characterClass: CharacterClass | undefined
+) {
+  return (
+    (id === DOUBLE_SLASH.id && characterClass === 'rogue') ||
+    (id === GUARDIAN_WARD.id && characterClass === 'knight')
+  )
+}
+
 export function getAbility(id: string) {
-  if (id === GUARDIAN_WARD.id) return GUARDIAN_WARD
-  if (id === RADIANCE.id) return RADIANCE
-  if (id === TRUE_AIM.id) return TRUE_AIM
-  if (id === DOUBLE_SLASH.id) return DOUBLE_SLASH
-  return undefined
+  return ABILITIES.find((ability) => ability.id === id)
 }
 
 export function abilityEquipmentAllowed(

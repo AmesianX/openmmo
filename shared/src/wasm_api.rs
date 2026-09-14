@@ -51,6 +51,20 @@ pub fn protocol_version() -> u32 {
     crate::PROTOCOL_VERSION
 }
 
+#[wasm_bindgen]
+pub fn ability_mana_cost(ability: JsValue) -> Result<u32, JsError> {
+    let ability: crate::ability::AbilityId = serde_wasm_bindgen::from_value(ability)
+        .map_err(|e| JsError::new(&format!("Invalid ability: {e}")))?;
+    Ok(ability.mana_cost())
+}
+
+#[wasm_bindgen]
+pub fn character_max_mana(class: JsValue, wis: u8, level: u32) -> Result<u32, JsError> {
+    let class: crate::CharacterClass = serde_wasm_bindgen::from_value(class)
+        .map_err(|e| JsError::new(&format!("Invalid character class: {e}")))?;
+    Ok(crate::mana::max_mana(&class, wis, level))
+}
+
 /// Close code the server ends a desynced session with. Cached client-side like
 /// the refusal code: `onclose` can fire before wasm is loaded.
 #[wasm_bindgen]

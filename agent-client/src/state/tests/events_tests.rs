@@ -1,5 +1,26 @@
 use super::*;
 
+#[test]
+fn mana_updates_are_tracked_at_zero_and_cleared_on_character_change() {
+    let (mut state, _rx) = test_state();
+    state.push_event(ServerMessage::ManaUpdate {
+        mana: 0,
+        max_mana: 15,
+    });
+    assert_eq!(state.self_mana, Some((0, 15)));
+    assert!(state.format_world_state().contains("MP: 0/15"));
+    state.push_event(ServerMessage::JoinSuccess {
+        player: test_player(0.0, 0.0),
+        is_admin: false,
+    });
+    assert_eq!(state.self_mana, None);
+    state.push_event(ServerMessage::ManaUpdate {
+        mana: 7,
+        max_mana: 17,
+    });
+    assert_eq!(state.self_mana, Some((7, 17)));
+}
+
 /// The server never echoes our own monster moves back (the owner is
 /// skipped in the fanout), so `send_command` must apply them locally.
 #[tokio::test]

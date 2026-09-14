@@ -5,6 +5,7 @@
   const HEALTH_BAR_WIDTH = 1.0
   const HEALTH_BAR_HEIGHT = 0.08
   const LOCAL_NAMETAG_RENDER_ORDER = 1000
+  const LOCAL_NAMETAG_OFFSET_PX = 8
 
   // Fixed character-sized hover box; every player shares the skeleton, so the
   // never-rendered proxy geometry/material are shared across instances too.
@@ -47,6 +48,7 @@
 </script>
 
 <script lang="ts">
+  import { visibleMana } from '../stores/gameStore'
   import { RiderMotion } from '../utils/riderMotion'
   import {
     ENCHANT_WEAPON_ANIMATION,
@@ -65,7 +67,7 @@
     RIDING_ANIMATION_PATH,
   } from '../utils/horseMount'
   import { titleName } from '../data/titleDefs'
-  import { T } from '@threlte/core'
+  import { T, useThrelte } from '@threlte/core'
   import TextLabel from './TextLabel.svelte'
   import type { Vector3 } from 'three'
   import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -276,6 +278,7 @@
   let nametagScale = $state(1)
   let nametagHeight = $state(2.7)
   let nametagGroup = $state<THREE.Group | undefined>(undefined)
+  const { size } = useThrelte()
   let animDebugInfo = $state('')
 
   const damageText = new DamageTextEmitter()
@@ -434,6 +437,7 @@
   let enchantWeapon = true
   const OVERLAP_BEFORE_END = 0.3 // Start next animation overlap 0.3 seconds before current ends
   const _nametagPos = new THREE.Vector3()
+  const _nametagUp = new THREE.Vector3()
 
   // The source cast clip keeps rod-jerking flourishes after the swing; cut
   // where the pose meets the idle stance.
@@ -1506,7 +1510,6 @@
       ringPos = null
     }
 
-    // Update nametag logic (formerly in useTask)
     if (camera && nametagGroup) {
       _nametagPos.set(position.x, position.y + 2.2, position.z)
       const dist = camera.position.distanceTo(_nametagPos)
@@ -1518,12 +1521,20 @@
       nametagScale = billboardScale(dist)
       nametagHeight = minHeight + billboardZoomT(dist) * (maxHeight - minHeight)
 
-      // Update nametag group transform
       nametagGroup.position.set(
         position.x,
         position.y + nametagHeight,
         position.z
       )
+      if (isCurrentPlayer && size.current.height > 0) {
+        const pxPerUnit =
+          (camera.projectionMatrix.elements[5] * size.current.height) / 2
+        _nametagUp.setFromMatrixColumn(camera.matrixWorld, 1)
+        nametagGroup.position.addScaledVector(
+          _nametagUp,
+          LOCAL_NAMETAG_OFFSET_PX / pxPerUnit
+        )
+      }
       nametagGroup.scale.set(nametagScale, nametagScale, nametagScale)
       nametagGroup.quaternion.copy(camera.quaternion)
     }
@@ -1770,6 +1781,37 @@
   <T is={torchFireGroup} />
 {/if}
 
+{#snippet resourceBar(y: number, ratio: number, color: string)}
+  <T.Group position.y={y} renderOrder={LOCAL_NAMETAG_RENDER_ORDER}>
+    <T.Mesh>
+      <T.PlaneGeometry args={[HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT]} />
+      <T.MeshBasicMaterial
+        color="#000000"
+        transparent
+        opacity={0.5}
+        depthTest={false}
+        depthWrite={false}
+      />
+    </T.Mesh>
+    {#if ratio > 0}
+      <T.Mesh
+        position.x={-HEALTH_BAR_WIDTH / 2}
+        position.z={0.001}
+        scale.x={ratio}
+        renderOrder={1}
+      >
+        <T is={healthBarFillGeometry} />
+        <T.MeshBasicMaterial
+          {color}
+          transparent
+          depthTest={false}
+          depthWrite={false}
+        />
+      </T.Mesh>
+    {/if}
+  </T.Group>
+{/snippet}
+
 <!-- Name tag (separate from character to avoid rotation inheritance) -->
 <T.Group
   bind:ref={nametagGroup}
@@ -1784,12 +1826,13 @@
       outlineWidth={7}
       anchorX="center"
       anchorY="middle"
-      position={[0, 0.3, 0]}
+      position={[0, isCurrentPlayer ? 0.26 : 0.3, 0]}
       depthTest={!isCurrentPlayer}
     />
   {/if}
   <TextLabel
     text={name}
+    position={[0, isCurrentPlayer ? -0.04 : 0, 0]}
     fontSize={0.3}
     color={isCurrentPlayer ? '#4299e1' : '#ffffff'}
     outlineColor="#000000"
@@ -1799,36 +1842,19 @@
     depthTest={!isCurrentPlayer}
   />
 
-  <!-- Health Bar -->
   {#if isCurrentPlayer}
-    <T.Group position.y={-0.3} renderOrder={LOCAL_NAMETAG_RENDER_ORDER}>
-      <!-- Background (black) -->
-      <T.Mesh>
-        <T.PlaneGeometry args={[HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT]} />
-        <T.MeshBasicMaterial
-          color="#000000"
-          transparent
-          opacity={0.5}
-          depthTest={false}
-          depthWrite={false}
-        />
-      </T.Mesh>
-      <!-- Foreground (red) -->
-      <T.Mesh
-        position.x={-HEALTH_BAR_WIDTH / 2}
-        position.z={0.001}
-        scale.x={Math.max(0.001, displayedHealthRatio)}
-        renderOrder={1}
-      >
-        <T is={healthBarFillGeometry} />
-        <T.MeshBasicMaterial
-          color="#ff0000"
-          transparent
-          depthTest={false}
-          depthWrite={false}
-        />
-      </T.Mesh>
-    </T.Group>
+    {@render resourceBar(
+      -0.42 + HEALTH_BAR_HEIGHT,
+      Math.max(0.001, displayedHealthRatio),
+      '#ff0000'
+    )}
+    {#if $visibleMana}
+      {@render resourceBar(
+        -0.42,
+        $visibleMana.mana / $visibleMana.max_mana,
+        '#4299e1'
+      )}
+    {/if}
   {/if}
 
   {#if animDebugInfo}

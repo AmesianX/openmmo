@@ -1,12 +1,7 @@
 <script lang="ts">
   import ItemLockButton from './ItemLockButton.svelte'
   import SkillIcon from './SkillIcon.svelte'
-  import {
-    DOUBLE_SLASH,
-    GUARDIAN_WARD,
-    RADIANCE,
-    TRUE_AIM,
-  } from '../data/abilities'
+  import { ABILITIES, isAbilityAvailable } from '../data/abilities'
   import {
     inventoryStore,
     isTorchItemDefId,
@@ -40,7 +35,7 @@
   import { draggablePanel } from '../actions/draggablePanel'
   import CharacterStatusPane from './CharacterStatusPane.svelte'
   import { earnedTitles } from '../stores/titleStore'
-  import { gameStore } from '../stores/gameStore'
+  import { gameStore, visibleMana } from '../stores/gameStore'
   import { titleName } from '../data/titleDefs'
   import {
     characterPanelTab,
@@ -79,8 +74,7 @@
     equipBgList.find((path) => !failedEquipBgs.has(path)) ?? equipBgList.at(-1)
   )
 
-  // Effective stats come from the server (EffectiveStatsUpdated) so they never
-  // drift from its formula; fall back to base until the first update arrives.
+  // Use base stats until the first server update.
   function withBonus(key: 'guard' | 'cha'): string {
     const base = attributes[key]
     const eff = $playerEffectiveStats?.[key] ?? base
@@ -116,6 +110,12 @@
   const trainedSkills = $derived(
     (Object.entries($skillsStore.map) as [SkillId, SkillProgress][]).sort(
       ([a], [b]) => a.localeCompare(b)
+    )
+  )
+
+  const availableAbilities = $derived(
+    ABILITIES.filter((ability) =>
+      isAbilityAvailable(ability.id, characterClass)
     )
   )
 
@@ -277,6 +277,14 @@
               <span class="stat-label">HP</span>
               <span class="stat-value hp-value">{currentHp}/{maxHp}</span>
             </div>
+            {#if $visibleMana}
+              <div class="stat-row">
+                <span class="stat-label">MP</span>
+                <span class="stat-value mana-value"
+                  >{$visibleMana.mana}/{$visibleMana.max_mana}</span
+                >
+              </div>
+            {/if}
             <div class="stat-row">
               <span class="stat-label">Guard</span>
               <span class="stat-value guard-value">{withBonus('guard')}</span>
@@ -413,12 +421,13 @@
         </div>
         {#if $characterPanelTab === 'skills'}
           <div class="pane-skills">
-            <div class="skill-grid" role="group" aria-label="Skills">
-              <SkillIcon {...GUARDIAN_WARD} quickslotSkill={GUARDIAN_WARD.id} />
-              <SkillIcon {...DOUBLE_SLASH} quickslotSkill={DOUBLE_SLASH.id} />
-              <SkillIcon {...RADIANCE} quickslotSkill={RADIANCE.id} />
-              <SkillIcon {...TRUE_AIM} quickslotSkill={TRUE_AIM.id} />
-            </div>
+            {#if availableAbilities.length > 0}
+              <div class="skill-grid" role="group" aria-label="Skills">
+                {#each availableAbilities as ability (ability.id)}
+                  <SkillIcon {...ability} quickslotSkill={ability.id} />
+                {/each}
+              </div>
+            {/if}
             {#if trainedSkills.length > 0}
               <div class="skills-list">
                 {#each trainedSkills as [skillId, progress] (skillId)}
@@ -656,6 +665,10 @@
 
   .level-value {
     color: #f0c040;
+  }
+
+  .mana-value {
+    color: #60a5fa;
   }
 
   .hp-value {

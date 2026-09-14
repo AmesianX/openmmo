@@ -8,6 +8,8 @@ NetHack/D&D 스타일의 스탯 기반 전투 시스템. 모든 전투 계산은
 타격 취소 규칙은 [Double Slash](abilities/DOUBLE_SLASH.md)에 정리한다. 다른 어빌리티는
 [어빌리티 문서 목록](abilities/README.md)을 참고한다.
 
+마나 도입과 전투 기술·마법의 구분은 [마나·스킬·마법 설계 초안](MANA_SKILLS_MAGIC.md)에 정리한다. WIS에 따른 최대 MP·레벨당 증가량·자연 회복과 Guardian Ward의 MP 2 비용은 구현되어 있다. INT 기반 공격 마법·마법 Guard는 후속 설계다.
+
 ## 캐릭터 스탯 (Attributes)
 
 6개의 기본 능력치. 범위는 3~18.

@@ -1,3 +1,4 @@
+import { manaState } from './manaStore'
 import { derived, get, writable } from 'svelte/store'
 import { SvelteMap } from 'svelte/reactivity'
 import type { Vector3 } from 'three'
@@ -164,7 +165,18 @@ export const isAdminUser = writable(false)
  *  `gameStore` so the HUD banner doesn't resubscribe on every game update. */
 export const serverNotice = writable<string | null>(null)
 
+const hasCurrentPlayer = derived(
+  gameStore,
+  (game) => game.currentPlayer !== null
+)
+
+export const visibleMana = derived(
+  [manaState, hasCurrentPlayer],
+  ([mana, visible]) => (visible ? mana : null)
+)
+
 export const resetGameStore = () => {
+  manaState.set(null)
   resetDaggerSkill()
   resetLandClaimPreview()
   gameStore.set({

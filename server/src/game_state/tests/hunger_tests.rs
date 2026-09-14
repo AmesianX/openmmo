@@ -826,6 +826,7 @@ fn satiation_survives_a_save_and_reload() {
         level: 1,
         max_hp: 16,
         health: 16,
+        mana: None,
         floor_level: 0,
         gold: 0,
         satiation: 123,

@@ -1,6 +1,6 @@
 use super::GameState;
 use crate::item_defs::{ArmorType, WeaponType};
-use crate::types::{PlayerId, ServerMessage};
+use crate::types::{CharacterClass, PlayerId, ServerMessage};
 use onlinerpg_shared::ability::{
     AbilityId, AbilityRejectReason, AbilityTimer, BOW_MARK_COOLDOWN_MS, BOW_MARK_DURATION_MS,
     GUARDIAN_WARD_COOLDOWN_MS, GUARDIAN_WARD_DURATION_MS, GUARDIAN_WARD_RADIUS,
@@ -119,6 +119,10 @@ impl GameState {
         };
         match result {
             Ok((position, floor_level, targets)) => {
+                if ability == AbilityId::GuardianWard {
+                    self.mark_dirty(player_id).await;
+                    self.send_mana_update(player_id).await;
+                }
                 self.send_direct_message(player_id, self.ability_cooldown_message(player_id).await)
                     .await;
                 for target in &targets {
@@ -338,7 +342,9 @@ impl GameState {
         let players = self.players.read().await;
         let caster = players
             .get(player_id)
-            .filter(|p| p.is_damageable(Self::now_ms()))
+            .filter(|p| {
+                p.class == CharacterClass::Knight && p.is_damageable(Self::now_ms()) && !p.mounted
+            })
             .ok_or(AbilityRejectReason::Unavailable)?;
         let chars = self.player_characters.read().await;
         let character = chars
@@ -380,6 +386,11 @@ impl GameState {
         if state.cooldown_ms(character, AbilityId::GuardianWard) > 0 {
             return Err(AbilityRejectReason::Cooldown);
         }
+        let mut mana = self.mana.write().await;
+        let data = mana
+            .get_mut(player_id)
+            .ok_or(AbilityRejectReason::Unavailable)?;
+        data.spend(AbilityId::GuardianWard.mana_cost())?;
         let now = Instant::now();
         state.cooldowns.insert(
             (character, AbilityId::GuardianWard),

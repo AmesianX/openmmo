@@ -725,6 +725,7 @@ impl GameState {
             let players = self.players.read().await;
             let hunger = self.hunger.read().await;
             let inventories = self.inventories.read().await;
+            let mana = self.mana.read().await;
             let ammo_of = |id| inventories.get(id).and_then(|inv| inv.active_ammo.clone());
             match (players.get(buyer), players.get(seller)) {
                 (Some(b), Some(s)) => Some(vec![
@@ -735,6 +736,7 @@ impl GameState {
                         buyer_gold_after,
                         super::hunger::satiation_for_save(&hunger, buyer),
                         ammo_of(buyer),
+                        mana.get(buyer).map(|data| data.mana),
                     ),
                     build_save_data(
                         s,
@@ -743,6 +745,7 @@ impl GameState {
                         seller_gold_after,
                         super::hunger::satiation_for_save(&hunger, seller),
                         ammo_of(seller),
+                        mana.get(seller).map(|data| data.mana),
                     ),
                 ]),
                 _ => None,

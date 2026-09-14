@@ -1,6 +1,10 @@
 # 마나·스킬·마법 설계
 
-작성일: 2026-09-14. 마나·공격 마법·마법 Guard는 미구현이다. 이 문서는 기본 규칙과 초기 수치를 정하며, 기능 공개 전에 필요한 결정과 후속 확장은 11절에 구분한다.
+작성일: 2026-09-14. 이 문서는 기본 규칙과 초기 수치를 정한다.
+
+현재 구현: 클래스·WIS·레벨에 따른 최대 MP, 현재 MP 저장·복원, 16초 자연 회복, Guardian Ward의 MP 2 소모, 소유자 게이지·부족 안내·에이전트 상태 동기화. 기존 캐릭터는 첫 접속 시 최대 MP로 초기화한다.
+
+침대 회복·마나 물약·공격 마법·마법 장비·마법 Guard·시전 시간·생활 스킬 전환은 미구현이다. 아래 관련 규칙은 후속 구현을 위한 설계이며, 공개 전 필요한 결정은 11절에 정리한다.
 
 ## 1. 설계 원칙
 
@@ -48,10 +52,10 @@ STR·DEX에 투자한 물리 전투와 INT·WIS에 투자한 마법 전투가 �
 
 ## 3. 기존 능력
 
-| 능력 | 제공 상태 | 분류 | MP 도입 시 비용 | 동작 |
+| 능력 | 제공 상태 | 분류 | MP 비용 | 동작 |
 | --- | --- | --- | --- | --- |
 | Double Slash | Rogue 기본 | 전투 기술 | MP 0 | 단검 필요. 다음 기본 공격을 2연격으로 대체. 쿨다운 10초 |
-| Guardian Ward | Knight 기본 | 방어 마법 | 현재 포만도 1 → MP 2 | Sword/Mace + Shield. 즉시 발동. 자신·주변 파티원의 물리 Guard +10%. 지속 60초, 쿨다운 45초 |
+| Guardian Ward | Knight 기본 | 방어 마법 | MP 2 | Sword/Mace + Shield. 즉시 발동. 자신·주변 파티원의 물리 Guard +10%. 지속 60초, 쿨다운 45초 |
 | Radiance | 비공개 | 조명 마법 | 켜기 미정, 끄기 MP 0 | 켠 뒤 120초 유지. 켜기·끄기 쿨다운 0.8초 |
 | True Aim | 비공개 | 미정 | 분류에 따라 결정 | Bow로 개인 대상 표식. 지속 5초, 쿨다운 10초 |
 
@@ -90,6 +94,8 @@ mana_die_mean = average(max(roll, MD / 2), roll = 1..MD)
 mana_growth_per_level = max(1, 0.50 × (mana_die_mean + wis_mod))
 max_mana = starting_mana + floor((Level - 1) × mana_growth_per_level)
 ```
+
+현재 서버에 남아 있는 MD 표 밖의 플레이어 클래스는 호환성을 위해 d4를 적용한다. 이 구현에서는 운영 NPC의 MP를 초기화하거나 회복하지 않는다.
 
 `Level`은 캐릭터 레벨이며 1부터 시작한다. `trunc`는 0 방향 버림, `floor`는 내림이다. MD 외의 클래스·종족 MP 보너스는 없다. 같은 MD·WIS·레벨이면 MP가 같고, CON·HP용 HD·실제 HP 주사위 결과는 영향을 주지 않는다.
 
@@ -399,7 +405,9 @@ MP는 소유자 전용 `ManaUpdate`로 현재량·최대량을 전송한다. 로
 
 ## 9. 화면과 입력
 
-MP를 쓰는 능력이 있는 캐릭터에게 HP 아래 파란 게이지와 현재량/최대량을 표시한다. MP 0에서도 표시한다. 초기 대상은 Knight이며, Double Slash만 가진 Rogue는 게이지를 숨긴다.
+모든 플레이어 클래스의 캐릭터 위 HP 바 아래에 파란 MP 게이지를 표시한다. 아직 MP를 쓰는 능력이 없거나 MP가 0이어도 표시한다. 현재량/최대량은 캐릭터 상세에서 표시한다.
+
+캐릭터 선택 화면에는 Max HP와 Max MP를 함께 표시한다. Max MP는 선택한 캐릭터의 클래스·기본 WIS·레벨로 서버와 같은 공통 계산식을 사용한다.
 
 SKILLS 탭은 `Combat Skills`, `Magic`, `Life Skills`로 구분하고 빈 분류는 숨긴다. 기존 1–0 퀵슬롯과 드래그 등록을 공유한다.
 
@@ -424,10 +432,10 @@ SKILLS 탭은 `Combat Skills`, `Magic`, `Life Skills`로 구분하고 빈 분류
 1. 클래스별 MD·MP 계산식, 현재량 저장·마이그레이션·상태 수명 처리를 추가한다. 소수 성장분은 정수 비율로 계산한다.
 2. 자연 회복·침대 수면·일반 및 큰 마나 물약과 소유자 상태 메시지를 추가한다. HP와 MP의 회복 대상은 독립적으로 수집하여 HP가 가득 차도 MP를 회복한다. 서버·브라우저·WASM·에이전트 프로토콜을 함께 갱신한다.
 3. 게이지·툴팁·부족 안내를 연결한다. 클라이언트 설명과 서버 비용은 같은 정의를 사용한다.
-4. MP 검증·차감·회복이 준비되면 Guardian Ward의 포만도 비용을 MP로 교체한다. [Guardian Ward](abilities/GUARDIAN_WARD.md)·[Hunger](HUNGER.md) 문서도 갱신한다.
+4. Guardian Ward는 포만도 비용을 MP 2로 교체했다. [Guardian Ward](abilities/GUARDIAN_WARD.md)·[Hunger](HUNGER.md) 문서도 갱신한다.
 5. 공격 마법 도입 시 마법 무기의 피해 보너스·인챈트 연동, 장비의 마법 방어 옵션·플레이어 및 몬스터의 마법 Guard, 피해·적중·갑옷 시전 배수·중단 처리를 구현하고 전투 효율을 검증한다.
 
-능력 정의는 [shared/src/ability.rs](../shared/src/ability.rs), 서버 발동은 [abilities.rs](../server/src/game_state/abilities.rs), 클라이언트 설명은 [abilities.ts](../client/src/lib/data/abilities.ts)에서 다룬다. 생활 스킬은 MP와 독립적으로 전환하며, [SkillProgress](../shared/src/skills.rs)를 습득 단계 기록으로 대체한다.
+MP 계산은 [shared/src/mana.rs](../shared/src/mana.rs), 상태·회복은 [server/src/game_state/mana.rs](../server/src/game_state/mana.rs)에서 다룬다. 능력 정의는 [shared/src/ability.rs](../shared/src/ability.rs), 서버 발동은 [abilities.rs](../server/src/game_state/abilities.rs), 클라이언트 설명은 [abilities.ts](../client/src/lib/data/abilities.ts)에서 다룬다. 생활 스킬은 MP와 독립적으로 전환하며, [SkillProgress](../shared/src/skills.rs)를 습득 단계 기록으로 대체한다.
 
 ### 검증 항목
 
@@ -452,7 +460,7 @@ SKILLS 탭은 `Combat Skills`, `Magic`, `Life Skills`로 구분하고 빈 분류
 
 | 기능 | 필요한 결정 |
 | --- | --- |
-| 적용 클래스 | 현재 서버의 생성 가능 클래스와 MD 표의 대상이 다르므로 생성 경로·기존 대상 외 캐릭터의 처리 방침 정리 |
+| 적용 클래스 | MD 표 밖의 기존 플레이어 클래스는 현재 d4로 처리한다. 생성 경로 정리와 최종 지원 클래스 확정 |
 | 회복·물약 | 초반·중반 회복 속도 검증, HP 수면 회복과의 형평성, 물약 두 종류의 공급·가격·재사용 제한과 HP 물약의 대기 공유 |
 | 첫 공격 마법 | 화염구 습득 조건, 취기 등 전투 디버프의 마법 적용 범위, 시전 중 물약·아이템 사용 규칙 |
 | 마법 장비·몬스터 | 실제 마법 무기·방어 옵션과 가격, 몬스터별 마법 Guard 수치 |

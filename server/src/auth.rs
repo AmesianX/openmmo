@@ -247,6 +247,7 @@ pub struct CharacterRecord {
     pub last_z: f32,
     pub last_rotation: f32,
     pub health: Option<u32>,
+    pub mana: Option<u32>,
     pub floor_level: i8,
     pub gold: i64,
     /// Nonzero unlocks admin for ADMIN_EMAILS-allowlisted accounts (tiers reserved).
@@ -264,6 +265,7 @@ pub struct CharacterSaveData {
     pub level: u32,
     pub max_hp: u32,
     pub health: u32,
+    pub mana: Option<u32>,
     pub floor_level: i8,
     pub gold: i64,
     pub satiation: u32,
@@ -287,7 +289,7 @@ pub struct TradeLedgerEntry {
 }
 
 /// Column list shared between queries that return full CharacterRecord rows.
-const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role, satiation";
+const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role, satiation, mana";
 
 fn class_from_row(row: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<CharacterClass> {
     let class_str: String = row.get(idx)?;
@@ -342,6 +344,9 @@ fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterR
             .get::<_, i64>(23)
             .unwrap_or(i64::from(onlinerpg_shared::hunger::SATIATION_START))
             .clamp(0, i64::from(onlinerpg_shared::hunger::SATIATION_MAX)) as u32,
+        mana: row
+            .get::<_, Option<i64>>(24)?
+            .map(|v| v.clamp(0, i64::from(u32::MAX)) as u32),
     })
 }
 
@@ -523,7 +528,7 @@ impl AuthService {
         let mut stmt = conn.prepare(
             "UPDATE characters SET last_x = ?1, last_y = ?2, last_z = ?3, last_rotation = ?4, \
              xp = ?5, level = ?6, max_hp = ?7, health = ?8, floor_level = ?9, gold = ?10, \
-             satiation = ?11, last_seen_at = ?12, active_ammo = ?14 WHERE id = ?13",
+             satiation = ?11, last_seen_at = ?12, active_ammo = ?14, mana = ?15 WHERE id = ?13",
         )?;
         let now = unix_now();
         for d in data {
@@ -542,6 +547,7 @@ impl AuthService {
                 now,
                 d.character_id,
                 d.active_ammo.as_deref(),
+                d.mana.map(i64::from),
             ])?;
         }
         Ok(())
@@ -1390,6 +1396,7 @@ impl AuthService {
                 format!("REAL NOT NULL DEFAULT {}", spawn.rotation),
             ),
             ("health", "INTEGER".into()),
+            ("mana", "INTEGER".into()),
             ("floor_level", "INTEGER NOT NULL DEFAULT 0".into()),
             ("gender", "TEXT NOT NULL DEFAULT 'male'".into()),
             ("gold", "INTEGER NOT NULL DEFAULT 0".into()),
@@ -1958,6 +1965,7 @@ impl AuthService {
             last_z: world_config().spawn_position.z,
             last_rotation: world_config().spawn_position.rotation,
             health: None,
+            mana: None,
             floor_level: 0,
             gold: 0,
             admin_role: 0,

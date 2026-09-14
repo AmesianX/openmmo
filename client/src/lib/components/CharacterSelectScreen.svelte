@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AccountCharacter } from '../network/socket'
+  import { character_max_mana } from '../wasm/onlinerpg_shared'
 
   interface Props {
     accountName: string
@@ -28,6 +29,15 @@
   let errorMessage = $state('')
   let selectedCharacter = $derived(
     characters.find((character) => character.id === selectedCharacterId)
+  )
+  const maxMp = $derived(
+    selectedCharacter
+      ? character_max_mana(
+          selectedCharacter.class,
+          selectedCharacter.attributes.wis,
+          selectedCharacter.level
+        )
+      : 0
   )
 
   function isBusy() {
@@ -88,7 +98,8 @@
         <span class="info-name">{selectedCharacter.name}</span>
         <span class="info-meta">
           Lv. {selectedCharacter.level}
-          {formatCharacterClass(selectedCharacter.class)} · HP {selectedCharacter.max_hp}
+          {formatCharacterClass(selectedCharacter.class)} · Max HP {selectedCharacter.max_hp}
+          · Max MP {maxMp}
         </span>
       </div>
 

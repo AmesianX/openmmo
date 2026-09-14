@@ -1,5 +1,6 @@
 use super::*;
 use onlinerpg_shared::ability::{AbilityId, AbilityRejectReason};
+use onlinerpg_shared::hunger::SATIATION_START;
 use std::time::Duration;
 
 const WARD: AbilityId = AbilityId::GuardianWard;
@@ -611,6 +612,8 @@ async fn radiance_rejects_dead_loading_and_mounted_casters_and_clears_on_death_o
 async fn add_ward_player(gs: &GameState, name: &str, x: f32, character: i64) -> DirectRx {
     gs.add_player(make_player(name, x, 0.0)).await;
     gs.mark_world_ready(&pid(name)).await;
+    gs.register_hunger(&pid(name), SATIATION_START).await;
+    gs.register_mana(&make_player(name, x, 0.0), 10, None).await;
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 20;
     gs.player_characters
@@ -641,6 +644,111 @@ async fn party(gs: &GameState, leader: &str, member: &str) {
     gs.invite_to_party(&pid(leader), member).await;
     gs.respond_to_party_invite(&pid(member), &pid(leader), true)
         .await;
+}
+
+#[tokio::test]
+async fn ward_spends_two_mana_and_syncs_and_saves_the_new_state() {
+    for before in [15, 3, 2] {
+        let gs = make_test_game_state(&format!("ward_mana_{before}"));
+        let mut rx = add_ward_player(&gs, "caster", 0.0, 1).await;
+        let id = pid("caster");
+        gs.mana.write().await.get_mut(&id).unwrap().mana = before;
+        gs.register_hunger(&id, 0).await;
+        gs.remove_dirty(&id).await;
+        gs.use_targeted_ability(&id, WARD, None).await;
+        assert_eq!(gs.mana.read().await[&id].mana, before - 2);
+        assert_eq!(gs.hunger_satiation(&id).await, Some(0));
+        assert!(gs.dirty_players.read().await.contains(&id));
+        assert_eq!(
+            gs.get_player_save_data(&id).await.unwrap().mana,
+            Some(before - 2)
+        );
+        let updates = messages(&mut rx);
+        assert!(updates.iter().any(|message| matches!(message,
+            ServerMessage::ManaUpdate { mana, max_mana: 15 } if *mana == before - 2)));
+        assert!(!updates
+            .iter()
+            .any(|m| matches!(m, ServerMessage::HungerUpdate { .. })));
+        assert!(updates.iter().any(|message| matches!(message,
+            ServerMessage::AbilityUsed { ability, .. } if *ability == WARD)));
+    }
+}
+
+#[tokio::test]
+async fn ward_rejects_insufficient_mana_without_buff_cost_or_cooldown() {
+    for before in [0, 1] {
+        let gs = make_test_game_state(&format!("ward_empty_mana_{before}"));
+        let mut rx = add_ward_player(&gs, "caster", 0.0, 1).await;
+        let id = pid("caster");
+        gs.mana.write().await.get_mut(&id).unwrap().mana = before;
+        gs.remove_dirty(&id).await;
+        gs.use_ability(&id, WARD).await;
+        rejected(&mut rx, AbilityRejectReason::NotEnoughMana);
+        assert_eq!(gs.mana.read().await[&id].mana, before);
+        assert!(!gs.dirty_players.read().await.contains(&id));
+        assert_eq!(gs.effective_guard(&id).await, 31);
+        gs.mana.write().await.get_mut(&id).unwrap().mana = 2;
+        gs.use_ability(&id, WARD).await;
+        assert_eq!(gs.mana.read().await[&id].mana, 0);
+        assert_eq!(gs.effective_guard(&id).await, 34);
+    }
+}
+
+#[tokio::test]
+async fn ward_cost_is_unaffected_by_activity_drain_modifiers() {
+    let gs = make_test_game_state("ward_fixed_mana_cost");
+    let mut rx = add_ward_player(&gs, "caster", 0.0, 1).await;
+    let id = pid("caster");
+    gs.inflict_debuff(&id, "food_poisoning", Some(true)).await;
+    gs.inventories
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .bag
+        .push(bag_item(3, "silver_necklace", 1));
+    gs.equip_item(&id, 3).await;
+    messages(&mut rx);
+    gs.use_ability(&id, WARD).await;
+    assert_eq!(gs.mana.read().await[&id].mana, 13);
+    assert_eq!(gs.hunger_satiation(&id).await, Some(SATIATION_START));
+    assert!(messages(&mut rx).iter().any(|message| matches!(message,
+        ServerMessage::AbilityUsed { ability, .. } if *ability == WARD)));
+}
+
+#[tokio::test]
+async fn ward_rejects_other_classes_without_buff_or_cooldown() {
+    let gs = make_test_game_state("ward_class_requirement");
+    let mut rx = add_ward_player(&gs, "caster", 0.0, 1).await;
+    let id = pid("caster");
+    for class in [
+        CharacterClass::Rogue,
+        CharacterClass::Barbarian,
+        CharacterClass::Ranger,
+        CharacterClass::Priest,
+    ] {
+        gs.players.write().await.get_mut(&id).unwrap().class = class;
+        gs.use_targeted_ability(&id, WARD, None).await;
+        let responses = messages(&mut rx);
+        assert!(responses.iter().any(|message| matches!(message,
+            ServerMessage::AbilityRejected { ability, reason: AbilityRejectReason::Unavailable }
+                if *ability == WARD)));
+        assert!(!responses.iter().any(|message| matches!(
+            message,
+            ServerMessage::AbilityUsed { .. } | ServerMessage::BuffUpdate { .. }
+        )));
+        assert_eq!(gs.effective_guard(&id).await, 31);
+        assert_eq!(gs.mana.read().await[&id].mana, 15);
+        assert_eq!(gs.hunger_satiation(&id).await, Some(SATIATION_START));
+        assert!(responses.iter().any(|message| matches!(message,
+            ServerMessage::AbilityCooldowns { cooldowns }
+                if cooldowns.iter().all(|timer| timer.remaining_ms == 0))));
+    }
+    gs.players.write().await.get_mut(&id).unwrap().class = CharacterClass::Knight;
+    gs.use_targeted_ability(&id, WARD, None).await;
+    assert_eq!(gs.effective_guard(&id).await, 34);
+    assert!(messages(&mut rx).iter().any(|message| matches!(message,
+        ServerMessage::AbilityUsed { ability, .. } if *ability == WARD)));
 }
 
 #[tokio::test]
@@ -678,6 +786,11 @@ async fn ward_checks_weapon_classification_and_off_hand_armor_type() {
                 .any(|m| matches!(m, ServerMessage::AbilityUsed { .. })));
         } else {
             assert_eq!(gs.effective_guard(&pid(&name)).await, before);
+            assert_eq!(
+                gs.hunger_satiation(&pid(&name)).await,
+                Some(SATIATION_START)
+            );
+            assert_eq!(gs.mana.read().await[&pid(&name)].mana, 15);
             rejected(&mut rx, AbilityRejectReason::Equipment);
         }
     }
@@ -705,6 +818,7 @@ async fn ward_affects_caster_and_living_party_members_within_twenty_meters_on_sa
     }
     {
         let mut players = gs.players.write().await;
+        players.get_mut(&pid("edge")).unwrap().class = CharacterClass::Rogue;
         players.get_mut(&pid("downstairs")).unwrap().floor_level = -1;
         players.get_mut(&pid("dead")).unwrap().health = 0;
     }
@@ -715,6 +829,11 @@ async fn ward_affects_caster_and_living_party_members_within_twenty_meters_on_sa
     for name in ["caster", "edge"] {
         assert_eq!(gs.effective_guard(&pid(name)).await, 34);
     }
+    assert_eq!(gs.mana.read().await[&pid("caster")].mana, 13);
+    assert_eq!(gs.mana.read().await[&pid("edge")].mana, 15);
+    assert!(!messages(&mut receivers[1])
+        .iter()
+        .any(|message| matches!(message, ServerMessage::ManaUpdate { .. })));
     for name in ["outside", "downstairs", "dead", "stranger"] {
         assert_eq!(gs.effective_guard(&pid(name)).await, 31);
     }
@@ -751,8 +870,14 @@ async fn ward_cooldown_is_atomic_and_recast_refreshes_without_stacking() {
     let gs = make_test_game_state("ward_refresh");
     let mut rx = add_ward_player(&gs, "caster", 0.0, 1).await;
     let caster = pid("caster");
-    tokio::join!(gs.use_ability(&caster, WARD), gs.use_ability(&caster, WARD));
+    tokio::time::advance(Duration::from_secs(16)).await;
+    tokio::join!(
+        gs.use_ability(&caster, WARD),
+        gs.use_ability(&caster, WARD),
+        gs.tick_regeneration()
+    );
     let casts = messages(&mut rx);
+    assert_eq!(gs.mana.read().await[&caster].mana, 13);
     assert_eq!(
         casts
             .iter()
@@ -763,8 +888,10 @@ async fn ward_cooldown_is_atomic_and_recast_refreshes_without_stacking() {
     tokio::time::advance(Duration::from_secs(44)).await;
     gs.use_ability(&pid("caster"), WARD).await;
     rejected(&mut rx, AbilityRejectReason::Cooldown);
+    assert_eq!(gs.mana.read().await[&caster].mana, 13);
     tokio::time::advance(Duration::from_secs(1)).await;
     gs.use_ability(&pid("caster"), WARD).await;
+    assert_eq!(gs.mana.read().await[&caster].mana, 11);
     assert_eq!(gs.effective_guard(&pid("caster")).await, 34);
     tokio::time::advance(Duration::from_secs(59)).await;
     assert_eq!(gs.effective_guard(&pid("caster")).await, 34);

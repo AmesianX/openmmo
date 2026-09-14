@@ -1219,6 +1219,10 @@ pub enum ServerMessage {
     PlayerRespawned {
         player: Player,
     },
+    ManaUpdate {
+        mana: u32,
+        max_mana: u32,
+    },
     PlayerHealthUpdate {
         player_id: PlayerId,
         health: u32,

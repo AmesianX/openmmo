@@ -1,5 +1,7 @@
 # Fishing
 
+**Planned progression change (2026-09-14):** fishing will use learned abilities or licenses with a small number of tiers, such as Basic and Advanced Fishing, without mana costs or use-based XP. Tier requirements, effects, and migration of existing characters remain to be designed. See [the skills design](MANA_SKILLS_MAGIC.md). The sections below describe the current XP/level implementation.
+
 Cast a rod at water, wait for the bite, hook in time, land the fish. The first
 gathering profession, and the first consumer of the trained-skill system
 (`shared/src/skills.rs`). Server-authoritative end to end: every timer, roll

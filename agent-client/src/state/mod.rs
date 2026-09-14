@@ -214,6 +214,7 @@ pub struct SharedState {
     /// Our own gold in the smallest unit (from GoldUpdate). NPC traders'
     /// wallets are real server-side gold (economy phase 3).
     pub self_gold: Option<i64>,
+    pub self_mana: Option<(u32, u32)>,
     /// Earned title ids (doc/TITLES.md); the shown one rides `self_player.title`.
     pub self_titles: Vec<String>,
     /// Our own hunger (satiation, band) from `HungerUpdate`; stays None for
@@ -444,6 +445,7 @@ impl SharedState {
             self_player_id: None,
             self_player: None,
             self_gold: None,
+            self_mana: None,
             self_titles: Vec::new(),
             self_hunger: None,
             self_move_mult: 1.0,

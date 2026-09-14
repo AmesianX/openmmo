@@ -1241,6 +1241,12 @@ fn at(x: f32) -> Position {
 
 async fn setup_dagger_skill(game: &GameState, weapon: &str) -> DirectRx {
     let rx = setup_archer(game, weapon, attrs_with(30, 10)).await;
+    game.players
+        .write()
+        .await
+        .get_mut(&pid("archer"))
+        .unwrap()
+        .class = CharacterClass::Rogue;
     game.inventories
         .write()
         .await
@@ -1277,7 +1283,9 @@ async fn dagger_skill_reconnect_reports_and_enforces_remaining_cooldown() {
     game.unregister_player_character(&old_id).await;
 
     let id = pid("reconnected");
-    game.add_player(make_player("reconnected", 0.0, 0.5)).await;
+    let mut player = make_player("reconnected", 0.0, 0.5);
+    player.class = CharacterClass::Rogue;
+    game.add_player(player).await;
     game.register_player_character(&id, 1, 0, attrs_with(30, 10), 0, None)
         .await;
     game.inventories.write().await.insert(id, inventory);
@@ -1424,6 +1432,51 @@ async fn dagger_skill_deals_two_full_hits_and_shares_the_attack_window() {
         .await;
     assert!(drain(&mut rx).iter().any(|message| matches!(message,
         ServerMessage::DaggerDoubleSlashRejected { reason, cooldown_ms, .. } if reason == "cooldown" && *cooldown_ms > 9000)));
+}
+
+#[tokio::test]
+async fn dagger_skill_rejects_other_classes_without_damage_or_cooldown() {
+    let game = make_test_game_state("dagger_skill_class_requirement");
+    let mut rx = setup_dagger_skill(&game, "dagger").await;
+    let player_id = pid("archer");
+    for class in [
+        CharacterClass::Knight,
+        CharacterClass::Barbarian,
+        CharacterClass::Caveman,
+        CharacterClass::Valkyrie,
+        CharacterClass::Ranger,
+        CharacterClass::Samurai,
+        CharacterClass::Monk,
+        CharacterClass::Priest,
+        CharacterClass::Archaeologist,
+        CharacterClass::Healer,
+        CharacterClass::Wizard,
+        CharacterClass::Tourist,
+        CharacterClass::Bard,
+        CharacterClass::Merchant,
+        CharacterClass::Guard,
+        CharacterClass::Maid,
+    ] {
+        game.players
+            .write()
+            .await
+            .get_mut(&player_id)
+            .unwrap()
+            .class = class;
+        game.dagger_double_slash(&player_id, "skill_target".into(), None)
+            .await;
+        let messages = drain(&mut rx);
+        assert!(messages.iter().any(|message| matches!(message,
+            ServerMessage::DaggerDoubleSlashRejected { reason, cooldown_ms, .. }
+                if reason == "rogue_required" && *cooldown_ms == 0)));
+        assert!(!messages.iter().any(|message| matches!(
+            message,
+            ServerMessage::DaggerDoubleSlashStarted { .. } | ServerMessage::PlayerAttacked { .. }
+        )));
+        assert_eq!(game.monsters.read().await["skill_target"].health, 500);
+        assert!(game.last_dagger_skills.read().await.is_empty());
+        assert!(game.last_player_attacks.read().await.is_empty());
+    }
 }
 
 #[tokio::test]

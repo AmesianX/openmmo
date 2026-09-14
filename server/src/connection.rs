@@ -1273,6 +1273,16 @@ async fn handle_client_message(
                 player: player.clone(),
                 is_admin: state.is_admin,
             }];
+            if let Some(message) = game_state
+                .register_mana(
+                    &player,
+                    selected_character.attributes.wis,
+                    selected_character.mana,
+                )
+                .await
+            {
+                responses.push(message);
+            }
             let datetime = game_state.current_game_datetime();
             responses.push(ServerMessage::GameTimeSync {
                 is_night: GameState::is_night(&datetime),

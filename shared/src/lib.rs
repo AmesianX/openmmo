@@ -20,6 +20,7 @@ pub mod housing;
 pub mod hunger;
 pub mod inventory;
 pub mod landscaping;
+pub mod mana;
 pub mod meal;
 pub mod messages;
 pub mod monster_ai;
@@ -162,7 +163,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v76: distinct out-of-range ability rejection.
 /// v77: Double Slash cooldown snapshots on login.
 /// v78: server-wide rain overrides in WeatherSync.
-pub const PROTOCOL_VERSION: u32 = 78;
+/// v79: owner-only ManaUpdate and Guardian Ward's MP cost.
+pub const PROTOCOL_VERSION: u32 = 79;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

@@ -15,7 +15,9 @@ impl From<EffectiveStats> for ServerMessage {
         }
     }
 }
-use crate::types::{AttackRejectReason, MonsterState, PlayerId, Position, ServerMessage};
+use crate::types::{
+    AttackRejectReason, CharacterClass, MonsterState, PlayerId, Position, ServerMessage,
+};
 use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
 use onlinerpg_shared::xp;
 use rand::Rng;
@@ -665,6 +667,17 @@ impl super::GameState {
                 .await;
             return;
         };
+        if !self
+            .players
+            .read()
+            .await
+            .get(player_id)
+            .is_some_and(|player| player.class == CharacterClass::Rogue)
+        {
+            self.reject_dagger_skill(player_id, monster_id, "rogue_required", 0)
+                .await;
+            return;
+        }
         let context = match self.validate_player_attack(player_id, &monster_id).await {
             Ok(context) => context,
             Err((reason, _)) => {
@@ -1180,6 +1193,9 @@ impl super::GameState {
             .write()
             .await
             .extend(grants.iter().map(|(id, ..)| *id));
+        for id in &leveled {
+            self.refresh_player_mana(id).await;
+        }
         if !leveled.is_empty() {
             self.party_vitals_dirty.write().await.extend(leveled);
         }
@@ -1485,6 +1501,7 @@ impl super::GameState {
     }
 
     pub async fn tick_regeneration(&self) {
+        self.tick_mana_regeneration().await;
         let mut updates = Vec::new();
 
         {
@@ -1677,7 +1694,7 @@ impl super::GameState {
             }
         }
 
-        // Mark dirty for periodic batch save
+        self.refresh_player_mana(player_id).await;
         self.mark_dirty(player_id).await;
         self.mark_party_vitals_dirty(player_id).await;
 

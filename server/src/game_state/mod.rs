@@ -246,6 +246,7 @@ mod instrument;
 mod inventory;
 mod land;
 mod landscaping;
+mod mana;
 mod metrics;
 mod monster;
 mod monster_ai;
@@ -560,6 +561,7 @@ pub struct GameState {
     /// player_id → satiation + active debuffs (doc/HUNGER.md, doc/DEBUFF.md).
     /// Owner-private like gold; official NPCs have no entry (the exemption).
     hunger: Arc<RwLock<HashMap<PlayerId, hunger::HungerData>>>,
+    mana: Arc<RwLock<HashMap<PlayerId, mana::ManaData>>>,
     food_regeneration: Arc<RwLock<HashMap<PlayerId, hunger::FoodRegeneration>>>,
     /// Regen sweep counter: Hungry players heal on alternate sweeps (×0.5).
     regen_ticks: Arc<std::sync::atomic::AtomicU64>,
@@ -785,6 +787,7 @@ impl GameState {
             pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),
             dungeon_discovery_cells,
             hunger: Arc::new(RwLock::new(HashMap::new())),
+            mana: Arc::new(RwLock::new(HashMap::new())),
             food_regeneration: Arc::new(RwLock::new(HashMap::new())),
             regen_ticks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             campfires: Arc::new(RwLock::new(HashMap::new())),

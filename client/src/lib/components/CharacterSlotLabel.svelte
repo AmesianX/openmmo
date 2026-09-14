@@ -4,6 +4,7 @@
   import { titleName } from '../data/titleDefs'
   import * as THREE from 'three'
   import type { AccountCharacter } from '../network/socket'
+  import { character_max_mana } from '../wasm/onlinerpg_shared'
 
   interface Props {
     character: AccountCharacter | undefined
@@ -34,7 +35,7 @@
 
   // Panel dimensions depend on content
   const COMPACT_PANEL = { width: 1.36, height: 0.46 }
-  const CHAR_PANEL = { width: 1.4, height: 0.95 }
+  const CHAR_PANEL = { width: 1.4, height: 1.1 }
   const EMPTY_PANEL = { width: 0.9, height: 0.4 }
 
   const panel = $derived(
@@ -47,6 +48,15 @@
   const bgColor = $derived(selected ? '#223552' : '#141e2c')
   const bgOpacity = $derived(selected ? 0.75 : 0.5)
   const borderThickness = $derived(selected ? 0.02 : 0.01)
+  const maxMp = $derived(
+    character
+      ? character_max_mana(
+          character.class,
+          character.attributes.wis,
+          character.level
+        )
+      : 0
+  )
 
   function createRoundedRectShape(
     width: number,
@@ -147,13 +157,27 @@
         />
       {/if}
       <TextLabel
-        text={`Lv. ${character.level}  HP ${character.max_hp}`}
+        text={`Lv. ${character.level}`}
         position={[
           0,
           panelHeight / 2 - (character.active_title ? 0.34 : 0.27),
           0.02,
         ]}
         fontSize={0.1}
+        color="#f0c040"
+        anchorX="center"
+        anchorY="middle"
+        depthOffset={-1}
+      />
+
+      <TextLabel
+        text={`Max HP ${character.max_hp}  Max MP ${maxMp}`}
+        position={[
+          0,
+          panelHeight / 2 - (character.active_title ? 0.46 : 0.39),
+          0.02,
+        ]}
+        fontSize={0.085}
         color="#f0c040"
         anchorX="center"
         anchorY="middle"

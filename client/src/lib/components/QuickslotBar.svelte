@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { manaState } from '../stores/manaStore'
   import {
     DOUBLE_SLASH,
     abilityRequirementsNotMet,
     getAbility,
+    isAbilityAvailable,
     abilityEquipmentAllowed,
   } from '../data/abilities'
   import { combatController } from '../managers/combatController'
@@ -50,11 +52,14 @@
     if (characterId != null) loadQuickslots(characterId)
   })
 
+  const characterClass = $derived($gameStore.currentPlayer?.characterClass)
+
   const slots = $derived.by(() => {
     const { bag, equipped } = $inventoryStore
     return $quickslots.map((entry) => {
       if (!entry) return null
       if ('skill' in entry) {
+        if (!isAbilityAvailable(entry.skill, characterClass)) return null
         const ability = getAbility(entry.skill)
         return ability ? { kind: 'ability' as const, skill: ability } : null
       }
@@ -90,6 +95,10 @@
           text: abilityRequirementsNotMet(entry.skill.name),
           sender: 'system',
         })
+        return
+      }
+      if (entry.skill.manaCost > ($manaState?.mana ?? 0)) {
+        addChatMessage({ text: 'Not enough mana.', sender: 'system' })
         return
       }
       if (entry.skill.id === DOUBLE_SLASH.id) {
@@ -194,7 +203,9 @@
           class:depleted={!abilityEquipmentAllowed(
             entry.skill.id,
             $inventoryStore.equipped
-          ) || remaining > 0}
+          ) ||
+            remaining > 0 ||
+            entry.skill.manaCost > ($manaState?.mana ?? 0)}
           src={entry.skill.icon}
           alt={entry.skill.name}
           draggable="false"

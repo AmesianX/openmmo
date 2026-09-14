@@ -68,6 +68,9 @@ impl SharedState {
         if let Some(line) = self.format_dungeon_state() {
             lines.push(line);
         }
+        if let Some((mana, max_mana)) = self.self_mana {
+            lines.push(format!("MP: {mana}/{max_mana}"));
+        }
         if let Some((satiation, state)) = self.self_hunger {
             let mut line = format!("Hunger: {state:?} ({satiation}/1000)");
             if !self.self_debuffs.is_empty() {

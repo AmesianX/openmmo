@@ -1,3 +1,4 @@
+import { manaState } from '../stores/manaStore'
 import { get } from 'svelte/store'
 import { attackLog, daggerSkippedLog } from './combatLog'
 import {
@@ -575,6 +576,7 @@ export function handleServerMessage(
     }
 
     case 'JoinSuccess': {
+      manaState.set(null)
       resetFences()
       resetHousePlacement()
       resetEstateStorage()
@@ -1142,7 +1144,7 @@ export function handleServerMessage(
       }
       addChatMessage({
         text:
-          data.reason === 'dagger_required'
+          data.reason === 'dagger_required' || data.reason === 'rogue_required'
             ? abilityRequirementsNotMet(DOUBLE_SLASH.name)
             : `Double Slash: ${reasons[data.reason] ?? data.reason}.`,
         sender: 'system',
@@ -2166,7 +2168,9 @@ export function handleServerMessage(
       break
     }
 
-    // Direct to the owner only; the multipliers are server-computed.
+    case 'ManaUpdate':
+      manaState.set({ mana: data.mana, max_mana: data.max_mana })
+      break
     case 'HungerUpdate': {
       const prev = get(hungerState)
       const band = data.state as HungerBand
@@ -2222,20 +2226,17 @@ export function handleServerMessage(
         addCombatMessage({ text: 'True Aim ended.', sender: 'local' })
       break
     }
-    case 'AbilityRejected':
+    case 'AbilityRejected': {
       abilityPending.set({})
-      addChatMessage({
-        text:
-          data.reason === 'out_of_range'
-            ? 'Target is too far away.'
-            : data.reason === 'cooldown'
-              ? `${getAbility(data.ability)?.name ?? data.ability} is not ready yet.`
-              : abilityRequirementsNotMet(
-                  getAbility(data.ability)?.name ?? data.ability
-                ),
-        sender: 'system',
-      })
+      const name = getAbility(data.ability)?.name ?? data.ability
+      let text: string
+      if (data.reason === 'not_enough_mana') text = 'Not enough mana.'
+      else if (data.reason === 'out_of_range') text = 'Target is too far away.'
+      else if (data.reason === 'cooldown') text = `${name} is not ready yet.`
+      else text = abilityRequirementsNotMet(name)
+      addChatMessage({ text, sender: 'system' })
       break
+    }
     case 'AbilityUsed':
       if (data.ability === GUARDIAN_WARD.id || data.ability === 'radiance')
         queueAbilityEffect(data as Omit<AbilityEffectEvent, 'startedAt'>)

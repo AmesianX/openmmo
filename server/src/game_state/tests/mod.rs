@@ -34,6 +34,7 @@ mod instrument_tests;
 mod inventory_tests;
 mod land_tests;
 mod landscaping_tests;
+mod mana_tests;
 mod meal_tests;
 mod metrics_tests;
 mod monster_ai_tests;

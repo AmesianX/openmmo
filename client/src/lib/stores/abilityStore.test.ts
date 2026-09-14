@@ -1,9 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { initSync } from '../wasm/onlinerpg_shared'
 import { get } from 'svelte/store'
 import {
   getAbility,
   guardianWardEquipment,
   abilityEquipmentAllowed,
+  GUARDIAN_WARD,
+  DOUBLE_SLASH,
 } from '../data/abilities'
 import {
   abilityCooldowns,
@@ -36,6 +40,22 @@ const item = (item_def_id: string): ItemInstance => ({
   enchant: 9,
   quantity: 1,
   locked: false,
+})
+
+beforeAll(() => {
+  initSync({
+    module: readFileSync(
+      new URL('../wasm/onlinerpg_shared_bg.wasm', import.meta.url)
+    ),
+  })
+})
+
+it('uses the server mana cost in the Ward tooltip and keeps Double Slash free', () => {
+  expect(GUARDIAN_WARD.manaCost).toBe(2)
+  expect(GUARDIAN_WARD.stats.find((stat) => stat.label === 'Cost')?.value).toBe(
+    '2 MP'
+  )
+  expect(DOUBLE_SLASH.manaCost).toBe(0)
 })
 
 beforeEach(() => {
