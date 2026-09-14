@@ -297,8 +297,7 @@ fn terrain_summary_is_absent_underground() {
     assert!(s.terrain_summary_job().is_none());
 }
 
-/// Entrances are listed above ground whatever the distance: a name the
-/// agent never sees is a name it can never move to.
+/// Agents can discover every dungeon entrance from above ground.
 #[test]
 fn world_state_names_the_dungeon_entrances() {
     let (mut s, _rx) = test_state();
@@ -312,12 +311,12 @@ fn world_state_names_the_dungeon_entrances() {
         .map(str::to_string)
         .collect();
 
-    // Nearest first, and the far ones are listed too — the world state is
-    // the only place their names can be learned.
-    assert_eq!(lines.len(), 3, "{lines:?}");
+    // Include distant entrances, ordered nearest first.
+    assert_eq!(lines.len(), 4, "{lines:?}");
     assert!(lines[0].contains("Old Crypt"), "{lines:?}");
     assert!(lines[1].contains("Orc Warrens"), "{lines:?}");
     assert!(lines[2].contains("Ogre Stronghold"), "{lines:?}");
+    assert!(lines[3].contains("Skeleton Crypt"), "{lines:?}");
 }
 
 /// The prompt names the storey only while we stand inside a room's
