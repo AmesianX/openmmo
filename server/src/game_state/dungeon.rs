@@ -505,30 +505,6 @@ impl GameState {
         hidden
     }
 
-    /// Deliver a toggle to players near the door on the door's own floor.
-    /// Depth 0 centers on the entrance so the circle matches the client's
-    /// snapshot re-pull boundary; interior doors center on the toggler, whom
-    /// `toggle_dungeon_door` has already put within reach. The toggler is also
-    /// sent directly, so their own reply never rides on the radius sweep.
-    #[cfg(test)]
-    pub(crate) async fn publish_dungeon_door_toggle(
-        &self,
-        player_id: &PlayerId,
-        entrance_id: String,
-        depth: u8,
-        door_id: u32,
-        is_open: bool,
-    ) {
-        let _ = player_id;
-        self.interest_lock()
-            .update_dungeon(&ServerMessage::DungeonDoorToggled {
-                entrance_id,
-                depth,
-                door_id,
-                is_open,
-            });
-    }
-
     /// Every currently-open door in a dungeon as (depth, door_id) pairs, for the
     /// RequestDungeonDoors snapshot. Reads without creating the runtime — an
     /// untouched dungeon simply has no open doors.
@@ -1144,7 +1120,7 @@ impl GameState {
 
     async fn enter_dungeon_floor(&self, player_id: &PlayerId, entrance_id: &str, depth: u8) {
         self.ensure_dungeon_runtime(entrance_id).await;
-        let (broken, opened): (Vec<u32>, Vec<u32>) = {
+        {
             let mut dungeons = self.dungeons.write().await;
             let Some(rt) = dungeons.get_mut(entrance_id) else {
                 return;
@@ -1169,19 +1145,7 @@ impl GameState {
                 })
                 .players
                 .insert(*player_id, Self::now_ms());
-            let broken = rt
-                .broken_props
-                .get(&depth)
-                .map(|s| s.iter().copied().collect())
-                .unwrap_or_default();
-            let opened = rt
-                .opened_props
-                .get(&depth)
-                .map(|s| s.iter().copied().collect())
-                .unwrap_or_default();
-            (broken, opened)
-        };
-        let _ = (broken, opened);
+        }
         self.reconcile_view(player_id).await;
         self.populate_dungeon_floor(entrance_id, depth, player_id)
             .await;

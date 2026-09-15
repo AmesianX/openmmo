@@ -394,14 +394,21 @@ impl WorldCache {
         added: &[onlinerpg_shared::fence::Fence],
         removed: &[onlinerpg_shared::fence::FenceEdge],
     ) {
-        self.collision_revision = self.collision_revision.wrapping_add(1);
         let view = self.fence_views.entry(viewer).or_default();
+        let mut changed = false;
         for edge in removed {
-            view.remove(edge);
+            changed |= view.remove(edge).is_some();
         }
         for fence in added {
-            view.insert(fence.edge, fence.clone());
+            if view.get(&fence.edge) != Some(fence) {
+                view.insert(fence.edge, fence.clone());
+                changed = true;
+            }
         }
+        if !changed {
+            return;
+        }
+        self.collision_revision = self.collision_revision.wrapping_add(1);
         let fences: Vec<_> = view.values().cloned().collect();
         onlinerpg_shared::fence::sync_passability(
             &mut self.passability_cache,
@@ -689,6 +696,82 @@ mod interest_tests {
             change,
             messages: vec![ServerMessage::HouseUpdated { house: house(x) }],
         }
+    }
+
+    #[test]
+    fn duplicate_fence_events_preserve_routes_and_shared_collision() {
+        use onlinerpg_shared::fence::{Fence, FenceAxis, FenceEdge};
+        let mut cache = WorldCache::new();
+        let (a, b) = (PlayerId::from(1), PlayerId::from(2));
+        let mut fence = Fence {
+            edge: FenceEdge {
+                x: 2,
+                z: 1,
+                axis: FenceAxis::Z,
+            },
+            y: 0.0,
+            owner_id: 1,
+        };
+        let mut event = WorldEvent {
+            subject: "fence:2,1:Z".into(),
+            revision: 1,
+            change: InterestChange::Enter,
+            messages: vec![ServerMessage::FenceVisibility {
+                added: vec![fence.clone()],
+                removed: vec![],
+            }],
+        };
+        for viewer in [a, b] {
+            cache.apply_fence_event(viewer, &event);
+        }
+        let revision = cache.collision_revision;
+        for viewer in [a, b] {
+            cache.apply_fence_event(viewer, &event);
+        }
+        assert_eq!(cache.collision_revision, revision);
+
+        fence.y = 1.0;
+        event.revision = 2;
+        event.change = InterestChange::Update;
+        event.messages = vec![ServerMessage::FenceVisibility {
+            added: vec![fence.clone()],
+            removed: vec![],
+        }];
+        cache.apply_fence_event(a, &event);
+        assert!(cache.collision_revision > revision);
+        let revision = cache.collision_revision;
+        cache.apply_fence_event(b, &event);
+        assert_eq!(cache.collision_revision, revision);
+        for viewer in [a, b] {
+            assert_eq!(cache.fence_views[&viewer][&fence.edge], fence);
+        }
+
+        event.change = InterestChange::Leave;
+        event.messages = vec![ServerMessage::FenceVisibility {
+            added: vec![],
+            removed: vec![fence.edge],
+        }];
+        cache.apply_fence_event(a, &event);
+        let revision = cache.collision_revision;
+        cache.apply_fence_event(a, &event);
+        assert_eq!(cache.collision_revision, revision);
+        assert!(!cache
+            .passability_cache
+            .contains_key(&format!("fence-view:{a}")));
+        assert!(cache
+            .passability_cache
+            .contains_key(&format!("fence-view:{b}")));
+
+        event.revision = 3;
+        event.change = InterestChange::Delete;
+        cache.apply_fence_event(b, &event);
+        assert!(cache.collision_revision > revision);
+        assert!(!cache
+            .passability_cache
+            .contains_key(&format!("fence-view:{b}")));
+        let revision = cache.collision_revision;
+        cache.apply_fence_event(b, &event);
+        assert_eq!(cache.collision_revision, revision);
     }
 
     #[test]

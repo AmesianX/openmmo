@@ -149,7 +149,6 @@ impl GameState {
         let tx = wrap_tile_x(tx);
         self.terrain_io.write_heightmap(tx, tz, data).await?;
         self.height_sampler.update_tile(tx, tz, data).await?;
-        let players = self.players.read().await;
         let mut fences = self.fences.write().await;
         let mut changed = Vec::new();
         for bx in (tx * 64 - 33).div_euclid(32)..=(tx * 64 + 32).div_euclid(32) {
@@ -192,7 +191,6 @@ impl GameState {
                 &group,
             );
         }
-        drop(players);
         self.interest_lock()
             .publish_state(&ServerMessage::FenceVisibility {
                 added: changed,
@@ -226,15 +224,10 @@ impl GameState {
         true
     }
 
-    pub(super) async fn refresh_fence_owners(
-        &self,
-        _player_id: &PlayerId,
-        auth: &AuthService,
-    ) -> Result<(), AuthError> {
+    pub(super) async fn refresh_fence_owners(&self, auth: &AuthService) -> Result<(), AuthError> {
         let _persistence = self.persistence_lock.lock().await;
         let auth = auth.clone();
         let records = auth_db(move || auth.load_fences()).await?;
-        let players = self.players.read().await;
         let mut fences = self.fences.write().await;
         let mut changed = Vec::new();
         for record in records {
@@ -249,7 +242,6 @@ impl GameState {
                 }
             }
         }
-        drop(players);
         self.interest_lock()
             .publish_state(&ServerMessage::FenceVisibility {
                 added: changed,

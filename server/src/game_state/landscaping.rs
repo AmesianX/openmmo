@@ -92,12 +92,10 @@ impl GameState {
             return Err("Finish your player trade first.");
         }
         self.tick_land_taxes(auth).await;
-        self.refresh_fence_owners(player_id, auth)
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, "Failed to refresh fence ownership");
-                "Estate editing is temporarily unavailable."
-            })?;
+        self.refresh_fence_owners(auth).await.map_err(|error| {
+            tracing::warn!(%error, "Failed to refresh fence ownership");
+            "Estate editing is temporarily unavailable."
+        })?;
         let _persistence = self.persistence_lock.lock().await;
         let owner_id = self
             .player_characters

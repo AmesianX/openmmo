@@ -1,4 +1,4 @@
-use crate::{game_state::GameState, types::ServerMessage};
+use crate::game_state::GameState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -132,12 +132,8 @@ async fn create_house(
         remove_house_trees(&state.terrain, &house),
         remove_house_grass(&state.terrain, &house),
     )?;
-    broadcast_house_change(
+    publish_house_terrain_changes(
         &state.game_state,
-        &house,
-        ServerMessage::HouseSpawned {
-            house: house.clone(),
-        },
         &[],
         &tree_stats.changed_tiles,
         &grass_stats.changed_tiles,
@@ -192,12 +188,8 @@ async fn update_house(
         remove_house_trees(&state.terrain, &house),
         remove_house_grass(&state.terrain, &house),
     )?;
-    broadcast_house_change(
+    publish_house_terrain_changes(
         &state.game_state,
-        &house,
-        ServerMessage::HouseUpdated {
-            house: house.clone(),
-        },
         &[],
         &tree_stats.changed_tiles,
         &grass_stats.changed_tiles,
@@ -334,16 +326,12 @@ pub(crate) async fn remove_house_grass(
     Ok(stats)
 }
 
-pub(crate) async fn broadcast_house_change(
+pub(crate) async fn publish_house_terrain_changes(
     game_state: &GameState,
-    _house: &HouseData,
-    house_msg: ServerMessage,
     changed_height_tiles: &[(i32, i32)],
     changed_tree_tiles: &[(i32, i32)],
     changed_grass_tiles: &[(i32, i32)],
 ) {
-    let _ = house_msg;
-
     let tiles: Vec<_> = changed_height_tiles
         .iter()
         .chain(changed_tree_tiles)

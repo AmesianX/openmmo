@@ -108,17 +108,6 @@ async fn cross_floor_dungeon_door_toggle_is_rejected() {
     let result = game_state
         .toggle_dungeon_door(&griefer_id, &entrance.id, depth, door.door_id)
         .await;
-    if let Some(is_open) = result {
-        game_state
-            .publish_dungeon_door_toggle(
-                &griefer_id,
-                entrance.id.clone(),
-                depth,
-                door.door_id,
-                is_open,
-            )
-            .await;
-    }
 
     assert_eq!(result, None, "a player on another floor must be rejected");
     assert_eq!(
@@ -367,8 +356,12 @@ async fn dungeon_door_toggle_delivery_uses_actual_door_positions_and_spaces() {
     let mut near = game.register_direct_channel(&pid("near")).await;
     let mut far = game.register_direct_channel(&pid("far")).await;
     let mut delver = game.register_direct_channel(&pid("delver")).await;
-    game.publish_dungeon_door_toggle(&pid("far"), entrance.id.clone(), 0, 0, true)
-        .await;
+    game.publish_subject_change(ServerMessage::DungeonDoorToggled {
+        entrance_id: entrance.id.clone(),
+        depth: 0,
+        door_id: 0,
+        is_open: true,
+    });
     assert!(matches!(
         near.try_recv(),
         Ok(ServerMessage::DungeonDoorToggled {
@@ -379,8 +372,12 @@ async fn dungeon_door_toggle_delivery_uses_actual_door_positions_and_spaces() {
     ));
     assert!(far.try_recv().is_err());
     assert!(delver.try_recv().is_err());
-    game.publish_dungeon_door_toggle(&pid("far"), entrance.id.clone(), depth, door.door_id, true)
-        .await;
+    game.publish_subject_change(ServerMessage::DungeonDoorToggled {
+        entrance_id: entrance.id.clone(),
+        depth,
+        door_id: door.door_id,
+        is_open: true,
+    });
     assert!(
         matches!(delver.try_recv(), Ok(ServerMessage::DungeonDoorToggled { depth: d, is_open: true, .. }) if d == depth)
     );

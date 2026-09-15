@@ -885,10 +885,6 @@
           )
           root.add(entranceGroup)
         }
-        // Pull the current open/closed state of every door in this dungeon
-        // (entrance + interior, all depths) so doors others left open render
-        // correctly. Live toggles arrive via DungeonDoorToggled broadcasts.
-        networkManager.sendRequestDungeonDoors(id)
       }
     }
     if (entranceGroup) {

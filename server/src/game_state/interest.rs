@@ -577,6 +577,23 @@ impl Interest {
             cells,
             snapshot_at: std::time::Instant::now(),
         };
+        let enter_messages = if created
+            && changes.first().is_some_and(|message| {
+                matches!(
+                    message,
+                    ServerMessage::PlayerJoined { .. }
+                        | ServerMessage::MonsterSpawned { .. }
+                        | ServerMessage::GroundItemSpawned { .. }
+                        | ServerMessage::CampfireSpawned { .. }
+                        | ServerMessage::StallPlaced { .. }
+                        | ServerMessage::MealPlaced { .. }
+                        | ServerMessage::TipHatPlaced { .. }
+                )
+            }) {
+            &changes
+        } else {
+            &subject.snapshot
+        };
         let mut bodies = HashMap::new();
         for viewer in candidates {
             let Some(view) = self.views.get_mut(&viewer) else {
@@ -588,33 +605,10 @@ impl Interest {
                     .iter()
                     .any(|area| area.contains(&view.position, &view.space));
             let was = view.subjects.contains(&id);
-            let (change, messages) = match (was, visible) {
-                (false, true) => (
-                    InterestChange::Enter,
-                    if created
-                        && changes.first().is_some_and(|message| {
-                            matches!(
-                                message,
-                                ServerMessage::PlayerJoined { .. }
-                                    | ServerMessage::MonsterSpawned { .. }
-                                    | ServerMessage::GroundItemSpawned { .. }
-                                    | ServerMessage::CampfireSpawned { .. }
-                                    | ServerMessage::StallPlaced { .. }
-                                    | ServerMessage::MealPlaced { .. }
-                                    | ServerMessage::TipHatPlaced { .. }
-                            )
-                        })
-                    {
-                        changes.clone()
-                    } else {
-                        subject.snapshot.clone()
-                    },
-                ),
-                (true, true) => (InterestChange::Update, changes.clone()),
-                (true, false) => (
-                    InterestChange::Leave,
-                    changes.iter().chain(&subject.leave).cloned().collect(),
-                ),
+            let change = match (was, visible) {
+                (false, true) => InterestChange::Enter,
+                (true, true) => InterestChange::Update,
+                (true, false) => InterestChange::Leave,
                 (false, false) => continue,
             };
             if visible {
@@ -623,20 +617,27 @@ impl Interest {
             } else {
                 view.subjects.remove(&id);
             }
-            if change == InterestChange::Update && (skip == Some(viewer) || messages.is_empty()) {
+            if change == InterestChange::Update && (skip == Some(viewer) || changes.is_empty()) {
                 continue;
             }
-            let event = WorldEvent {
+            let event = || WorldEvent {
                 subject: id.clone(),
                 revision: subject.revision,
                 change,
-                messages,
+                messages: match change {
+                    InterestChange::Enter => enter_messages.clone(),
+                    InterestChange::Update => changes.clone(),
+                    InterestChange::Leave => {
+                        changes.iter().chain(&subject.leave).cloned().collect()
+                    }
+                    InterestChange::Delete => unreachable!(),
+                },
             };
             if id.starts_with("stall:") && self.blocked_names.contains_key(&viewer) {
-                self.send(viewer, false, vec![event]);
+                self.send(viewer, false, vec![event()]);
             } else {
                 let body = bodies.entry(change).or_insert_with(|| {
-                    rmp_serde::to_vec(&vec![event]).expect("world event serializes")
+                    rmp_serde::to_vec(&vec![event()]).expect("world event serializes")
                 });
                 self.send_body(viewer, false, body);
             }
@@ -828,9 +829,7 @@ impl super::GameState {
                 for x in onlinerpg_terrain::coords::world_to_tile(center.x - EVENT_DELIVERY_RADIUS)
                     ..=onlinerpg_terrain::coords::world_to_tile(center.x + EVENT_DELIVERY_RADIUS)
                 {
-                    let x = onlinerpg_terrain::coords::world_to_tile(
-                        onlinerpg_shared::wrap_world_x(x as f32 * 64.0),
-                    );
+                    let x = onlinerpg_terrain::coords::wrap_tile_x(x);
                     if (!interest.has_subject(&format!("terrain:{x},{z}"))
                         || interest.pending_tiles.contains(&(x, z)))
                         && Bounds::tile(x, z, 64.0).distance_sq(&center)

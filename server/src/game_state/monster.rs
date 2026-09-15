@@ -516,15 +516,13 @@ impl super::GameState {
                     "Stale controller {} moved monster {} owned by {:?}",
                     mover_id, monster_id, monster.owner_id
                 );
-                let still_watching = {
-                    let players = self.players.read().await;
-                    players
-                        .get(mover_id)
-                        .is_some_and(|player| Self::watches(player, &monster))
-                };
-                for message in Self::release_view_messages(&monster, still_watching) {
-                    self.send_direct_message(mover_id, message).await;
-                }
+                self.send_direct_message(
+                    mover_id,
+                    ServerMessage::MonsterControlReleased {
+                        monster_id: monster.id,
+                    },
+                )
+                .await;
                 return;
             }
         };
@@ -911,16 +909,6 @@ impl super::GameState {
             && monster.position.dist_xz_sq(&player.position) <= radius_sq
     }
 
-    /// End simulation ownership while preserving the visible subject.
-    fn release_view_messages(
-        monster: &crate::types::Monster,
-        _still_watching: bool,
-    ) -> impl Iterator<Item = ServerMessage> {
-        std::iter::once(ServerMessage::MonsterControlReleased {
-            monster_id: monster.id.clone(),
-        })
-    }
-
     /// Every player inside the AOI around `position` on `floor_level`, with the
     /// squared distance. Lazy so `attendance` can stop at the owner; the seam
     /// can yield a player twice, which neither caller minds.
@@ -1065,35 +1053,20 @@ impl super::GameState {
             if self.server_monster_ai() {
                 continue;
             }
-            // Who to release, resolved in one short players guard so the send
-            // loop below holds only the channel map. Normally the release
-            // finds the old owner out of sight, but a race can release one
-            // still watching: that one gets a bystander respawn so the
-            // monster doesn't go invisible for it.
-            let releases: Vec<Option<(PlayerId, bool)>> = {
-                let players = self.players.read().await;
-                reassigned
-                    .iter()
-                    .map(|(monster, new_owner, old_owner)| {
-                        old_owner.filter(|id| id != new_owner).map(|id| {
-                            let watching = players
-                                .get(&id)
-                                .is_some_and(|player| Self::watches(player, monster));
-                            (id, watching)
-                        })
-                    })
-                    .collect()
-            };
             // One channel-map guard per batch; `tx.send` is synchronous.
             let channels = self.direct_channels.read().await;
-            for ((monster, new_owner, _), release) in reassigned.into_iter().zip(releases) {
+            for (monster, new_owner, old_owner) in reassigned {
                 debug!("Monster {} handed to {}", monster.id, new_owner);
-                if let Some(tx) = release.and_then(|(id, _)| channels.get(&id)) {
-                    let still_watching = release.is_some_and(|(_, watching)| watching);
-                    for message in Self::release_view_messages(&monster, still_watching) {
-                        if let Some(bytes) = super::encode_server_msg(&message) {
-                            let _ = tx.send(bytes);
-                        }
+                if let Some(tx) = old_owner
+                    .filter(|id| *id != new_owner)
+                    .and_then(|id| channels.get(&id))
+                {
+                    if let Some(bytes) =
+                        super::encode_server_msg(&ServerMessage::MonsterControlReleased {
+                            monster_id: monster.id.clone(),
+                        })
+                    {
+                        let _ = tx.send(bytes);
                     }
                 }
                 if let Some(tx) = channels.get(&new_owner) {

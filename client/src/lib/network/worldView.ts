@@ -30,6 +30,7 @@ export class WorldView {
   pendingTerrain = new Set<string>()
   staticReady = true
   private retiredEpochs = new Set<string>()
+  private coverageRadiusSq?: number
 
   covers(x: number, z: number): boolean {
     if (
@@ -40,10 +41,8 @@ export class WorldView {
     )
       return false
     const dx = shortestWrappedDeltaX(this.position.x, x)
-    return (
-      dx * dx + (z - this.position.z) ** 2 <=
-      (world_constants().eventDeliveryRadius - 1) ** 2
-    )
+    this.coverageRadiusSq ??= (world_constants().eventDeliveryRadius - 1) ** 2
+    return dx * dx + (z - this.position.z) ** 2 <= this.coverageRadiusSq
   }
 
   accept(update: WorldUpdate): boolean {

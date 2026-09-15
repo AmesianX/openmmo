@@ -549,12 +549,8 @@ impl GameState {
         }
         let changed_height_tiles = self.restore_demolished_house_terrain(&house).await;
         self.passability_remove_house(house_id).await;
-        crate::housing::routes::broadcast_house_change(
+        crate::housing::routes::publish_house_terrain_changes(
             self,
-            &house,
-            ServerMessage::HouseRemoved {
-                house_id: house_id.to_string(),
-            },
             &changed_height_tiles,
             &[],
             &[],
@@ -756,12 +752,8 @@ impl GameState {
                 Vec::new()
             }
         };
-        crate::housing::routes::broadcast_house_change(
+        crate::housing::routes::publish_house_terrain_changes(
             self,
-            &house,
-            ServerMessage::HouseSpawned {
-                house: house.clone(),
-            },
             &changed_height_tiles,
             &changed_tree_tiles,
             &changed_grass_tiles,

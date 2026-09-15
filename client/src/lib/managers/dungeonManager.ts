@@ -913,8 +913,6 @@ class DungeonManager {
     else set.delete(doorId)
   }
 
-  /** Apply a server door-toggle broadcast (entrance at depth 0, or an interior
-   *  room door). The rendered swing + collision both read the door map. */
   applySubjectDoor(
     entranceId: string,
     depth: number,
@@ -928,10 +926,7 @@ class DungeonManager {
       const entry = DUNGEON_ENTRANCES.find((entry) => entry.id === entranceId)
       if (entry) this.enter(entry.id, entry)
     }
-    if (entranceId === this.id) {
-      this.setDoorOpen(depth, doorId, isOpen ?? false)
-      this.rebuildFloorPassability(depth)
-    }
+    this.applyDoorToggle(entranceId, depth, doorId, isOpen ?? false)
   }
 
   applySubjectProp(
