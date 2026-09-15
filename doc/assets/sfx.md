@@ -161,7 +161,8 @@ kHz mono.
   strikes her down. Clearly a female human-like voice, high soprano pitch, no
   growl, no male voice, no music."로 바꾸고 0.6 s·prompt_influence 0.6으로
   5테이크 뽑아 take 5 채택 (스펙트럼 중심 3.6 kHz, 이전 1.8 kHz). 0.5 s에서
-  100 ms 테일 페이드. 원본 `orc-female-death_take5hi2_2026-08-24.mp3`
+  100 ms 테일 페이드. 원본 `orc-female-death_take5hi2_2026-08-24.mp3`.
+  2026-09-15 재생 음량 조정: 조정 전 파일 기준 −10 dB (게인 약 ×0.3162).
 - hobgoblin-death.ogg — hobgoblin. **2026-08-24 재생성** — 첫 버전("harsh,
   barking death cry")이 개 짖는 소리처럼 들려서 "The harsh, guttural death cry
   of a hobgoblin soldier felled by a sword: a rough snarling humanoid war-cry
@@ -178,6 +179,7 @@ kHz mono.
   brutish ogre monster's deep guttural death groan, a hoarse animal voice
   choking off as it collapses from a sword wound. Voice only, no horns, no
   music." 2026-08-24 너무 커서 게인 ×0.9 (−0.9 dB, peak −3.4 dB).
+  2026-09-15 재생 음량 조정: 조정 전 파일 기준 −10 dB (게인 약 ×0.3162).
 - troll-death.ogg — troll. Take 6, 0.6 s request trimmed to 0.50 s. "The
   drawn-out, rasping death roar of a troll dying from a deep sword wound"
 - stone-golem-death.ogg — stone golem. Take 1, 1.0 s request trimmed to 0.65
@@ -207,6 +209,10 @@ like the rest.
 - lizardfolk-death.ogg — lizardfolk. Trimmed to 0.90 s (the cry stops at
   0.89 s). "small dragon growl with a little snake sound, Voice only, no
   horns, no music."
+
+- **[미사용]** `ogre-death-original-then-half.ogg`, `orc-female-death-original-then-half.ogg`
+  — 위 오거·여자 오크 원음의 임시 비교본. 원음과 동일한 출처·라이선스·생성 정보를
+  적용하며 새 AI 생성 없이 편집했다. 2026-09-15 청취 비교 후 삭제.
 
 ## Players
 
