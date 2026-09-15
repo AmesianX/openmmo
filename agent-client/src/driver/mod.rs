@@ -17,6 +17,9 @@
 //!   monster_id of the final attack so the loop can take over chasing it.
 
 mod action;
+mod backoff;
+#[cfg(test)]
+mod backoff_tests;
 mod combat;
 #[cfg(test)]
 mod combat_timing_tests;
@@ -43,6 +46,7 @@ use onlinerpg_shared::schedule::ScheduleEntry;
 use onlinerpg_shared::ClientMessage;
 
 pub(crate) use action::wants_reroll;
+use backoff::PromptBackoff;
 use combat::{load_attack_cooldown, tick_combat};
 use execute::{append_memory, handle_response};
 use movement::{
@@ -463,6 +467,7 @@ pub async fn llm_driver(
         Duration::from_secs(rand::thread_rng().gen_range(0..secs))
     };
     let mut last_prompt_at = Instant::now() - idle_stagger;
+    let mut prompt_backoff = PromptBackoff::default();
     let mut attack_target: Option<(String, Option<bool>)> = None;
     let mut llm_in_flight: Option<tokio::task::JoinHandle<anyhow::Result<String>>> = None;
     let mut prompt_pending_since: Option<Instant> = None;
@@ -482,11 +487,7 @@ pub async fn llm_driver(
     // Visit (bedside or guest's table) in progress: when to give the spot
     // up and resume the schedule.
     let mut visit_until: Option<Instant> = None;
-    // Submit the pending prompt without waiting out the debounce or the
-    // pacing floor — a single human-facing event (a guest sitting down)
-    // that must not queue behind batching heuristics. Also exempts that
-    // prompt from the audience check: the visit's human (a sleeper woken
-    // upstairs) may not be on our floor yet. Cleared on submit.
+    // Guest prompts bypass debounce, normal pacing and audience checks, but honor error backoff.
     let mut force_prompt = false;
     // A table walk runs as a background task so the [Guest] prompt's LLM
     // round trip overlaps the walk instead of waiting for arrival.
@@ -571,7 +572,7 @@ pub async fn llm_driver(
                 )
             };
             info!("[{label}] LLM driver: queuing initial world state");
-            match scheduler
+            let result = scheduler
                 .submit_deferred(
                     &label,
                     priority,
@@ -585,8 +586,9 @@ pub async fn llm_driver(
                         label.clone(),
                     ),
                 )
-                .await
-            {
+                .await;
+            prompt_backoff.record_result(&result, &label);
+            match result {
                 Ok(response) => {
                     let has_action = active_schedule
                         .0
@@ -604,12 +606,12 @@ pub async fn llm_driver(
                     )
                     .await;
                     advance_tale_if_sung(&state, &mut tales, &mut tale_offered_at).await;
-                    last_prompt_at = Instant::now();
                 }
                 Err(e) => {
                     error!("[{label}] LLM initial prompt failed: {e}");
                 }
             }
+            last_prompt_at = Instant::now();
         } else {
             discard_turn(&mut s);
             info!("[{label}] LLM driver: no human players nearby, skipping initial prompt");
@@ -1096,7 +1098,7 @@ pub async fn llm_driver(
                     .unwrap_or(LlmPriority::Idle)
                     .min(s.take_wake_urgency().into());
             }
-            if let Some(response) = await_llm_response(handle, &label).await {
+            if let Some(response) = await_llm_response(handle, &label, &mut prompt_backoff).await {
                 // A live visit walk owns the body; the LLM turn it triggered
                 // may talk but not move.
                 let walking_to_visit = visit_walk.as_ref().is_some_and(|h| !h.is_finished());
@@ -1119,6 +1121,10 @@ pub async fn llm_driver(
             if let Some(priority) = &state.lock().await.queued_llm_priority {
                 priority.promote(pending_urgency);
             }
+            continue;
+        }
+
+        if !prompt_backoff.ready() {
             continue;
         }
 
@@ -1423,21 +1429,18 @@ fn load_memory_tail(memory_file: &Option<String>) -> Option<String> {
     Some(lines[start..].join("\n"))
 }
 
-/// Await a finished LLM submission and unwrap the join/scheduler result.
-/// Logs the failure and returns `None` for both join panics and scheduler
-/// errors so the caller can collapse three error arms into one branch.
+/// Record the finished request and apply backoff on backend or task errors.
 async fn await_llm_response(
     handle: tokio::task::JoinHandle<anyhow::Result<String>>,
     label: &str,
+    backoff: &mut PromptBackoff,
 ) -> Option<String> {
-    match handle.await {
-        Ok(Ok(response)) => Some(response),
-        Ok(Err(e)) => {
-            error!("[{label}] LLM prompt failed: {e}");
-            None
-        }
+    let result = handle.await.map_err(anyhow::Error::from).and_then(|r| r);
+    backoff.record_result(&result, label);
+    match result {
+        Ok(response) => Some(response),
         Err(e) => {
-            error!("[{label}] LLM task panicked: {e}");
+            error!("[{label}] LLM prompt failed: {e}");
             None
         }
     }
