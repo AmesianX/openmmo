@@ -23,7 +23,7 @@
   - 무기 접지 보정 (2026-09-12): Attack·Death에서 모닝스타의 실제 정점을 기준으로 오른손 손목 회전을 보정해
     지면 관통을 방지한다. 보정은 주변 6프레임에 완만하게 이어지며 .blend와 게임 GLB에 베이크한다.
     검증기는 무기를 부착한 상태로 모든 클립을 120fps로 검사한다.
-  - 사망음은 기존 `skeleton-death.ogg`를 재사용하고, 갑옷 피격은 `metal-hit.ogg`를 사용한다
+  - 사망음은 기존 `skeleton-death.ogg`를 재사용하고, 갑옷 피격은 `bone-hit-heavy.ogg`를 사용한다
     ([효과음 출처](sfx.md)).
   - 일반 스켈레톤의 상위종으로 조정 (2026-09-12): 레벨 20, 체력 90 (레벨 기본값), guard 24,
     기본 피해 6d8 + 모닝스타 1d8 = 총 7d8, 기본 명중 보너스 +20, 공격 간격 2초.
@@ -42,12 +42,13 @@
   - 이동 속도는 리타게팅 빌드 보고서의 측정값에 맞춰 걷기 0.78m/s, 달리기 3.00m/s로 설정 (2026-09-12). 클립은 원래 속도로 재생.
   - 모델·편집본·원본·FBX 5개와 기여자 제공 시연 영상 `assets/skeleton/skeleton_gameplay.mp4`는 [Hugging Face 에셋 PR #7](https://huggingface.co/datasets/jake-song-openmmo/onlinerpg-assets/discussions/7)에서 받아 `assets.lock`에 등록.
   - **[미사용]** 원본 Tripo 클립과 기존 idle / walk / pursuit / combat_idle / attack_swipe / death 클립은 게임 모델에서 제거.
-  - 공용 캐릭터 애니메이션을 사용하지 않음. 무기·출혈 효과 없음. `material=bone`은 금속·나무 무기 피격 시 `bone-hit.ogg`를 재생 ([효과음 출처](sfx.md#combat)).
+  - 공용 캐릭터 애니메이션을 사용하지 않음. 무기·출혈 효과 없음. `material=bone`은 금속·나무 무기 피격 시 `armored-bone-hit.ogg`를 재생 ([효과음 출처](sfx.md#combat)).
   - 사망 시작 시 뼈가 부서져 흩어지는 `skeleton-death.ogg`를 재생 ([효과음 출처](sfx.md#monsters)).
   - 일반 몬스터 능력치: 레벨 16, 체력 72 (레벨 기본값), guard 20, 피해 6d8. 오거의 체력 36·무기 포함 피해 3d8의 두 배이며, 방어는 기준 10 초과분을 두 배로 설정 (`10 + 2 × (15 - 10)`).
   - 던전 출현 설정은 비워 두며 관리자가 추후 배치한다. `corpseAutoGround=false`로 베이크한 죽음 접지를 유지.
 
 - skeleton_knight — 사용자 제공 Tripo Pro 유료 생성 모델, 2026-09-12 생성(사용자 확인).
+  - 갑옷 피격음은 워리어와 같은 `bone-hit-heavy.ogg`를 사용한다 ([효과음 출처](sfx.md#combat)).
   - [컨셉아트](../images/monsters/skeleton_knight_concept.png): 이 대화에서 OpenAI 이미지 생성으로
     제작한 정예 스켈레톤 기사, 2026-09-12 생성. OpenAI 서비스 이용 조건 적용(이용 요금제 미확인).
   Tripo 서비스 이용 조건 적용. 원본 `skeleton+knight+3d+model.glb`는

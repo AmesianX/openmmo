@@ -22,6 +22,14 @@ PROMPTS = {
         'crisp close-up melee hit, under one second. No voice, no music, no rock '
         'debris, no reverb, no repeated hits.'
     ),
+    "armored_bone_hit": (
+        "One heavy sword hit on a skeleton in battered iron armor. Immediate low, "
+        "dense iron thud fused with a dry hollow bone crack and crunch, then a brief "
+        "coarse rattle of loose bones and damped armor plates. Weighty, gritty "
+        "close-up melee foley, strong low-mid body, tight decay, under one second. "
+        "No bright ringing, bell, chime, ping, repeated hits, swoosh, voice, music, "
+        "reverb, explosion or bass boom."
+    ),
     "orc": "The short, guttural death roar of an orc warrior cut down by a sword in battle",
     "orc_female": "A woman's very short, sharp, high-pitched death scream, a single shrill feminine cry less than half a second long, cut off instantly as a sword strikes her down. Clearly a female human-like voice, high soprano pitch, no growl, no male voice, no music.",
     "hobgoblin": "The harsh, guttural death cry of a hobgoblin soldier felled by a sword: a rough snarling humanoid war-cry choking off as he falls. Voice only, no dog, no barking, no animal, no music.",
@@ -41,6 +49,14 @@ PROMPTS = {
         "followed immediately by a very short brittle rattle of loose bones knocking together. "
         "Tight, dry, crisp game combat hit, under one second. One strike only, "
         "no music, no voice, no flesh, no metal ringing, no reverb."
+    ),
+    "bone_hit_heavy": (
+        "One forceful sword blow into a solid skeleton ribcage. A deep dry hollow "
+        "bone thump with a sharp dense crack fused into the attack, followed by a "
+        "tiny gritty crunch of broken bone. Heavy, punchy, close-up game combat "
+        "foley. Strong low-mid impact, compact tail, immediate onset, one strike "
+        "only. No metal, ringing, delicate clicking, loose clacking, flesh, voice, "
+        "whoosh, music, reverb or explosion."
     ),
     "skeleton_death": (
         "A dry skeleton suddenly crumbling into a loose pile of bones: an immediate brittle "

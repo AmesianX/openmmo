@@ -5,12 +5,12 @@
     {
       "attackerMaterial": "metal",
       "targetMaterial": "metal",
-      "sound": "/sounds/metal-hit.ogg"
+      "sound": "/sounds/bone-hit-heavy.ogg"
     },
     {
       "attackerMaterial": "wood",
       "targetMaterial": "metal",
-      "sound": "/sounds/metal-hit.ogg"
+      "sound": "/sounds/bone-hit-heavy.ogg"
     },
     {
       "attackerMaterial": "metal",
@@ -25,12 +25,12 @@
     {
       "attackerMaterial": "metal",
       "targetMaterial": "bone",
-      "sound": "/sounds/bone-hit.ogg"
+      "sound": "/sounds/armored-bone-hit.ogg"
     },
     {
       "attackerMaterial": "wood",
       "targetMaterial": "bone",
-      "sound": "/sounds/bone-hit.ogg"
+      "sound": "/sounds/armored-bone-hit.ogg"
     }
   ],
   "missSounds": [

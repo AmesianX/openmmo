@@ -46,12 +46,37 @@ changes and are attenuated indoors.
 
 ## Combat
 
-- metal-hit.ogg — 금속 갑옷 피격음 (`metal` / `wood` → `metal`).
+- armored-bone-hit.ogg — 일반 스켈레톤·Forgotten Dead의 묵직한 피격음 (`metal` / `wood` → `bone`).
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) API로 2026-09-15 직접 생성.
+  Starter 유료 플랜(API 구독 조회로 확인),
+  [유료 플랜 상업 이용 라이선스](https://help.elevenlabs.io/hc/en-us/articles/13313564601361-Can-I-publish-the-content-I-generate-on-the-platform) 적용.
+  `eleven_text_to_sound_v2`, 0.7초, `prompt_influence=0.75`, 첫 생성의 1번 후보 사용.
+  두 프롬프트로 총 4개 후보를 생성했으며 38크레딧 사용.
+  선택한 프롬프트는 `tools/gen-death-sfx.py`의 `armored_bone_hit`에 기록.
+  원본과 생성·가공 메타데이터는 `assets/sfx/skeleton-hits-2026-09-15/`의
+  `armored-bone-hit_candidate1_2026-09-15.mp3` 및 같은 이름의 `.json`에 보관.
+  **[미사용]** 후보는 같은 폴더의 `candidate2`~`candidate4`로 보관.
+  클리핑 없이 float PCM으로 가공하며 재생 속도·피치를 0.88배로 낮추고,
+  55 Hz 하이패스·250 Hz 저음 +4 dB·1.8 kHz 고음 −5 dB·3.8 kHz 로우패스를 적용.
+  0.5초, 시작 2 ms·끝 70 ms 페이드, 인코딩 전 피크 −3 dB, 44.1 kHz 모노 Ogg Vorbis q5.
+- metal-hit.ogg — **[미사용]** 기존 금속 갑옷 피격음. 2026-09-15 `bone-hit-heavy.ogg`로 교체.
   ElevenLabs Sound Effects API, Starter 유료 플랜으로 2026-09-12 직접 생성.
   유료 플랜 상업 이용 라이선스 적용. `tools/gen-death-sfx.py`의 `metal_hit`,
   0.7초·prompt_influence 0.6·1테이크. 원본은 `assets/skeleton_warrior/sfx/metal-hit.mp3`에 보관.
   44.1 kHz 모노 Ogg q5, 피크 −3 dB, 100 ms 테일 페이드로 가공.
-- bone-hit.ogg — 스켈레톤 피격 시 뼈가 부딪히는 소리 (`metal` / `wood` → `bone`).
+- bone-hit-heavy.ogg — 해골 워리어·나이트의 갑옷 피격음 (`metal` / `wood` → `metal`).
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) API로 2026-09-15 직접 생성.
+  Starter 유료 플랜(API 구독 조회로 확인),
+  [유료 플랜 상업 이용 라이선스](https://help.elevenlabs.io/hc/en-us/articles/13313564601361-Can-I-publish-the-content-I-generate-on-the-platform) 적용.
+  `eleven_text_to_sound_v2`, 0.7초, `prompt_influence=0.7`, 2개 후보 중 1번 사용, 총 14크레딧.
+  프롬프트는 `tools/gen-death-sfx.py`의 `bone_hit_heavy`에 기록.
+  원본과 생성·가공 메타데이터는 `assets/sfx/skeleton-hits-2026-09-15/`의
+  `bone-hit-heavy_take1_2026-09-15.mp3` 및 같은 이름의 `.json`에 보관.
+  **[미사용]** 후보는 같은 폴더의 `take2`로 보관.
+  float PCM으로 가공하며 재생 속도·피치를 0.9배로 낮추고, 65 Hz 하이패스·220 Hz 저음 +3.5 dB·
+  2.2 kHz 고음 −3 dB·5 kHz 로우패스를 적용. 첫 100 ms RMS를 기존보다 5 dB 높게 맞춤.
+  0.42초, 시작 2 ms·끝 65 ms 페이드, 44.1 kHz 모노 Ogg Vorbis q5, 디코딩 피크 −6.09 dB.
+- bone-hit.ogg — **[미사용]** 기존 뼈 피격음. 2026-09-15 `armored-bone-hit.ogg`로 교체.
   [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) API로 2026-09-12 생성
   (Starter 유료 플랜, 직접 생성; [유료 플랜 상업 이용 라이선스](https://help.elevenlabs.io/hc/en-us/articles/13313564601361-Can-I-publish-the-content-I-generate-on-the-platform)).
   `tools/gen-death-sfx.py`의 `bone_hit`, 0.7초·prompt_influence 0.6·2테이크 중 2번 사용.
