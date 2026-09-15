@@ -1,14 +1,15 @@
 # 월드 이벤트 전달 범위 통일
 
-- 상태: 설계 제안 — 구현 전
+- 상태: 구현 완료 — 공통 전달 계층 및 클라이언트 적용 가이드
 - 작성: 2026-09-15
-- 조사 기준: 작업 트리 `6c0df858`의 서버·shared·웹·agent-client
+- 구현: 2026-09-15, 프로토콜 80
+- 이전 구현 조사 기준: 작업 트리 `6c0df858`의 서버·shared·웹·agent-client
 
 ## 문서의 목적
 
-현재 월드 이벤트 전달 방식의 차이와 개선안을 정리한다. 통일 작업 이후에는 새 기능의 주변 브로드캐스트를 구현·리뷰할 때 따르는 가이드로 사용한다. 공통 규칙이 바뀌면 문서도 함께 갱신한다.
+월드 이벤트의 공통 전달 규칙과 구현 구조를 정리한다. 새 기능의 주변 전달을 구현·리뷰할 때 이 문서를 따른다. 공통 규칙이 바뀌면 문서도 함께 갱신한다.
 
-§2는 현행 코드의 조사 결과다. §1과 §3~7은 적용할 설계이며, §6은 새 기능 구현 절차, §8은 구현 시 검증 항목이다.
+§2는 리팩토링 전 조사 기록이다. §1과 §3~7은 적용한 규칙과 구현 구조이며, §6은 새 기능 구현 절차, §8은 검증 기준과 실행 결과다.
 
 ## 1. 공통 원칙과 범위
 
@@ -45,9 +46,12 @@
 
 - 기존 1024 m HTTP 지역 파일과 지역 캐시를 유지하며, `put_object`에 실시간 전파를 추가하지 않는다.
 - 배포 데이터가 바뀌면 웹·agent-client의 캐시, 다운로드 기록, 충돌 데이터를 함께 갱신한다.
+- 새 `world_epoch`에서 웹의 오브젝트 지역 캐시·가구·교량 충돌과 agent의 가구 다운로드 기록·배치·충돌을 해제한다. 이전 세대의 HTTP 응답은 적용하지 않는다. 같은 세대의 정적 지역은 재사용한다.
 - 플레이어가 배치·회수하는 영지 창고·울타리·좌판과 건축·철거하는 집은 동적 대상이다. 정적 의자에 앉는 동작도 플레이어 상태로 전달한다.
 
-## 2. 현행 구현
+## 2. 리팩토링 전 구현 기록
+
+이 절의 범위·함수명은 `6c0df858` 조사 당시의 기록이며, 현재 전달 경로는 §5를 따른다.
 
 ### 2.1 전달·보관 범위
 
@@ -69,7 +73,7 @@
 | 낚시 | 찌 중심 32 m | [fishing.rs](../server/src/game_state/fishing.rs) `broadcast_fishing` |
 | agent 인지 | 수신 후 LLM 상태·이벤트·대상 검색에서 27 m로 재필터 | [perception.rs](../agent-client/src/state/perception.rs), [world_state.rs](../agent-client/src/state/world_state.rs), [prompt.rs](../agent-client/src/driver/prompt.rs) |
 
-현재의 주요 불일치는 집 보관 범위와 변경 수신 범위, 조작자 중심 전파, 집 외관의 같은 층 필터다. 이관 시에는 삭제 전 수신자 보존, 늦은 HTTP 응답의 역전 방지, 여러 agent의 공유 캐시 수명도 처리해야 한다.
+당시 주요 불일치는 집 보관 범위와 변경 수신 범위, 조작자 중심 전파, 집 외관의 같은 층 필터였다. 이관에서 삭제 전 수신자 보존, 늦은 HTTP 응답의 역전 방지, 여러 agent의 공유 캐시 수명도 함께 처리했다.
 
 ### 2.2 무효화 이후 재수신
 
@@ -92,7 +96,7 @@
 pub const EVENT_DELIVERY_RADIUS: f32 = 32.0;
 ```
 
-[shared/src/world.rs](../shared/src/world.rs)에 정의한다. 서버·agent-client는 shared를 사용하고, 웹은 공통 `world_constants()` WASM API로 읽는다. 기존 `dungeon_constants()`의 노출 경로도 이 API로 옮긴다.
+[shared/src/world.rs](../shared/src/world.rs)에 정의한다. 서버·agent-client는 shared를 사용하고, 웹은 공통 `world_constants()` WASM API로 읽는다. 판정 구현은 [shared/src/interest.rs](../shared/src/interest.rs)의 `Space`, `Bounds`, `SubjectArea`에 있다.
 
 `R = EVENT_DELIVERY_RADIUS`일 때 기본 판정은 다음과 같다.
 
@@ -161,16 +165,16 @@ pub const EVENT_DELIVERY_RADIUS: f32 = 32.0;
 
 건축으로 바뀐 높이·나무·풀도 각 변경 타일의 구독자에게 전달한다. 집 원점이나 조작자 위치는 기준으로 사용하지 않는다. 조작자의 작업 결과는 직접 응답하며, 원거리 작업이 해당 타일의 구독을 뜻하지는 않는다.
 
-본문을 WebSocket으로 보내거나 revision(대상별 상태 버전)을 알린 뒤 HTTP로 받는다. 어느 방식이든 수신자는 같은 타일 구독자다.
+`TerrainTileSnapshot`으로 높이·지표 재질(splat)·나무·풀·조경 마스크의 최신 본문을 WebSocket으로 함께 보낸다. 한 타일의 본문은 하나의 revision(대상별 상태 버전)에 속한다. 구독 밖 정적 지형의 HTTP 로드는 유지한다.
 
 | 상태 | 갱신 시점 |
 | --- | --- |
-| 구독 중 새 revision 수신 | 필요한 HTTP 본문을 즉시 재요청. 이동까지 기다리지 않음 |
-| 범위 밖 캐시를 가지고 재진입 | 서버 revision 확인 후 최신 본문으로 활성화 |
-| 요청 실패 | 미동기화 상태를 유지하고 재시도 |
+| 구독 중 새 revision 수신 | 받은 본문을 즉시 적용. 이동까지 기다리지 않음 |
+| 범위 밖 캐시를 가지고 재진입 | `Enter`의 최신 본문으로 캐시를 갱신하고 활성화 |
+| 서버 파일 읽기·클라이언트 적용 실패 | 미동기화 상태를 유지하고 재시도 |
 | 높이 변경 | 높이와 이에 의존하는 나무·풀 배치를 함께 갱신한 뒤 완료 처리 |
 
-agent의 높이는 메모리와 HTTP 디스크 캐시 모두 갱신한다. 재진입 검증을 구현한 뒤 범위 밖 모든 접속자에게 보내던 무효화를 제거한다.
+agent의 높이는 메모리와 HTTP 디스크 캐시 모두 갱신한다. 디스크는 레이아웃 버전·월드 세대로 분리하고, 이전 HTTP 응답은 새 스냅샷을 덮어쓰지 못한다. 범위 밖 모든 접속자에게 보내던 무효화 경로는 제거했다. 여러 변경 타일 중 하나의 읽기가 실패해도 나머지 타일은 전달하며, 실패한 타일은 재동기화 요청 및 주기 작업에서 재시도한다.
 
 ### 3.7 플레이어 상태와 효과
 
@@ -218,24 +222,36 @@ agent의 높이는 메모리와 HTTP 디스크 캐시 모두 갱신한다. 재�
 | 연결별 관심 집합 세대·송신 순번 | 과거 시야 응답과 누락 판별. 이전 구간의 늦은 `Leave`가 새 구독을 지우지 않게 함 |
 | 대상별 `revision`과 삭제 표식 | HTTP·여러 agent 연결의 역순 응답, 삭제 후 이전 상태 복원 방지 |
 
-전체 스냅샷에는 적용 범위와 완료 경계를 둔다. 임시 목록에 구성한 뒤 해당 연결의 시야에 적용한다. 큰 지형의 HTTP 응답은 서버가 알려준 revision과 일치할 때 활성화한다.
+`WorldUpdate`는 `world_epoch`, `generation`, `sequence`, 서버 확정 `position`·`floor_level`, `reset`, `ready`, `events`를 포함한다. 각 이벤트는 `subject`, `revision`, `change`, 기존 메시지 본문 목록을 가진다. 전체 스냅샷은 새 세대의 `sequence=1, reset=true` 한 묶음으로 적용하며 빈 스냅샷도 이전 시야를 비운다. `ready=false` 또는 타일 적용 대기 중에는 이동을 진행하지 않는다.
 
 요청 실패를 빈 정상 상태로 처리하지 않는다. 재연결 시 시야를 비우고 새 스냅샷을 받으며, 스트림 누락이나 복구가 필요한 순서 불일치는 재동기화한다.
+
+`ResyncWorld`는 새 세대의 전체 스냅샷을 요청한다. 이미 처리한 순번·과거 세대는 무시하고, 실제 순번 누락·revision 역행은 재동기화를 요청한다. 서버 재시작 전 세대는 다시 활성화하지 않는다. 여러 agent 연결이 공유 본문을 모두 해제한 뒤 오래된 `Enter`만 받은 경우에도 최신 스냅샷을 요청한다.
 
 ## 5. 구현 구조
 
 ### 5.1 서버의 공통 전달 계층
 
-`server/src/game_state/interest.rs`에 공통 판정, 연결별 전송 목록, 대상별 구독자, 순서 있는 송신 큐를 둔다. 기능 코드는 상태·위치·형상을 제공하고 이 계층이 수신자를 결정한다. API 이름은 구현 시 조정할 수 있다.
+`server/src/game_state/interest.rs`에 공통 판정, 연결별 전송 목록, 대상별 구독자, 순서 있는 송신 큐를 둔다. 기능 코드는 상태·위치·형상을 제공하고 이 계층이 수신자를 결정한다.
 
 ```text
 reconcile_view(player_id)
-publish_subject_change(subject_id, change)
-publish_movement(subject_id, from, to, movement)
-publish_effect(effect_bounds, space, effect)
-remove_subject(subject_id, final_revision)
-send_to_participants(player_ids, result)
+reset_world_view(player_id)
+publish_subject_change(message)
+publish_nearby(position, floor, message, skip)
+publish_house(house) / remove_house_subject(house_id)
+publish_terrain_tiles(tiles)
+send_direct_message_to_players(player_ids, result)
 ```
+
+| 구현 | 역할 |
+| --- | --- |
+| [interest.rs](../server/src/game_state/interest.rs) | 공간 인덱스, 연결별 집합과 역구독 목록, 이동·효과·낚시, 순번과 재동기화, 타일 전달 |
+| [interest_subjects.rs](../server/src/game_state/interest_subjects.rs) | 플레이어·몬스터·아이템·영지 시설·지속 효과의 최신 진입 상태와 정리 메시지 |
+| [interest_dungeon.rs](../server/src/game_state/interest_dungeon.rs) | 실제 개구부·배치 좌표에 따른 문·소품 개별 구독 |
+| [messages.rs](../shared/src/messages.rs) | `WorldUpdate`, `ResyncWorld`, 메시지별 `DeliveryClass` 분류 |
+
+내부 `publish_player_movement`·`publish_monster_movement`는 끝점 합집합을, `publish_effect`는 효과 영역을 사용한다. `publish`·`remove`가 대상 revision과 기존 구독자 정리를 담당한다. 상태 확정과 게시를 같은 기능 잠금 범위에서 실행하고, 관심 집합 변경과 큐 삽입은 관심 계층 잠금 안에서 처리한다. 집·지형의 파일 변경과 스냅샷 읽기는 `world_edit_guard`로 직렬화한다.
 
 주변 전달 API는 반경 인자를 받지 않는다. `player_ids_within_position(..., radius)` 같은 조회는 공격·상호작용·AI 내부 판단에만 사용한다. `ServerMessage`는 §1의 분류를 명시하며 미분류 메시지를 자동 전역 전송하지 않는다.
 
@@ -249,6 +265,8 @@ send_to_participants(player_ids, result)
 - 집의 웹 `LOAD_RADIUS`·`EVICT_RADIUS`·청크 HTTP 요청과 agent의 `fetch_houses_around`·`fetched_house_chunks`를 제거한다.
 - 정적 가구의 `fetch_furniture_around`·`fetched_furniture_regions`와 먼 스케줄 목적지의 정적 데이터 사전 로드는 유지한다. 버전 변경은 §1의 캐시 정책을 따른다.
 - 장거리 경로는 잠정 경로로 두고 접근하면서 최신 동적 충돌로 다음 구간을 갱신한다. 스냅샷 대기 영역은 미확인 상태로 두며, 검증된 영역까지 이동한 뒤 갱신되면 이어간다. 서버 위치 보정을 우선 적용하고, 보정이 반복되면 재동기화해 경로를 다시 계산한다.
+
+웹의 [worldView.ts](../client/src/lib/network/worldView.ts)와 agent의 shared `WorldView`는 서버 확정 위치에서 `R-1 m`까지 다음 이동을 허용한다. 1 m는 다음 충돌 확인을 위한 여유다. 지형 적용이나 정적 가구 재로드가 대기 중이면 웹 이동을 멈추고 경로를 보존한다. agent도 타일 대기 중에는 경로 지점을 소비하지 않으며, 공유 충돌 revision이 바뀌면 경로를 다시 계산한다. 웹의 이탈 정리는 마지막 이동 보간 후 실행하고 세대·재진입 여부를 다시 확인한다.
 
 ### 5.3 agent 인지
 
@@ -269,7 +287,7 @@ LLM 상태 목록·이벤트·대상 검색은 활성 `WorldView`를 사용한�
 
 ## 7. 이관과 성능
 
-### 7.1 구현 순서
+### 7.1 완료한 이관 범위
 
 | 단계 | 작업 |
 | --- | --- |
@@ -280,7 +298,7 @@ LLM 상태 목록·이벤트·대상 검색은 활성 `WorldView`를 사용한�
 
 ### 7.2 기존 상수의 다른 용도
 
-- `NPC_SIGHT_RADIUS`는 [deals.rs](../server/src/game_state/deals.rs)의 거래 제안 허용 거리와 [walk.rs](../agent-client/src/driver/walk.rs)의 이동 제한에도 쓰인다. 주변 대상 선택은 활성 시야로 옮기고 행위 제한은 별도 규칙으로 분리한 뒤, 상수·재노출·관련 assertion을 제거한다.
+- `NPC_SIGHT_RADIUS`를 제거했다. [deals.rs](../server/src/game_state/deals.rs)의 거래 제안 허용 거리와 [walk.rs](../agent-client/src/driver/walk.rs)의 이동 제한은 별도 행위 규칙으로 유지한다.
 - `EVENT_DELIVERY_RADIUS`는 [monster_ai.rs](../server/src/game_state/monster_ai.rs)의 활성 AI 조회, [ambient_spawn.rs](../server/src/game_state/ambient_spawn.rs)의 스폰 제약, 몬스터 소유권, 던전 입구 조작 검사에도 쓰인다. 시야와 연동할 항목은 함께 검증하고 조작 거리 등은 용도에 맞게 분리한다.
 
 ### 7.3 성능과 배포
@@ -289,10 +307,12 @@ LLM 상태 목록·이벤트·대상 검색은 활성 `WorldView`를 사용한�
 
 - 기존 공간 인덱스를 활용하고, 움직인 관찰자·대상 주변만 갱신한다.
 - 집·타일·울타리는 실제 영역이 걸친 셀에 등록하고 월드 순환을 처리한다.
-- 본문은 한 번 직렬화해 공유한다. 경계 왕복 비용은 캐시·같은 틱 변경 병합으로 줄인다.
-- 메시지별 수신자 수·송신량, 활성 대상 수, 스냅샷 크기·지연, 재동기화·역순 응답 폐기 수, 이동·AI 처리 시간을 이관 전후 비교한다.
+- 같은 게시의 이벤트 본문을 한 번 직렬화해 수신자 간 공유하고, 연결별 봉투에 순번·세대를 붙인다. 차단된 좌판 문구는 해당 수신자에 맞게 직렬화한다.
+- `world_delivery` trace는 연결별 송신 바이트, 활성 대상 수, 전체 스냅샷 여부를 기록한다. 프로덕션 수신자 분포·스냅샷 지연·이동·AI 처리 시간의 이관 전후 부하 비교는 배포 전 별도 측정 항목이다.
 
 [shared/src/lib.rs](../shared/src/lib.rs)의 정책에 따라 메시지 형태·의미가 바뀌면 `PROTOCOL_VERSION`을 올린다. 웹 WASM·서버·agent-client를 호환되는 버전으로 함께 배포 준비하고, 원격 agent와 포크에 변경을 안내한다. 롤백도 세 구성요소의 버전을 맞춘다. 위 단계는 개발·검토 단위이며 구형 클라이언트가 새 의미를 잘못 처리하는 중간 상태는 배포하지 않는다.
+
+이번 변경은 프로토콜 **79 → 80**이다. 서버·웹 WASM·agent-client를 함께 갱신해야 한다. 이 작업에서 프로덕션 배포는 실행하지 않았다.
 
 ## 8. 검증 기준
 
@@ -322,11 +342,24 @@ LLM 상태 목록·이벤트·대상 검색은 활성 `WorldView`를 사용한�
 | 낚시 플레이어만 가까움 / 찌만 가까움, 찌 이동·플레이어 순간이동·접속 해제 | 플레이어 기준 구독, 실제 찌 좌표 표시, 기존 구독자의 종료 정리 |
 | 타일 중심은 멀지만 가장자리는 가까움 / 모서리에서도 R 밖 | 실제 타일 영역으로 구독 결정 |
 | 조작자·집 원점은 멀지만 변경 타일은 가까움 | 해당 타일 구독자 갱신, 작업 결과는 조작자에게 응답 |
-| 정지 관찰자의 타일 revision 수신 / 원거리 캐시로 재진입 | 즉시 재요청 / 활성화 전 revision 검증 |
+| 정지 관찰자의 타일 revision 수신 / 원거리 캐시로 재진입 | 즉시 본문 적용 / 최신 진입 본문으로 교체 |
 | agent에 이전 높이 메모리·디스크 캐시가 남음, 갱신 요청 실패 | 최신 높이·종속 배치로 갱신. 실패 상태를 완료로 처리하지 않음 |
 | 접속 해제·송신 누락·재시작·스냅샷 실패 | 재동기화 |
 | 화면비·카메라 회전·고저차·일반 줌아웃 변경 | 32 m 정책 유지. 가장자리 현상 허용, 구독 진입 시 최신 상태 복원 |
 
 완료 기준은 서버의 관심 집합과 웹·agent-client의 활성 상태가 일치하고, 재진입 시 최신 상태가 복원되는 것이다. 화면 전체 동기화는 요구하지 않는다.
 
-이 문서는 설계와 검증 계획이며, 동작 코드 변경이나 실행 검증 결과를 포함하지 않는다.
+### 8.1 자동 검증
+
+- shared: 형상 경계·X 순환·집의 방 합집합·던전 공간 분리, 실제 문 개구부 좌표, 세대·순번 누락과 복구.
+- 서버: 이전 구독자 삭제·빈 이탈·끝점 이동 순서·중간 진입 연주와 낚시, 집·던전·지형의 기존 기능 회귀, 일부 타일 읽기 실패 후 정지 상태 재시도.
+- agent: 공유 집·던전 참조 수명, 역순 revision·삭제 표식·과거 세대, 본문 해제 후 오래된 진입, 제어권과 활성 목록 분리, 타일 대기 중 경로 보존, 늦은 HTTP 높이 응답과 디스크 캐시.
+- 웹: 세대·순번·타일 적용 대기, 서버 주도 집 활성 목록, 이동 대기 중 경로 보존, 새 월드의 정적 가구 충돌 해제와 HTTP 응답 역전·재시도.
+
+검증 명령: `cargo fmt --all`, `cargo check --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test -p onlinerpg-server -p onlinerpg-shared -p onlinerpg-terrain -p agent-client`; `client`에서 `npm run build:wasm`, `npm run check`, `npm run lint`, `npm test`.
+
+2026-09-15 실행 결과: 서버 968개, shared 412개, terrain 52개, agent-client 296개, 웹 1,022개 통과. 기존 무시 테스트는 Rust 6개다. `cargo check`, 웹 타입 검사·린트, WASM 빌드도 통과했다. 생성한 WASM으로 프로토콜 80·공통 반경·`WorldUpdate`의 타일 본문·`ResyncWorld`를 직접 직렬화/역직렬화해 형식 일치를 확인했다.
+
+전체 실행 중 기존 통계 테스트 `weapon_enchant_leaderboard_ranks_inventory_maxima_and_returns_history`가 타임스탬프 중복 제약으로 한 차례 실패했으며, 단독 재실행과 이후 전체 실행은 통과했다.
+
+자동 검증 결과와 프로덕션 부하 측정은 구분한다. 위 경계 회귀는 자동 테스트로 확인하며, 화면비별 수동 플레이 및 실제 접속자 부하 비교는 별도 운영 검증 항목이다.

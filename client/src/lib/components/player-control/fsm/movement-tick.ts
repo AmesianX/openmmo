@@ -174,6 +174,7 @@ interface MovementTickPlayer {
 }
 
 interface RunPlayerMovementTickInput {
+  canAdvance?: () => boolean
   deltaTime: number
   currentPlayer: MovementTickPlayer | null
   playerStateName: PlayerStateName
@@ -224,6 +225,7 @@ interface RunPlayerMovementTickInput {
 }
 
 export function runPlayerMovementTick({
+  canAdvance,
   deltaTime,
   currentPlayer,
   playerStateName,
@@ -267,6 +269,8 @@ export function runPlayerMovementTick({
     hasHeightData,
     sampleHeight,
   })
+
+  if (canAdvance && !canAdvance()) return
 
   const combatApplication = runCombatFrame({
     isInCombat,

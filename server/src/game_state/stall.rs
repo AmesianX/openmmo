@@ -148,10 +148,9 @@ impl GameState {
             return false;
         };
         // Viewers stand at the table, so the area broadcast already reaches them.
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &entry.stall.position,
             entry.stall.floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::StallRemoved {
                 stall_id: entry.stall.id,
             },
@@ -962,33 +961,11 @@ impl GameState {
     /// Announce a stall to its area with the sign each recipient may see. Two
     /// sends at most: the board is either shown or blank.
     async fn broadcast_stall(&self, stall: &Stall, make: impl Fn(Stall) -> ServerMessage) {
-        let ids = self
-            .player_ids_within_position(
-                &stall.position,
-                stall.floor_level,
-                super::EVENT_DELIVERY_RADIUS,
-            )
-            .await;
-        let blank = Stall {
-            sign: String::new(),
-            ..stall.clone()
-        };
-        if stall.sign.is_empty() || self.is_muted(&stall.owner_name).await {
-            self.send_direct_message_to_players_except(&ids, make(blank), None)
-                .await;
-            return;
+        self.sync_interest_blocks().await;
+        let mut public = stall.clone();
+        if self.is_muted(&stall.owner_name).await {
+            public.sign.clear();
         }
-        let blockers = self.blockers_among(&ids, &stall.owner_name).await;
-        let shown: Vec<PlayerId> = ids
-            .iter()
-            .copied()
-            .filter(|id| !blockers.contains(id))
-            .collect();
-        self.send_direct_message_to_players_except(&shown, make(stall.clone()), None)
-            .await;
-        if !blockers.is_empty() {
-            self.send_direct_message_to_players_except(&blockers, make(blank), None)
-                .await;
-        }
+        self.publish_subject_change(make(public));
     }
 }

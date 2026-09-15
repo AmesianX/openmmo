@@ -2,6 +2,8 @@
 //! [`WalkTo`] and [`Tuning`] define arrival and retry behavior.
 
 use std::sync::Arc;
+
+const WALK_SEGMENT_DISTANCE: f32 = 27.0;
 use std::time::{Duration, Instant};
 
 use onlinerpg_shared::housing::{WallDirection, WallVariant};
@@ -152,7 +154,7 @@ impl WalkTo<'_> {
                 arrive_range: APPROACH_RANGE + 0.2,
                 path_pullback: APPROACH_RANGE,
                 step_stop_dist: APPROACH_RANGE,
-                max_distance: crate::state::NPC_SIGHT_RADIUS,
+                max_distance: WALK_SEGMENT_DISTANCE,
                 max_secs: MAX_APPROACH_SECS,
                 needs_clear_line: false,
                 max_doors: MAX_CHASE_DOORS,
@@ -174,7 +176,7 @@ impl WalkTo<'_> {
                 arrive_range: PICKUP_ARRIVE_RANGE,
                 path_pullback: 0.0,
                 step_stop_dist: PICKUP_ARRIVE_RANGE - 0.5,
-                max_distance: crate::state::NPC_SIGHT_RADIUS,
+                max_distance: WALK_SEGMENT_DISTANCE,
                 max_secs: MAX_PICKUP_WALK_SECS,
                 needs_clear_line: false,
                 max_doors: MAX_CHASE_DOORS,
@@ -187,7 +189,7 @@ impl WalkTo<'_> {
                 arrive_range: *arrive_range,
                 path_pullback: 0.0,
                 step_stop_dist: (arrive_range - 0.5).max(0.5),
-                max_distance: crate::state::NPC_SIGHT_RADIUS,
+                max_distance: WALK_SEGMENT_DISTANCE,
                 max_secs: MAX_POINT_WALK_SECS,
                 needs_clear_line: false,
                 max_doors: MAX_CHASE_DOORS,
@@ -346,6 +348,7 @@ pub(super) async fn walk(
     let mut unreachable = false;
     let mut last_goal: Option<(f32, f32)> = None;
     let mut corrections = state.lock().await.position_corrections;
+    let mut collision_revision = 0;
 
     loop {
         if started.elapsed().as_secs_f32() > tuning.max_secs {
@@ -355,6 +358,12 @@ pub(super) async fn walk(
 
         let (target_floor, goal, snapped) = {
             let s = state.lock().await;
+            let current_revision = s.world_cache.read().unwrap().collision_revision;
+            if current_revision != collision_revision {
+                route.clear();
+                leg = 0;
+                collision_revision = current_revision;
+            }
             let Some(target_pos) = to.position(&s) else {
                 return Walked::Lost(LostReason::TargetGone);
             };
@@ -458,6 +467,10 @@ pub(super) async fn walk(
                 tokio::time::sleep(Duration::from_millis(ms.max(50))).await;
                 continue;
             }
+            Step::Waiting => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
             Step::Error => return Walked::Error,
             Step::Nothing => {}
         }
@@ -498,6 +511,10 @@ pub(super) async fn walk(
         // Try a clear surface step, preserving correction requests from sealed cells.
         match nudge(state, goal, tuning.step_stop_dist, background, sprint).await {
             Step::Sent(ms) => tokio::time::sleep(Duration::from_millis(ms.max(50))).await,
+            Step::Waiting => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
             Step::Error => return Walked::Error,
             Step::Nothing => tokio::time::sleep(Duration::from_millis(IDLE_TICK_MS)).await,
         }
@@ -513,6 +530,7 @@ enum Step {
     Sent(u64),
     /// Nothing to send from here.
     Nothing,
+    Waiting,
     Error,
 }
 
@@ -538,7 +556,6 @@ async fn step_along(
             continue;
         }
         let (x, z, dist) = if to_wp.dist <= MAX_STEP_DIST {
-            *leg += 1;
             (wp.x, wp.z, to_wp.dist)
         } else {
             let ratio = MAX_STEP_DIST / to_wp.dist;
@@ -548,12 +565,18 @@ async fn step_along(
                 MAX_STEP_DIST,
             )
         };
+        if !s.world_view.covers(&Position { x, z, ..me }) || !s.pending_terrain.is_empty() {
+            return Step::Waiting;
+        }
         let turn_ms = s.mount_turn_delay_ms(to_wp.rotation());
         return match s
             .send_step(x, z, wp.floor, to_wp.rotation(), background, sprint)
             .await
         {
             Ok(sprinting) => {
+                if to_wp.dist <= MAX_STEP_DIST {
+                    *leg += 1;
+                }
                 Step::Sent(turn_ms + travel_ms(dist, sprinting, s.movement_speed_mult()))
             }
             Err(e) => {
@@ -593,6 +616,9 @@ async fn nudge(
         {
             return Step::Nothing;
         }
+    }
+    if !s.world_view.covers(&Position { x, z, ..me }) || !s.pending_terrain.is_empty() {
+        return Step::Waiting;
     }
     let turn_ms = s.mount_turn_delay_ms(to_goal.rotation());
     match s
@@ -636,10 +662,15 @@ async fn open_blocking_door(
     // than paying for the same search again.
     let corrections = state.lock().await.position_corrections;
     let mut leg = 0usize;
+    let started = Instant::now();
     loop {
+        if started.elapsed().as_secs() > 15 {
+            return false;
+        }
         match step_along(state, &route, &mut leg, background, sprint).await {
             Step::Sent(ms) => tokio::time::sleep(Duration::from_millis(ms.max(50))).await,
             Step::Nothing => break,
+            Step::Waiting => tokio::time::sleep(Duration::from_millis(50)).await,
             Step::Error => return false,
         }
         if state.lock().await.position_corrections != corrections {
@@ -741,7 +772,10 @@ fn closed_doors_on_our_floor(s: &SharedState) -> Vec<DoorCandidate> {
     let floor = s.self_floor_level as u8;
     let world = s.world_cache.read().unwrap();
     let mut out = Vec::new();
-    for house in world.houses().values() {
+    for house in world.houses_for(
+        s.self_player_id
+            .unwrap_or_else(|| onlinerpg_shared::PlayerId::from(0)),
+    ) {
         // Cells are indexed from the house origin; the floor grid's own origin
         // cancels out (see `pathfinding::update_door_edge`).
         let ox = house.origin.x.floor() as i32;
@@ -790,6 +824,35 @@ mod tests {
     use onlinerpg_shared::fence::{Fence, FenceAxis, FenceEdge};
     use onlinerpg_shared::housing::{HouseData, PassabilityGrid};
     use onlinerpg_shared::ServerMessage;
+
+    #[tokio::test]
+    async fn a_pending_snapshot_pauses_without_consuming_the_waypoint() {
+        let (mut s, mut rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        let state = Arc::new(Mutex::new(s));
+        let route = vec![PathWaypoint {
+            x: 1.0,
+            z: 0.0,
+            floor: 0,
+        }];
+        let mut leg = 0;
+        assert!(matches!(
+            step_along(&state, &route, &mut leg, false, None).await,
+            Step::Waiting
+        ));
+        assert_eq!(leg, 0);
+        assert!(rx.try_recv().is_err());
+        crate::state::tests::synchronize_view(&mut *state.lock().await);
+        assert!(matches!(
+            step_along(&state, &route, &mut leg, false, None).await,
+            Step::Sent(_)
+        ));
+        assert_eq!(leg, 1);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+    }
 
     #[tokio::test(start_paused = true)]
     async fn corrected_mounted_walk_waits_for_recovery_then_replans_once() {
@@ -952,6 +1015,7 @@ mod tests {
                 .collect(),
             removed: vec![],
         });
+        crate::state::tests::synchronize_view(&mut state);
         (state, rx)
     }
 
@@ -1089,6 +1153,7 @@ mod tests {
             !s.find_path_to(x + 30.0, z, floor).found,
             "A* has no leg here"
         );
+        crate::state::tests::synchronize_view(&mut s);
         (Arc::new(Mutex::new(s)), rx)
     }
 

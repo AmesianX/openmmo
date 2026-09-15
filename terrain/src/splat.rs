@@ -35,6 +35,11 @@ pub struct SplatSampler {
 }
 
 impl SplatSampler {
+    pub async fn clear(&self) {
+        let mut revision = self.revision.write().await;
+        *revision += 1;
+        self.cache.clear().await;
+    }
     pub fn new(tiles: impl SplatTiles + 'static) -> Self {
         Self {
             cache: TileCache::new(TILE_CACHE_CAPACITY),

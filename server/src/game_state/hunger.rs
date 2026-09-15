@@ -380,10 +380,9 @@ impl super::GameState {
             self.party_vitals_dirty.write().await.extend(healed);
         }
         for (pid, position, floor, health, max_health) in messages {
-            self.send_direct_message_to_players_within_position(
+            self.publish_nearby(
                 &position,
                 floor,
-                super::EVENT_DELIVERY_RADIUS,
                 ServerMessage::PlayerHealthUpdate {
                     player_id: pid,
                     health,
@@ -437,10 +436,9 @@ impl super::GameState {
                 },
             );
         }
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &campfire.position,
             campfire.floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::CampfireSpawned {
                 campfire: campfire.clone(),
             },
@@ -469,10 +467,9 @@ impl super::GameState {
                 .collect()
         };
         for entry in expired {
-            self.send_direct_message_to_players_within_position(
+            self.publish_nearby(
                 &entry.campfire.position,
                 entry.campfire.floor_level,
-                super::EVENT_DELIVERY_RADIUS,
                 ServerMessage::CampfireRemoved {
                     campfire_id: entry.campfire.id,
                 },

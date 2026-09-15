@@ -50,8 +50,7 @@ use backoff::PromptBackoff;
 use combat::{load_attack_cooldown, tick_combat};
 use execute::{append_memory, handle_response};
 use movement::{
-    check_schedule_transition, coverage_positions, fetch_furniture_around, fetch_houses_around,
-    resolve_due_schedule,
+    check_schedule_transition, coverage_positions, fetch_furniture_around, resolve_due_schedule,
 };
 use prompt::build_prompt;
 
@@ -521,10 +520,7 @@ pub async fn llm_driver(
         let area = coverage_positions(&schedule, around);
         // Different endpoints, disjoint data — no reason to wait for one before
         // asking for the other.
-        tokio::join!(
-            fetch_houses_around(&world_cache, &area, &api_base_url, &label),
-            fetch_furniture_around(&world_cache, &area, &api_base_url, &label),
-        );
+        fetch_furniture_around(&world_cache, &area, &api_base_url, &label).await;
         around.map(|p| (p.x, p.z))
     };
 
@@ -645,10 +641,7 @@ pub async fn llm_driver(
                 });
                 if moved_a_chunk {
                     let area = [(p.x, p.z)];
-                    tokio::join!(
-                        fetch_houses_around(&world_cache, &area, &api_base_url, &label),
-                        fetch_furniture_around(&world_cache, &area, &api_base_url, &label),
-                    );
+                    fetch_furniture_around(&world_cache, &area, &api_base_url, &label).await;
                     world_data_at = Some((p.x, p.z));
                 }
             }

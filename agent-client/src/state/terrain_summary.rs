@@ -4,7 +4,7 @@ use crate::geom::PlanarDelta;
 /// Sampling geometry, derived from the sight radius so the summary spans
 /// exactly what the agent can perceive.
 const CELL_M: f32 = 3.0;
-const CELLS: i32 = (NPC_SIGHT_RADIUS / CELL_M) as i32 * 2 + 1;
+const CELLS: i32 = (EVENT_DELIVERY_RADIUS / CELL_M) as i32 * 2 + 1;
 const HALF: i32 = CELLS / 2;
 
 #[derive(Clone, Copy)]
@@ -120,7 +120,7 @@ impl TerrainSummaryJob {
         if parts.is_empty() {
             parts.push("open ground".to_string());
         }
-        let radius = HALF as f32 * CELL_M;
+        let radius = EVENT_DELIVERY_RADIUS;
         let mut out = format!("Terrain within {radius:.0}m: {}.", parts.join("; "));
 
         // Gentle slopes don't read as cliffs; note them so climbs are not a

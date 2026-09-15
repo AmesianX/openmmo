@@ -305,6 +305,10 @@ pub trait HeightTiles: Send + Sync {
     /// Missing tiles yield `defaults::default_heightmap()` rather than an
     /// error — the world is larger than the baked area.
     async fn read_heightmap(&self, tx: i32, tz: i32) -> std::io::Result<Vec<u8>>;
+
+    async fn cache_heightmap(&self, _tx: i32, _tz: i32, _raw: &[u8]) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -322,6 +326,7 @@ impl HeightTiles for TerrainIO {
 pub struct HeightSampler {
     cache: TileCache<Vec<u16>>,
     tiles: Box<dyn HeightTiles>,
+    revision: tokio::sync::RwLock<u64>,
 }
 
 impl HeightSampler {
@@ -329,16 +334,24 @@ impl HeightSampler {
         Self {
             cache: TileCache::new(TILE_CACHE_CAPACITY),
             tiles: Box::new(tiles),
+            revision: tokio::sync::RwLock::new(0),
         }
     }
 
     /// Ensure a tile's heightmap is loaded into the cache.
     /// No lock held during I/O; re-checks before decoding, first insert wins.
     async fn ensure_tile(&self, tx: i32, tz: i32) -> std::io::Result<()> {
+        let before = *self.revision.read().await;
         if self.cache.contains(&(tx, tz)).await {
             return Ok(());
         }
         let raw = self.tiles.read_heightmap(tx, tz).await?;
+        let revision = self.revision.read().await;
+        if *revision != before {
+            return Err(std::io::Error::other(
+                "Terrain changed during height request",
+            ));
+        }
         if self.cache.contains(&(tx, tz)).await {
             return Ok(());
         }
@@ -350,6 +363,12 @@ impl HeightSampler {
             .collect();
         self.cache.insert_if_absent((tx, tz), heights).await;
         Ok(())
+    }
+
+    pub async fn clear(&self) {
+        let mut revision = self.revision.write().await;
+        *revision += 1;
+        self.cache.clear().await;
     }
 
     /// Sample terrain height at an arbitrary world position using bilinear
@@ -375,6 +394,9 @@ impl HeightSampler {
                 "Invalid heightmap size",
             ));
         }
+        let mut revision = self.revision.write().await;
+        *revision += 1;
+        self.tiles.cache_heightmap(tx, tz, raw).await?;
         let heights = raw
             .as_chunks::<2>()
             .0

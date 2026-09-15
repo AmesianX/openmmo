@@ -15,6 +15,7 @@ import { preloadDungeonSounds } from './sfxManager'
 import {
   dungeon_layout,
   dungeon_constants,
+  world_constants,
   dungeon_add_passability,
   dungeon_remove_passability,
   dungeon_passability_floor_cells,
@@ -155,7 +156,6 @@ const DEPTH_SWITCH_FRACTION = 0.2
 /** Player collision footprint radius (m) — matches player-physics. */
 const PLAYER_RADIUS = 0.3
 /** Least gap between door re-pulls triggered by position corrections. */
-const CORRECTION_RESYNC_MIN_MS = 5000
 /** Entrance wall thickness (m). Single source of truth, shared with the mesh
  *  builder (buildDungeonEntranceGroup imports this) so the collision line sits
  *  on the wall's outer face — the player stops short of the *visible* wall, not
@@ -181,7 +181,11 @@ function hasRemovedMember(
 let consts: DungeonConstants | null = null
 
 function constants(): DungeonConstants {
-  if (!consts) consts = dungeon_constants() as DungeonConstants
+  if (!consts)
+    consts = {
+      ...dungeon_constants(),
+      ...world_constants(),
+    } as DungeonConstants
   return consts
 }
 
@@ -405,14 +409,33 @@ class DungeonManager {
    *  the surface entrance door; ≥1 are interior room doors. Cleared on
    *  enter/exit; (re)populated by the snapshot + live toggle broadcasts. */
   private openDoors = new Map<number, Set<number>>()
-  /** True while the last surface-frame check was inside the delivery radius;
-   *  a false→true crossing queues a door-snapshot re-pull (door toggles
-   *  outside the radius are never delivered). */
-  private doorSyncInside = true
-  /** Entrance id whose door snapshot must be re-pulled, consumed once by the
-   *  render layer (takeDoorSnapshotRequest). */
-  private doorSnapshotRequest: string | null = null
-  private lastCorrectionResyncMs = 0
+  private doorSubjects = new Map<
+    string,
+    { entranceId: string; depth: number; doorId: number; open: boolean }
+  >()
+  private propSubjects = new Map<
+    string,
+    {
+      entranceId: string
+      depth: number
+      propId: number
+      broken: boolean
+      opened: boolean
+    }
+  >()
+
+  resetDynamicView() {
+    this.doorSubjects.clear()
+    this.propSubjects.clear()
+    this.openDoors.clear()
+    this.brokenProps.clear()
+    this.openedProps.clear()
+    this.selfBrokenProps.clear()
+    for (let depth = 0; depth <= this.layouts.length; depth++)
+      this.rebuildFloorPassability(depth)
+    dungeonPropsResetRevision.update((n) => n + 1)
+    dungeonPropsRevision.update((n) => n + 1)
+  }
 
   get active(): boolean {
     return this.id !== null
@@ -575,12 +598,24 @@ class DungeonManager {
     this.selfBrokenProps.clear()
     this.treasureChestOpenedState = false
     this.openDoors.clear()
-    this.doorSyncInside = true
-    this.doorSnapshotRequest = null
     this.id = id
     this.entrance = entrance
     currentDungeonId.set(id)
-    // Doors start shut (openDoors cleared above); the snapshot reply corrects them.
+    for (const door of this.doorSubjects.values()) {
+      if (door.entranceId === id)
+        this.applyDoorToggle(id, door.depth, door.doorId, door.open)
+    }
+    for (const prop of this.propSubjects.values()) {
+      if (prop.entranceId === id)
+        this.applySubjectProp(
+          id,
+          prop.depth,
+          prop.propId,
+          true,
+          prop.broken,
+          prop.opened
+        )
+    }
   }
 
   /** Drop dungeon state (passability included). Depth resets to surface. */
@@ -594,8 +629,6 @@ class DungeonManager {
     this.selfBrokenProps.clear()
     this.treasureChestOpenedState = false
     this.openDoors.clear()
-    this.doorSyncInside = true
-    this.doorSnapshotRequest = null
     this.pendingBreakState = null
     this.pendingOpenState = null
     currentDungeonId.set(null)
@@ -649,6 +682,8 @@ class DungeonManager {
 
   /** Record a live prop break and report whether it was new. */
   markPropBroken(entranceId: string, depth: number, propId: number): boolean {
+    const subject = this.propSubjects.get(`${entranceId}:${depth}:${propId}`)
+    if (subject) subject.broken = true
     if (entranceId !== this.id) return false
     let set = this.brokenProps.get(depth)
     if (!set) {
@@ -672,6 +707,8 @@ class DungeonManager {
 
   /** Record a live chest open and report whether it was new. */
   markPropOpened(entranceId: string, depth: number, propId: number): boolean {
+    const subject = this.propSubjects.get(`${entranceId}:${depth}:${propId}`)
+    if (subject) subject.opened = true
     if (entranceId !== this.id) return false
     let set = this.openedProps.get(depth)
     if (!set) {
@@ -878,12 +915,59 @@ class DungeonManager {
 
   /** Apply a server door-toggle broadcast (entrance at depth 0, or an interior
    *  room door). The rendered swing + collision both read the door map. */
+  applySubjectDoor(
+    entranceId: string,
+    depth: number,
+    doorId: number,
+    isOpen: boolean | null
+  ) {
+    const key = `${entranceId}:${depth}:${doorId}`
+    if (isOpen === null) this.doorSubjects.delete(key)
+    else this.doorSubjects.set(key, { entranceId, depth, doorId, open: isOpen })
+    if (isOpen !== null && entranceId !== this.id) {
+      const entry = DUNGEON_ENTRANCES.find((entry) => entry.id === entranceId)
+      if (entry) this.enter(entry.id, entry)
+    }
+    if (entranceId === this.id) {
+      this.setDoorOpen(depth, doorId, isOpen ?? false)
+      this.rebuildFloorPassability(depth)
+    }
+  }
+
+  applySubjectProp(
+    entranceId: string,
+    depth: number,
+    propId: number,
+    active: boolean,
+    broken: boolean,
+    opened: boolean
+  ) {
+    const key = `${entranceId}:${depth}:${propId}`
+    if (active)
+      this.propSubjects.set(key, { entranceId, depth, propId, broken, opened })
+    else this.propSubjects.delete(key)
+    if (active && entranceId !== this.id) {
+      const entry = DUNGEON_ENTRANCES.find((entry) => entry.id === entranceId)
+      if (entry) this.enter(entry.id, entry)
+    }
+    if (entranceId !== this.id) return
+    const brokenSet = new Set(this.brokenPropsForDepth(depth))
+    const openedSet = new Set(this.openedPropsForDepth(depth))
+    if (active && broken) brokenSet.add(propId)
+    else brokenSet.delete(propId)
+    if (active && opened) openedSet.add(propId)
+    else openedSet.delete(propId)
+    this.setPropsState(entranceId, depth, [...brokenSet], [...openedSet])
+  }
+
   applyDoorToggle(
     entranceId: string,
     depth: number,
     doorId: number,
     isOpen: boolean
   ) {
+    const subject = this.doorSubjects.get(`${entranceId}:${depth}:${doorId}`)
+    if (subject) subject.open = isOpen
     if (entranceId !== this.id) return
     this.setDoorOpen(depth, doorId, isOpen)
     // Reflect the new open/shut state into pathfinding so monster AI stops
@@ -991,14 +1075,7 @@ class DungeonManager {
     return this.floorHeightAt(depth, x, z)
   }
 
-  /**
-   * Register/unregister registry dungeons by proximity so the entrance
-   * structure and passability exist before the player reaches the stairs.
-   * Registration and the door-snapshot re-pull share the server's delivery
-   * radius (shared EVENT_DELIVERY_RADIUS via dungeon_constants()): while
-   * registered on the surface, each crossing back inside it queues a re-pull,
-   * since door toggles outside the radius are never delivered.
-   */
+  /** Cache static entrance geometry by proximity. */
   private updateAutoRegister(x: number, z: number) {
     const r = constants().eventDeliveryRadius
     if (!this.active) {
@@ -1016,9 +1093,6 @@ class DungeonManager {
       const dx = shortestWrappedDeltaX(this.entrance.x, x)
       const dz = z - this.entrance.z
       const d2 = dx * dx + dz * dz
-      const inside = d2 < r * r
-      if (inside && !this.doorSyncInside) this.doorSnapshotRequest = this.id
-      this.doorSyncInside = inside
       if (d2 > ENTRANCE_UNREGISTER_DIST * ENTRANCE_UNREGISTER_DIST) {
         this.exit()
       }
@@ -1036,7 +1110,6 @@ class DungeonManager {
         // Surfacing via a server sync (respawn/teleport) shuts the entrance
         // door locally, mirroring enter()/exit() (the snapshot reply corrects
         // it to the authoritative state if someone left it open).
-        this.setDoorOpen(ENTRANCE_DOOR_DEPTH, ENTRANCE_DOOR_ID, false)
       }
       return
     }
@@ -1045,25 +1118,6 @@ class DungeonManager {
     // Teleports can land in a different dungeon; enter() no-ops on the same id.
     this.enter(covering.id, { x: covering.x, y: covering.y, z: covering.z })
     currentDungeonDepth.set(-floorLevel)
-  }
-
-  /** Entrance id needing a door-snapshot re-pull (the player crossed back
-   *  into delivery range); cleared on read. */
-  takeDoorSnapshotRequest(): string | null {
-    const id = this.doorSnapshotRequest
-    this.doorSnapshotRequest = null
-    return id
-  }
-
-  /** A server position correction underground means our passability
-   *  disagrees with the server's; a shut door we believe open is the usual
-   *  cause, so re-pull the door snapshot (throttled). */
-  requestDoorResyncAfterCorrection() {
-    if (!this.id || get(currentDungeonDepth) < 1) return
-    const now = Date.now()
-    if (now - this.lastCorrectionResyncMs < CORRECTION_RESYNC_MIN_MS) return
-    this.lastCorrectionResyncMs = now
-    this.doorSnapshotRequest = this.id
   }
 
   /**

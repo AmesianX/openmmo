@@ -141,6 +141,7 @@
     createCanvasIntentEvent,
     type PlayerControlEventActions,
   } from './player-control/fsm/events'
+  import { worldView } from '../network/worldView'
   import { runPlayerMovementTick } from './player-control/fsm/movement-tick'
   import {
     beginJumpFeedback,
@@ -1277,6 +1278,9 @@
     updateAutoTravel(deltaTime)
     const m = movingState()
     runPlayerMovementTick({
+      canAdvance: () =>
+        !!currentPlayer &&
+        worldView.covers(currentPlayer.position.x, currentPlayer.position.z),
       deltaTime,
       currentPlayer,
       playerStateName: playerState.state,
@@ -1351,6 +1355,11 @@
             rawDirection
           )
         : rawDirection
+    if (
+      !currentPlayer ||
+      !worldView.covers(currentPlayer.position.x, currentPlayer.position.z)
+    )
+      return
     runKeyboardFrame({
       currentPlayer,
       hasKeysPressed: inputHandler.hasKeysPressed,

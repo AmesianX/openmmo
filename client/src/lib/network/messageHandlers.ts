@@ -545,20 +545,172 @@ function syncOwnFloor(floorLevel: number | undefined, x: number, z: number) {
   playerVisualFloorLevel.set(Math.max(0, floor))
 }
 
+import { worldView, type WorldUpdate } from './worldView'
+
+type TerrainSnapshot = {
+  tile_x: number
+  tile_z: number
+  height: number[]
+  splat: number[]
+  trees: number[] | null
+  grass: number[] | null
+  landscape: LandscapingTile | null
+}
+const terrainSnapshots = new Map<string, TerrainSnapshot>()
+let requestResync = () => {}
+let resyncTimer: ReturnType<typeof setTimeout> | undefined
+let lastCorrection = -Infinity
+function scheduleResync() {
+  if (resyncTimer !== undefined) return
+  resyncTimer = setTimeout(() => {
+    resyncTimer = undefined
+    if (!worldView.synchronized) {
+      requestResync()
+      scheduleResync()
+    }
+  }, 1000)
+}
+function resyncWorld() {
+  worldView.synchronized = false
+  requestResync()
+  scheduleResync()
+}
+function applyTerrainSnapshots(
+  tiles: Iterable<TerrainSnapshot> = terrainSnapshots.values()
+) {
+  const heights = get(editorHeightManager)
+  const trees = get(editorTreeDataManager)
+  const grass = get(editorGrassDataManager)
+  const splat = get(editorSplatManager)
+  if (!heights || !trees || !grass || !splat) return
+  try {
+    for (const tile of tiles) {
+      heights.applySnapshot(tile.tile_x, tile.tile_z, tile.height)
+      splat.setSplatmap(tile.tile_x, tile.tile_z, new Uint8Array(tile.splat))
+      const mask = tile.landscape
+        ? new Uint8Array(tile.landscape.cleared)
+        : new Uint8Array((64 * 64) / 8)
+      trees.applyLandscapingMask(tile.tile_x, tile.tile_z, mask)
+      grass.applyLandscapingMask(tile.tile_x, tile.tile_z, mask)
+      trees.applySnapshot(tile.tile_x, tile.tile_z, tile.trees)
+      grass.applySnapshot(tile.tile_x, tile.tile_z, tile.grass)
+      worldView.pendingTerrain.delete(`${tile.tile_x},${tile.tile_z}`)
+    }
+  } catch (error) {
+    console.error('Terrain snapshot remains pending', error)
+    resyncWorld()
+  }
+}
+editorHeightManager.subscribe(() => applyTerrainSnapshots())
+editorTreeDataManager.subscribe(() => applyTerrainSnapshots())
+editorGrassDataManager.subscribe(() => applyTerrainSnapshots())
+editorSplatManager.subscribe(() => applyTerrainSnapshots())
+
 let pendingHeightTileRefresh: Promise<void> = Promise.resolve()
 
 export function handleServerMessage(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   raw: any,
   events: MessageEvents,
-  disconnect: () => void
+  disconnect: () => void,
+  resync: () => void
 ) {
   // Payloadless variants (GrillStarted, DungeonReset) arrive as a bare name.
   const isBare = typeof raw === 'string'
   const type = isBare ? raw : Object.keys(raw)[0]
   const data = isBare ? undefined : raw[type]
 
+  requestResync = resync
   switch (type) {
+    case 'TerrainTileSnapshot': {
+      terrainSnapshots.set(data.tile_x + ',' + data.tile_z, data)
+      worldView.pendingTerrain.add(`${data.tile_x},${data.tile_z}`)
+      applyTerrainSnapshots([data])
+      break
+    }
+    case 'WorldUpdate': {
+      const update = data as WorldUpdate
+      const previousEpoch = worldView.epoch
+      if (!worldView.accept(update)) {
+        if (!worldView.synchronized) resyncWorld()
+        return
+      }
+      if (update.reset) {
+        if (previousEpoch !== worldView.epoch) {
+          worldView.staticReady = false
+          objectManager.resetWorld()
+        }
+        housingManager.resetView()
+        terrainSnapshots.clear()
+        worldView.pendingTerrain.clear()
+        resetFences()
+        resetEstateStorage()
+        dungeonManager.resetDynamicView()
+        gameStore.update((state) => {
+          for (const id of state.otherPlayers.keys()) {
+            stopMusicPerformance(id)
+            stopPlayerInstrument(id)
+            removeBobber(id)
+          }
+          state.otherPlayers.clear()
+          return state
+        })
+        remotePlayerManager.reset()
+        monsterManager.reset()
+        groundItemManager.reset()
+        campfireManager.reset()
+        stallManager.reset()
+        tipHatManager.reset()
+        mealManager.reset()
+      }
+      for (const event of update.events) {
+        if (event.change === 'Leave' && event.subject.startsWith('terrain:')) {
+          const key = event.subject.slice(8)
+          terrainSnapshots.delete(key)
+          worldView.pendingTerrain.delete(key)
+        }
+        for (const message of event.messages) {
+          if (
+            event.change === 'Leave' &&
+            typeof message === 'object' &&
+            message &&
+            ('PlayerDisappeared' in message || 'MonsterRemoved' in message)
+          ) {
+            const generation = worldView.generation
+            const epoch = worldView.epoch
+            const deadline = performance.now() + 10000
+            const finish = () => {
+              if (
+                worldView.epoch !== epoch ||
+                worldView.generation !== generation ||
+                worldView.subjects.has(event.subject)
+              )
+                return
+              const id = event.subject.slice(event.subject.indexOf(':') + 1)
+              const monster = monsterManager.monsters.get(id)
+              const target = monster?.targetPosition
+              const interpolating = event.subject.startsWith('player:')
+                ? remotePlayerManager.isInterpolating(Number(id))
+                : !!monster &&
+                  !!target &&
+                  (monster.state === 'walk' || monster.state === 'run') &&
+                  Math.hypot(
+                    shortestWrappedDeltaX(monster.position.x, target.x),
+                    monster.position.z - target.z
+                  ) > 0.2
+              if (interpolating && performance.now() < deadline)
+                setTimeout(finish, 50)
+              else handleServerMessage(message, events, disconnect, resync)
+            }
+            setTimeout(finish, 0)
+          } else handleServerMessage(message, events, disconnect, resync)
+        }
+      }
+      if (update.reset && worldView.synchronized)
+        housingManager.completeSnapshot()
+      if (!worldView.synchronized) resyncWorld()
+      return
+    }
     case 'AuthSuccess': {
       const characters = (data.characters as AccountCharacter[]) ?? []
       setCapeUploadToken(data.cape_upload_token || null)
@@ -576,6 +728,9 @@ export function handleServerMessage(
     }
 
     case 'JoinSuccess': {
+      worldView.synchronized = false
+      housingManager.resetView()
+      scheduleResync()
       manaState.set(null)
       resetFences()
       resetHousePlacement()
@@ -662,7 +817,17 @@ export function handleServerMessage(
     case 'PlayerAppeared': {
       const serverPlayer: ServerPlayer = data.player
       gameStore.update((state) => {
-        if (serverPlayer.id !== state.currentPlayer?.id) {
+        if (serverPlayer.id === state.currentPlayer?.id) {
+          state.currentPlayer = {
+            ...state.currentPlayer,
+            ...toLocalPlayer(serverPlayer),
+          }
+          syncOwnFloor(
+            serverPlayer.floor_level,
+            serverPlayer.position.x,
+            serverPlayer.position.z
+          )
+        } else {
           addRemotePlayerToState(state, serverPlayer)
         }
         return state
@@ -733,7 +898,8 @@ export function handleServerMessage(
 
     case 'PositionCorrected': {
       // No id to match: it only ever goes to the player it corrects.
-      dungeonManager.requestDoorResyncAfterCorrection()
+      if (performance.now() - lastCorrection < 3000) resyncWorld()
+      lastCorrection = performance.now()
       // A correction is how a refused floor claim comes back.
       syncOwnFloor(data.floor_level, data.position.x, data.position.z)
       events.positionCorrected.emit({
@@ -1038,6 +1204,10 @@ export function handleServerMessage(
       monsterManager.spawnWithId(data.monster as ServerMonster)
       break
     }
+
+    case 'MonsterControlReleased':
+      monsterManager.releaseControl(data.monster_id)
+      break
 
     case 'MonsterAssigned': {
       // May be a reassignment of a monster we already track (dungeon
@@ -1702,6 +1872,26 @@ export function handleServerMessage(
         data.depth,
         data.door_id,
         data.is_open
+      )
+      break
+
+    case 'DungeonDoorState':
+      dungeonManager.applySubjectDoor(
+        data.entrance_id,
+        data.depth,
+        data.door_id,
+        data.is_open
+      )
+      break
+
+    case 'DungeonPropState':
+      dungeonManager.applySubjectProp(
+        data.entrance_id,
+        data.depth,
+        data.prop_id,
+        data.active,
+        data.broken,
+        data.opened
       )
       break
 

@@ -542,6 +542,7 @@ export class TerrainSplatManager {
   /** Directly set splatmap data for a tile (used by terrain generator). */
   setSplatmap(tileX: number, tileZ: number, data: Uint8Array): void {
     const key = tileKey(tileX, tileZ)
+    this.inflightSplatmaps.delete(key)
     this.splatmaps.set(key, data)
     if (this.textures.has(key)) this.refreshAll(tileX, tileZ)
     this.refreshNeighborBorders(tileX, tileZ)

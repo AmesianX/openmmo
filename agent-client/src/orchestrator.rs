@@ -605,6 +605,11 @@ async fn run_npc_session(
             if !s.in_game {
                 continue;
             }
+            apply_pending_terrain(&mut s).await;
+            if !s.world_view.synchronized {
+                let _ = s.send_background_command(ClientMessage::ResyncWorld).await;
+                continue;
+            }
             s.check_music_finished();
 
             // Clone Arc to avoid borrow conflict: world_cache (immutable) vs monster_ai (mutable).
@@ -700,14 +705,77 @@ async fn handle_incoming(state: &Arc<Mutex<SharedState>>, label: &str, msg: Serv
         ServerMessage::JoinSuccess { .. } => true,
         ServerMessage::PlayerRespawned { player } => s.self_player_id == Some(player.id),
         ServerMessage::PlayerTeleported { player_id, .. } => s.self_player_id == Some(*player_id),
+        ServerMessage::WorldUpdate { reset, events, .. } => *reset || events.iter().flat_map(|event| &event.messages).any(|message| matches!(message, ServerMessage::PlayerTeleported { player_id, .. } if Some(*player_id) == s.self_player_id) || matches!(message, ServerMessage::PlayerRespawned { player } if Some(player.id) == s.self_player_id)),
         _ => false,
     };
 
     s.push_event(msg);
 
+    apply_pending_terrain(&mut s).await;
+
     if needs_height_sync {
         if let Err(e) = s.sync_height().await {
             warn!("[{label}] Failed to sync height after relocation: {e}");
+        }
+    }
+}
+
+async fn apply_pending_terrain(s: &mut SharedState) {
+    if !s
+        .world_cache
+        .read()
+        .unwrap()
+        .is_current_epoch(&s.world_view.world_epoch)
+    {
+        return;
+    }
+    type TerrainRevisions = std::collections::HashMap<(String, i32, i32), u64>;
+    static TERRAIN_REVISIONS: std::sync::LazyLock<tokio::sync::Mutex<TerrainRevisions>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(TerrainRevisions::new()));
+    static APPLIED_EPOCH: tokio::sync::Mutex<String> = tokio::sync::Mutex::const_new(String::new());
+    let mut applied_epoch = APPLIED_EPOCH.lock().await;
+    if !s.world_view.world_epoch.is_empty() && *applied_epoch != s.world_view.world_epoch {
+        s.height_sampler.clear().await;
+        s.splat_sampler.clear().await;
+        TERRAIN_REVISIONS.lock().await.clear();
+        *applied_epoch = s.world_view.world_epoch.clone();
+    }
+    let pending = std::mem::take(&mut s.pending_terrain);
+    for (epoch, revision, message) in pending {
+        if let ServerMessage::TerrainTileSnapshot {
+            tile_x,
+            tile_z,
+            height,
+            splat,
+            ..
+        } = &message
+        {
+            if epoch != s.world_view.world_epoch
+                || !s
+                    .world_view
+                    .subjects
+                    .contains_key(&format!("terrain:{tile_x},{tile_z}"))
+            {
+                continue;
+            }
+            let mut revisions = TERRAIN_REVISIONS.lock().await;
+            let key = (epoch.clone(), *tile_x, *tile_z);
+            if revisions
+                .get(&key)
+                .is_some_and(|current| *current >= revision)
+            {
+                continue;
+            }
+            match s.height_sampler.update_tile(*tile_x, *tile_z, height).await {
+                Ok(()) => {
+                    s.splat_sampler.update_tile(*tile_x, *tile_z, splat).await;
+                    revisions.insert(key, revision);
+                }
+                Err(error) => {
+                    warn!(%error, "Terrain snapshot remains unsynchronized");
+                    s.pending_terrain.push((epoch, revision, message));
+                }
+            }
         }
     }
 }

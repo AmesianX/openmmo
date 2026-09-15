@@ -243,6 +243,9 @@ mod friends;
 mod house_building;
 pub(crate) mod hunger;
 mod instrument;
+mod interest;
+mod interest_dungeon;
+mod interest_subjects;
 mod inventory;
 mod land;
 mod landscaping;
@@ -340,6 +343,7 @@ pub(crate) struct ServerGroundItem {
 
 #[derive(Clone)]
 pub struct GameState {
+    interest: Arc<std::sync::Mutex<interest::Interest>>,
     combat_audit: Arc<combat_audit::CombatAudit>,
     movement_audit: Arc<movement_audit::MovementAudit>,
     players: Arc<RwLock<HashMap<PlayerId, Player>>>,
@@ -689,6 +693,7 @@ impl GameState {
             terrain_io,
             combat_audit: Arc::new(combat_audit::CombatAudit::default()),
             movement_audit: Arc::new(movement_audit::MovementAudit::default()),
+            interest: Arc::new(std::sync::Mutex::new(interest::Interest::default())),
             players: Arc::new(RwLock::new(HashMap::new())),
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
@@ -836,6 +841,10 @@ impl GameState {
     }
 
     pub(crate) fn broadcast(&self, msg: ServerMessage) {
+        assert_eq!(
+            msg.delivery_class(),
+            onlinerpg_shared::messages::DeliveryClass::Global
+        );
         if let Some(bytes) = encode_server_msg(&msg) {
             let _ = self.broadcast_tx.send(BroadcastMessage { bytes });
         }
@@ -851,6 +860,7 @@ impl GameState {
         wall_dir: WallDirection,
         segment_index: u32,
     ) -> Option<bool> {
+        let _edit = self.world_edit_guard().await;
         let (player_pos, player_floor) = {
             let players = self.players.read().await;
             let p = players.get(player_id)?;
@@ -926,6 +936,9 @@ impl GameState {
             }
         }
 
+        let mut houses = vec![house];
+        self.apply_open_door_state(&mut houses).await;
+        self.publish_house(&houses[0]);
         Some(is_open)
     }
 

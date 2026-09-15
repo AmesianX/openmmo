@@ -347,99 +347,47 @@ async fn surface_entrance_door_toggle_gates_on_the_entrance() {
 }
 
 #[tokio::test]
-async fn dungeon_door_toggle_delivery_gates_radius_and_floor() {
-    let game_state = make_test_game_state("dungeon_door_delivery");
-    let entrance = first_dungeon(&game_state);
-    let ep = entrance.position();
-    let toggler = pid("door_toggler");
-    let near_surface = pid("near_surface");
-    let far_surface = pid("far_surface");
-    let near_underground = pid("near_underground");
-    game_state
-        .add_player(make_player("door_toggler", ep.x, ep.z))
-        .await;
-    game_state
-        .add_player(make_player("near_surface", ep.x + 30.0, ep.z))
-        .await;
-    game_state
-        .add_player(make_player("far_surface", ep.x + 100.0, ep.z))
-        .await;
-    let mut delver = make_player("near_underground", ep.x + 10.0, ep.z);
-    delver.floor_level = -1;
-    game_state.add_player(delver).await;
-
-    let mut toggler_rx = game_state.register_direct_channel(&toggler).await;
-    let mut near_rx = game_state.register_direct_channel(&near_surface).await;
-    let mut far_rx = game_state.register_direct_channel(&far_surface).await;
-    let mut under_rx = game_state.register_direct_channel(&near_underground).await;
-    let mut broadcast_rx = game_state.subscribe();
-
-    game_state
-        .publish_dungeon_door_toggle(&toggler, entrance.id.clone(), 0, 0, true)
-        .await;
-
-    // Surface door: never global; surface players within EVENT_DELIVERY_RADIUS
-    // only. Underground players wait for the floor-entry snapshot; players
-    // farther out re-pull the snapshot when they cross into range.
-    assert!(matches!(broadcast_rx.try_recv(), Err(TryRecvError::Empty)));
-    for rx in [&mut toggler_rx, &mut near_rx] {
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(ServerMessage::DungeonDoorToggled {
-                entrance_id,
-                depth: 0,
-                door_id: 0,
-                is_open: true,
-            }) if entrance_id == entrance.id
-        ));
+async fn dungeon_door_toggle_delivery_uses_actual_door_positions_and_spaces() {
+    use onlinerpg_shared::dungeon::{door_position, generate_dungeon_for};
+    let game = make_test_game_state("dungeon_door_delivery");
+    let (entrance, depth, door) = first_dungeon_door(&game);
+    game.ensure_dungeon_runtime(&entrance.id).await;
+    let layouts = generate_dungeon_for(&entrance.id);
+    let surface = door_position(&entrance.position(), &layouts, 0, 0).unwrap();
+    let interior = door_position(&entrance.position(), &layouts, depth, door.door_id).unwrap();
+    for (name, x, z, floor) in [
+        ("near", surface.x + EVENT_DELIVERY_RADIUS, surface.z, 0),
+        ("far", surface.x + EVENT_DELIVERY_RADIUS + 0.1, surface.z, 0),
+        ("delver", interior.x, interior.z, -(depth as i8)),
+    ] {
+        let mut player = make_player(name, x, z);
+        player.floor_level = floor;
+        game.add_player(player).await;
     }
-    assert!(matches!(far_rx.try_recv(), Err(MpscTryRecvError::Empty)));
-    assert!(matches!(under_rx.try_recv(), Err(MpscTryRecvError::Empty)));
-
-    game_state
-        .publish_dungeon_door_toggle(&near_underground, entrance.id.clone(), 1, 123, false)
+    let mut near = game.register_direct_channel(&pid("near")).await;
+    let mut far = game.register_direct_channel(&pid("far")).await;
+    let mut delver = game.register_direct_channel(&pid("delver")).await;
+    game.publish_dungeon_door_toggle(&pid("far"), entrance.id.clone(), 0, 0, true)
         .await;
-
-    // Interior door: gated to the door's floor, so nearby surface players
-    // hear nothing.
-    assert!(matches!(broadcast_rx.try_recv(), Err(TryRecvError::Empty)));
     assert!(matches!(
-        under_rx.try_recv(),
+        near.try_recv(),
         Ok(ServerMessage::DungeonDoorToggled {
-            entrance_id,
-            depth: 1,
-            door_id: 123,
-            is_open: false,
-        }) if entrance_id == entrance.id
+            depth: 0,
+            is_open: true,
+            ..
+        })
     ));
-    assert!(matches!(
-        toggler_rx.try_recv(),
-        Err(MpscTryRecvError::Empty)
-    ));
-    assert!(matches!(near_rx.try_recv(), Err(MpscTryRecvError::Empty)));
-
-    // Delivery never depends on where the toggler's own floor tracking sits:
-    // they hear their toggle regardless, and the surface circle is unaffected.
-    // (`toggle_dungeon_door` only lets a floor-0 player reach depth 0, so this
-    // is a property of the delivery, not a reachable production case.)
-    game_state
-        .publish_dungeon_door_toggle(&near_underground, entrance.id.clone(), 0, 0, false)
+    assert!(far.try_recv().is_err());
+    assert!(delver.try_recv().is_err());
+    game.publish_dungeon_door_toggle(&pid("far"), entrance.id.clone(), depth, door.door_id, true)
         .await;
-    for rx in [&mut under_rx, &mut toggler_rx, &mut near_rx] {
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(ServerMessage::DungeonDoorToggled {
-                depth: 0,
-                is_open: false,
-                ..
-            })
-        ));
-    }
-    assert!(matches!(far_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    assert!(
+        matches!(delver.try_recv(), Ok(ServerMessage::DungeonDoorToggled { depth: d, is_open: true, .. }) if d == depth)
+    );
+    assert!(near.try_recv().is_err());
+    assert!(far.try_recv().is_err());
 }
 
-/// A shut interior dungeon door must block server-simulated movement across
-/// its corridor mouth from boot (doors default shut); toggling it open lets
 /// the move through, toggling again reseals it.
 #[tokio::test]
 async fn dungeon_door_blocks_movement_until_opened() {
@@ -518,27 +466,12 @@ async fn floor_entry_pushes_open_door_snapshot() {
         .await;
     let mut direct_rx = game_state.register_direct_channel(&player_id).await;
 
-    let inside = Position {
-        x: entrance.x,
-        y: entrance.y - 4.0,
-        z: entrance.z,
-    };
     game_state
-        .handle_player_floor_change(&player_id, 0, -(depth as i8), &inside, &inside)
+        .teleport_player(&player_id, at_door, 0.0, -(depth as i8))
         .await;
-
-    let mut doors_state = None;
-    for msg in drain(&mut direct_rx) {
-        if let ServerMessage::DungeonDoorsState { entrance_id, doors } = msg {
-            assert_eq!(entrance_id, entrance.id);
-            doors_state = Some(doors);
-        }
-    }
-    let doors = doors_state.expect("floor entry should push DungeonDoorsState");
-    assert!(
-        doors.contains(&(depth, door.door_id)),
-        "snapshot should list the door A opened, got {doors:?}"
-    );
+    assert!(drain(&mut direct_rx).iter().any(|message| matches!(message,
+        ServerMessage::DungeonDoorState { entrance_id, depth: d, door_id, is_open: Some(true) }
+        if entrance_id == &entrance.id && *d == depth && *door_id == door.door_id)));
 }
 
 /// Blows obey the same seal movement does: neither side of a shut door can
@@ -663,6 +596,7 @@ async fn locked_door_needs_the_floor_key_and_keeps_it() {
     let (outside, inside) = door_side_positions(&entrance, depth, &door, false);
     let keyless = add_delver(&game_state, "keyless", inside, depth).await;
     give_bag(&game_state, &keyless, None).await;
+    game_state.ensure_dungeon_runtime(&entrance.id).await;
     let mut keyless_rx = game_state.register_direct_channel(&keyless).await;
 
     assert_eq!(

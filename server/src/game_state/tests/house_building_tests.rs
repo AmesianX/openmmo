@@ -171,15 +171,27 @@ async fn house_scroll_builds_only_inside_the_owned_estate_and_persists_consumpti
         .any(|message| matches!(message, ServerMessage::HousePlacementResult { error: None })));
     assert!(messages.iter().any(|message| matches!(
         message,
-        ServerMessage::HeightTilesInvalidated { tiles } if tiles == &vec![(0, 0)]
+        ServerMessage::TerrainTileSnapshot {
+            tile_x: 0,
+            tile_z: 0,
+            ..
+        }
     )));
     assert!(messages.iter().any(|message| matches!(
         message,
-        ServerMessage::TreeTilesInvalidated { tiles } if tiles == &vec![(0, 0)]
+        ServerMessage::TerrainTileSnapshot {
+            tile_x: 0,
+            tile_z: 0,
+            ..
+        }
     )));
     assert!(messages.iter().any(|message| matches!(
         message,
-        ServerMessage::GrassTilesInvalidated { tiles } if tiles == &vec![(0, 0)]
+        ServerMessage::TerrainTileSnapshot {
+            tile_x: 0,
+            tile_z: 0,
+            ..
+        }
     )));
     let cleared_grass = game.terrain_io.read_grass(0, 0).await.unwrap().unwrap();
     let cleared_trees = game.terrain_io.read_trees(0, 0).await.unwrap().unwrap();
@@ -270,7 +282,11 @@ async fn house_scroll_builds_only_inside_the_owned_estate_and_persists_consumpti
     )));
     assert!(messages.iter().any(|message| matches!(
         message,
-        ServerMessage::HeightTilesInvalidated { tiles } if tiles == &vec![(0, 0)]
+        ServerMessage::TerrainTileSnapshot {
+            tile_x: 0,
+            tile_z: 0,
+            ..
+        }
     )));
     assert!(messages.iter().any(|message| matches!(
         message,

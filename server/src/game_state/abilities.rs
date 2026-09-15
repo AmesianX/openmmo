@@ -138,15 +138,9 @@ impl GameState {
                 {
                     return;
                 }
-                self.send_direct_message_to_players_within_position(
+                self.publish_nearby(
                     &position,
                     floor_level,
-                    super::EVENT_DELIVERY_RADIUS
-                        + if ability == AbilityId::GuardianWard {
-                            GUARDIAN_WARD_RADIUS
-                        } else {
-                            0.0
-                        },
                     ServerMessage::AbilityUsed {
                         ability,
                         player_id: *player_id,
@@ -432,10 +426,9 @@ impl GameState {
             player.radiance_on = enabled;
             (player.position, player.floor_level, enabled)
         };
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &changed.0,
             changed.1,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerRadianceToggled {
                 player_id: *player_id,
                 enabled: changed.2,

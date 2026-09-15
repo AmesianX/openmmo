@@ -428,6 +428,28 @@ export class TerrainHeightManager {
     )
   }
 
+  applySnapshot(tileX: number, tileZ: number, bytes: number[]): void {
+    if (bytes.length !== VERTS_PER_SIDE * VERTS_PER_SIDE * 2)
+      throw new Error('Invalid terrain height snapshot')
+    const data = new Uint16Array(new Uint8Array(bytes).buffer)
+    const keys = new Set([tileKey(tileX, tileZ)])
+    for (const key of [
+      ...this.state.heightmaps.keys(),
+      ...this.state.geometries.keys(),
+    ]) {
+      const [x, z] = key.split(',').map(Number)
+      if (wrapTileX(x) === wrapTileX(tileX) && z === tileZ) keys.add(key)
+    }
+    for (const key of keys) {
+      if (this.state.dirtyTiles.has(key)) continue
+      const [x, z] = key.split(',').map(Number)
+      this.inflightHeightmaps.delete(key)
+      this.state.heightmaps.set(key, data)
+      this.refreshTileGeometry(x, z)
+      this.refreshAdjacentTileEdges(x, z)
+    }
+  }
+
   setHeightmap(tileX: number, tileZ: number, data: Uint16Array): void {
     this.state.heightmaps.set(tileKey(tileX, tileZ), data)
   }

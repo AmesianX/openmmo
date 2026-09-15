@@ -63,8 +63,13 @@ fn title_matching_requires_a_unique_visible_player_with_that_title() {
     s.nearby_players.insert(event.id, event.clone());
     assert_eq!(s.resolve_nearby_player(display_name), None);
     event.floor_level = 0;
-    event.position.x = NPC_SIGHT_RADIUS + 1.0;
+    event.position.x = EVENT_DELIVERY_RADIUS + 1.0;
     s.nearby_players.insert(event.id, event.clone());
+    assert_eq!(
+        s.resolve_nearby_player(display_name),
+        Some((event.id, false))
+    );
+    s.nearby_players.remove(&event.id);
     assert_eq!(s.resolve_nearby_player(display_name), None);
 
     event.position.x = 3.0;

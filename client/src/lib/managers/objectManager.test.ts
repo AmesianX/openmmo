@@ -25,6 +25,52 @@ const chair = (id: number, x: number, z: number) => ({
   rotation: 0,
 })
 
+describe('world cache generation', () => {
+  it('reuses a region until reset and rejects an older in-flight response', async () => {
+    const manager = new ObjectManager()
+    const old = { placements: [chair(1, 0, 0)] }
+    const fresh = { placements: [chair(2, 1, 1)] }
+    let release!: (value: Response) => void
+    const fetch = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve
+          })
+      )
+      .mockResolvedValue({ ok: true, json: async () => fresh })
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const pending = manager.fetchObject(0, 0)
+      manager.resetWorld()
+      expect(await manager.fetchObject(0, 0)).toEqual(fresh)
+      release({ ok: true, json: async () => old } as Response)
+      expect(await pending).toEqual(fresh)
+      expect(await manager.fetchObject(0, 0)).toEqual(fresh)
+      expect(fetch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('leaves failed region requests retryable', async () => {
+    const manager = new ObjectManager()
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ ok: true, json: async () => ({ placements: [] }) })
+    vi.stubGlobal('fetch', fetch)
+    try {
+      await expect(manager.fetchObject(0, 0)).rejects.toThrow('offline')
+      expect(manager.getCached(0, 0)).toBeNull()
+      expect(await manager.fetchObject(0, 0)).toEqual({ placements: [] })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('seat lookup', () => {
   ;(objectManager as unknown as { cache: Map<string, unknown> }).cache.set(
     'test',

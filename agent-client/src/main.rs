@@ -447,6 +447,10 @@ fn resolve_from_registry(npc: &mut NpcConfig) -> anyhow::Result<()> {
 pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
     use onlinerpg_shared::ServerMessage;
     match msg {
+        ServerMessage::DungeonDoorState { .. } => "DungeonDoorState",
+        ServerMessage::DungeonPropState { .. } => "DungeonPropState",
+        ServerMessage::TerrainTileSnapshot { .. } => "TerrainTileSnapshot",
+        ServerMessage::WorldUpdate { .. } => "WorldUpdate",
         ServerMessage::EquipmentEnchantSucceeded { .. } => "EquipmentEnchantSucceeded",
         ServerMessage::AuthSuccess { .. } => "AuthSuccess",
         ServerMessage::AuthError { .. } => "AuthError",
@@ -535,6 +539,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::HouseRemoved { .. } => "HouseRemoved",
         ServerMessage::HousesInArea { .. } => "HousesInArea",
         ServerMessage::DoorToggled { .. } => "DoorToggled",
+        ServerMessage::MonsterControlReleased { .. } => "MonsterControlReleased",
         ServerMessage::MonsterAssigned { .. } => "MonsterAssigned",
         ServerMessage::PlayerInteractionChanged { .. } => "PlayerInteractionChanged",
         ServerMessage::PlayerMusicStarted { .. } => "PlayerMusicStarted",

@@ -398,10 +398,9 @@ impl super::GameState {
             monster_type, id, position.x, position.z, owner_number, total
         );
 
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &monster.position,
             monster.floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::MonsterSpawned {
                 monster: self.wire_monster(&monster),
             },
@@ -646,6 +645,11 @@ impl super::GameState {
             };
             if !accepted {
                 let correction = Self::move_correction(monster_id, monster);
+                self.interest_lock().correct_monster_movement(
+                    &self.wire_monster(monster),
+                    correction.clone(),
+                    *mover_id,
+                );
                 drop(monsters);
                 self.send_direct_message(mover_id, correction).await;
                 return;
@@ -686,69 +690,20 @@ impl super::GameState {
         update_msg: ServerMessage,
         skip_player_id: Option<&PlayerId>,
     ) {
-        // Monsters never change floor mid-life (dungeon monsters are confined
-        // to their floor), so both the old and new visibility sets gate on the
-        // monster's own floor.
-        let old_visible: HashSet<_> = self
-            .player_ids_within_position(
-                &old_position,
-                monster.floor_level,
-                super::EVENT_DELIVERY_RADIUS,
-            )
-            .await
-            .into_iter()
-            .collect();
-        let new_visible: HashSet<_> = self
-            .player_ids_within_position(
-                &monster.position,
-                monster.floor_level,
-                super::EVENT_DELIVERY_RADIUS,
-            )
-            .await
-            .into_iter()
-            .collect();
-        // The owner simulates from wherever it stands and player moves are the
-        // other ownership event, so a monster wandering out of a stationary
-        // owner's AOI is visible only here. Read off the sets before they are
-        // trimmed for messaging.
-        let departed_owner = monster
-            .owner_id
-            .filter(|owner| old_visible.contains(owner) && !new_visible.contains(owner));
-
-        let excluded = |id: &&PlayerId| skip_player_id == Some(*id);
-        let left: Vec<_> = old_visible
-            .difference(&new_visible)
-            .filter(|id| !excluded(id))
-            .cloned()
-            .collect();
-        let entered: Vec<_> = new_visible
-            .difference(&old_visible)
-            .filter(|id| !excluded(id))
-            .cloned()
-            .collect();
-        let stayed: Vec<_> = new_visible
-            .intersection(&old_visible)
-            .filter(|id| !excluded(id))
-            .cloned()
-            .collect();
-
-        self.send_direct_message_to_players(
-            &left,
-            ServerMessage::MonsterRemoved {
-                monster_id: monster.id.clone(),
-            },
-        )
-        .await;
-        self.send_direct_message_to_players(
-            &entered,
-            ServerMessage::MonsterSpawned {
-                monster: self.wire_monster(monster),
-            },
-        )
-        .await;
-        self.send_direct_message_to_players(&stayed, update_msg)
-            .await;
-
+        let _ = old_position;
+        let departed_owner = {
+            let mut interest = self.interest_lock();
+            let id = format!("monster:{}", monster.id);
+            let was = monster
+                .owner_id
+                .filter(|owner| interest.watches_subject(*owner, &id));
+            interest.publish_monster_movement(
+                &self.wire_monster(monster),
+                update_msg,
+                skip_player_id.copied(),
+            );
+            was.filter(|owner| !interest.watches_subject(*owner, &id))
+        };
         if let Some(owner) = departed_owner {
             self.release_monsters_left_behind(
                 &owner,
@@ -950,24 +905,20 @@ impl super::GameState {
 
     /// Whether `player` is inside the monster's AOI — the per-player form of
     /// `players_in_aoi`.
-    fn watches(player: &crate::types::Player, monster: &crate::types::Monster) -> bool {
+    pub(super) fn watches(player: &crate::types::Player, monster: &crate::types::Monster) -> bool {
         let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
         player.floor_level == monster.floor_level
             && monster.position.dist_xz_sq(&player.position) <= radius_sq
     }
 
-    /// The messages that end a client's control of `monster`: the removal,
-    /// plus a bystander respawn when that client can still see it.
+    /// End simulation ownership while preserving the visible subject.
     fn release_view_messages(
         monster: &crate::types::Monster,
-        still_watching: bool,
+        _still_watching: bool,
     ) -> impl Iterator<Item = ServerMessage> {
-        std::iter::once(ServerMessage::MonsterRemoved {
+        std::iter::once(ServerMessage::MonsterControlReleased {
             monster_id: monster.id.clone(),
         })
-        .chain(still_watching.then(|| ServerMessage::MonsterSpawned {
-            monster: monster.clone(),
-        }))
     }
 
     /// Every player inside the AOI around `position` on `floor_level`, with the
@@ -1105,6 +1056,10 @@ impl super::GameState {
                     })
                     .collect()
             };
+            for (monster, _, _) in &reassigned {
+                self.interest_lock()
+                    .refresh_monster(&self.wire_monster(monster));
+            }
             // With server brains a handoff is bookkeeping only: no client
             // held a brain, so nothing is released or assigned.
             if self.server_monster_ai() {
@@ -1159,16 +1114,21 @@ impl super::GameState {
         let removal = ServerMessage::MonsterRemoved {
             monster_id: monster.id.clone(),
         };
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &monster.position,
             monster.floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             removal.clone(),
             monster.owner_id.as_ref(),
         )
         .await;
         if let Some(owner_id) = monster.owner_id {
-            self.send_direct_message(&owner_id, removal).await;
+            self.send_direct_message(
+                &owner_id,
+                ServerMessage::MonsterControlReleased {
+                    monster_id: monster.id.clone(),
+                },
+            )
+            .await;
         }
     }
 }

@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use onlinerpg_shared::furniture::FurniturePlacement;
-use onlinerpg_shared::housing::HouseData;
 use onlinerpg_shared::{ClientMessage, Position};
 use onlinerpg_terrain::coords::{tile_to_region, world_to_tile};
 use tokio::sync::Mutex;
@@ -40,9 +39,6 @@ const SCHEDULE_ARRIVAL_RADIUS: f32 = 2.0;
 /// Forced moves are split into legs under the server's target-distance cap;
 /// the margin absorbs whatever the two sims still disagree by.
 const FORCE_MOVE_LEG_DIST: f32 = onlinerpg_shared::MAX_MOVE_TARGET_DISTANCE * 0.8;
-
-/// Housing chunk size in world units (must match server's CHUNK_SIZE).
-const HOUSING_CHUNK_SIZE: f32 = 64.0;
 
 /// Move result for path-following
 pub(super) enum MoveResult {
@@ -349,10 +345,11 @@ pub(super) async fn fetch_furniture_around(
     for (x, z) in positions {
         insert_region(&mut regions, *x, *z);
     }
-    world_cache
-        .read()
-        .unwrap()
-        .unfetched_furniture_regions(&mut regions);
+    let epoch = {
+        let world = world_cache.read().unwrap();
+        world.unfetched_furniture_regions(&mut regions);
+        world.world_epoch().to_owned()
+    };
     if regions.is_empty() {
         return;
     }
@@ -372,6 +369,9 @@ pub(super) async fn fetch_furniture_around(
     let results = futures_util::future::join_all(fetches).await;
 
     let mut world = world_cache.write().unwrap();
+    if !world.is_current_epoch(&epoch) {
+        return;
+    }
     let mut synced_regions = 0usize;
     for (rx, rz, resp) in results {
         let Some(resp) = resp else { continue };
@@ -381,85 +381,6 @@ pub(super) async fn fetch_furniture_around(
     }
     if synced_regions > 0 {
         debug!("[{label}] Synced furniture for {synced_regions} region(s)");
-    }
-}
-
-/// Insert a position's chunk and its 8 neighbors into the set.
-fn insert_chunk_neighbors(chunks: &mut HashSet<(i32, i32)>, x: f32, z: f32) {
-    let cx = (x / HOUSING_CHUNK_SIZE).floor() as i32;
-    let cz = (z / HOUSING_CHUNK_SIZE).floor() as i32;
-    for dx in -1..=1i32 {
-        for dz in -1..=1i32 {
-            chunks.insert((cx + dx, cz + dz));
-        }
-    }
-}
-
-/// Fetch houses from the HTTP API for every chunk `positions` touches (plus
-/// their neighbors), so pathfinding can avoid buildings.
-pub(super) async fn fetch_houses_around(
-    world_cache: &Arc<std::sync::RwLock<crate::state::WorldCache>>,
-    positions: &[(f32, f32)],
-    api_base_url: &str,
-    label: &str,
-) {
-    let mut chunks = HashSet::new();
-    for (x, z) in positions {
-        insert_chunk_neighbors(&mut chunks, *x, *z);
-    }
-    world_cache
-        .read()
-        .unwrap()
-        .unfetched_house_chunks(&mut chunks);
-    if chunks.is_empty() {
-        return;
-    }
-
-    debug!(
-        "[{label}] Fetching houses for {} chunk(s): {:?}",
-        chunks.len(),
-        chunks
-    );
-    let client = http_client();
-    let fetches = chunks.iter().map(|&(cx, cz)| {
-        let client = &client;
-        let url = format!("{api_base_url}/api/housing/area/{cx}/{cz}");
-        async move {
-            let houses = match client.get(&url).send().await {
-                Ok(resp) if resp.status().is_success() => resp.json::<Vec<HouseData>>().await.ok(),
-                Ok(resp) => {
-                    warn!(
-                        "[{label}] Housing API returned {} for chunk ({cx},{cz})",
-                        resp.status()
-                    );
-                    None
-                }
-                Err(e) => {
-                    warn!("[{label}] Failed to fetch houses for chunk ({cx},{cz}): {e}");
-                    None
-                }
-            };
-            (cx, cz, houses)
-        }
-    });
-    let results = futures_util::future::join_all(fetches).await;
-
-    let mut count = 0usize;
-    {
-        let mut world = world_cache.write().unwrap();
-        for (cx, cz, houses) in results {
-            let Some(houses) = houses else { continue };
-            world.mark_houses_fetched((cx, cz));
-            count += houses.len();
-            for house in houses {
-                world.add_house(house);
-            }
-        }
-    }
-    if count == 0 {
-        info!("[{label}] No houses found in any chunk");
-    } else {
-        info!("[{label}] Loaded {count} house(s) for pathfinding");
     }
 }
 

@@ -530,6 +530,7 @@ async fn radiance_replicates_light_and_cast_only_to_nearby_same_floor_players() 
         .get_mut(&pid("downstairs"))
         .unwrap()
         .floor_level = -1;
+    gs.reconcile_view(&pid("downstairs")).await;
     messages(&mut nearby);
     messages(&mut downstairs);
     messages(&mut far);
@@ -822,6 +823,7 @@ async fn ward_affects_caster_and_living_party_members_within_twenty_meters_on_sa
         players.get_mut(&pid("downstairs")).unwrap().floor_level = -1;
         players.get_mut(&pid("dead")).unwrap().health = 0;
     }
+    gs.reconcile_view(&pid("downstairs")).await;
     for rx in &mut receivers {
         messages(rx);
     }

@@ -199,10 +199,7 @@
   const unsubHouses = housingManager.onHousesChanged((allHouses) => {
     syncHouses(allHouses)
     if (playerPosition) {
-      housesLoadedHere = housingManager.isLoadedAround(
-        playerPosition.x,
-        playerPosition.z
-      )
+      housesLoadedHere = housingManager.isSynchronized()
     }
     if (debugPassGroup.visible) debugPassDirty = true
   })
@@ -326,11 +323,7 @@
     if (cx !== lastChunkX || cz !== lastChunkZ) {
       lastChunkX = cx
       lastChunkZ = cz
-      housingManager.updateStreaming(playerPosition.x, playerPosition.z)
-      housesLoadedHere = housingManager.isLoadedAround(
-        playerPosition.x,
-        playerPosition.z
-      )
+      housesLoadedHere = housingManager.isSynchronized()
     }
 
     // A respawn/teleport lands before its houses arrive; judging "outdoors"
@@ -683,12 +676,9 @@
     setGroupRaycast(result.houseGroup, true)
   }
 
-  /** Pre-load housing chunks around the player so geometry is ready before
-   *  the loading screen is dismissed. Without this, chunk data arrives during
-   *  gameplay and the first render of each house stalls WebGPU. */
-  export async function preloadChunks(px: number, pz: number) {
-    housingManager.updateStreaming(px, pz)
-    await housingManager.waitForPending()
+  /** Wait for the authoritative housing snapshot before warming the scene. */
+  export async function preloadChunks(_px: number, _pz: number) {
+    await housingManager.waitForSnapshot()
   }
 
   export function warmupHousingPipelines() {

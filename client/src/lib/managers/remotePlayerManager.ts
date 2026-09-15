@@ -55,6 +55,12 @@ class PlayerStateManager {
 
   heightManager: TerrainHeightManager | null = null
 
+  isInterpolating(playerId: number): boolean {
+    const position = this.players.get(playerId)?.position
+    const target = this.targetPositions.get(playerId)
+    return !!position && !!target && movedFar(position, target)
+  }
+
   // Attack animation duration in seconds (updated from actual animation data)
   attackAnimationDuration = 1.0
 

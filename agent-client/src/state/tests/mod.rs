@@ -25,6 +25,12 @@ impl crate::splat::SplatTiles for NoTiles {
     }
 }
 
+pub(crate) fn synchronize_view(state: &mut SharedState) {
+    state.world_view.synchronized = true;
+    state.world_view.position = state.self_player.as_ref().map(|player| player.position);
+    state.world_view.floor_level = state.self_floor_level;
+}
+
 pub(crate) fn test_state() -> (SharedState, mpsc::Receiver<ClientMessage>) {
     let (tx, rx) = mpsc::channel(8);
     let state = SharedState::new(
@@ -158,6 +164,16 @@ fn dungeon_state_at(
         position: dungeon.entrance,
         ..test_player(0.0, 0.0)
     });
+    for entrance in onlinerpg_shared::dungeon::entrances() {
+        for layout in onlinerpg_shared::dungeon::generate_dungeon_for(&entrance.id) {
+            for index in 0..layout.props.len() {
+                state
+                    .world_view
+                    .subjects
+                    .insert(format!("prop:{}:{}:{index}", entrance.id, layout.depth), 1);
+            }
+        }
+    }
     (state, dungeon, rx)
 }
 

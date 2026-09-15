@@ -35,6 +35,12 @@ class FurnitureManager {
   >()
   private changeListeners: (() => void)[] = []
 
+  reset(): void {
+    for (const key of this.regions.keys()) passability_remove_furniture(key)
+    this.regions.clear()
+    this.notifyChanged()
+  }
+
   private cacheKey(rx: number, rz: number): string {
     return `furniture:${rx},${rz}`
   }

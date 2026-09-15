@@ -41,6 +41,7 @@ import initWasm, {
 } from '../wasm/onlinerpg_shared'
 import { createEvent } from './networkEvents'
 import { handleServerMessage } from './messageHandlers'
+import { worldView } from './worldView'
 import type {
   AccountCharacter,
   CharacterClass,
@@ -243,6 +244,7 @@ class NetworkManager {
     }
 
     this.socket.onclose = (event) => {
+      worldView.synchronized = false
       resetFences()
       resetHousePlacement()
       resetEstateStorage()
@@ -283,8 +285,11 @@ class NetworkManager {
       try {
         const bytes = new Uint8Array(event.data as ArrayBuffer)
         const message = deserialize_server_message(bytes)
-        handleServerMessage(message, this.messageEvents, () =>
-          this.disconnect()
+        handleServerMessage(
+          message,
+          this.messageEvents,
+          () => this.disconnect(),
+          () => this.sendMessage('ResyncWorld')
         )
         // Respond to time sync with heartbeat so the server knows we're alive
         if (
@@ -1335,6 +1340,7 @@ class NetworkManager {
   // --- Connection management ---
 
   disconnect() {
+    worldView.synchronized = false
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null

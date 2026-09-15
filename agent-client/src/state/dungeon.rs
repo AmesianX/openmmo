@@ -14,13 +14,8 @@ impl SharedState {
     /// locally, so without this we would path around one another player left
     /// open — and, worse, believe a route is sealed when it is not.
     pub fn request_dungeon_doors_here(&mut self) {
-        let Some(dungeon) = self.dungeon_here() else {
-            return;
-        };
-        self.pending_commands
-            .push(ClientMessage::RequestDungeonDoors {
-                entrance_id: dungeon.id.clone(),
-            });
+        self.world_view.synchronized = false;
+        self.pending_commands.push(ClientMessage::ResyncWorld);
     }
 
     /// Dungeon whose footprint covers our position, if any.
@@ -72,7 +67,19 @@ impl SharedState {
             .opened_dungeon_props(&dungeon.id, depth)
             .unwrap_or(&empty);
         let floor = dungeon.passability_floor(depth);
-        dungeon.chests_in_room_of(depth, &pos, opened, |c| world.is_walkable(c.x, c.z, floor))
+        dungeon
+            .chests_in_room_of(depth, &pos, opened, |c| world.is_walkable(c.x, c.z, floor))
+            .into_iter()
+            .filter(|chest| match chest.kind {
+                crate::dungeon::ChestKind::Treasure => {
+                    chest.position.dist_xz_sq(&pos) <= EVENT_DELIVERY_RADIUS.powi(2)
+                }
+                crate::dungeon::ChestKind::Prop(id) => self
+                    .world_view
+                    .subjects
+                    .contains_key(&format!("prop:{}:{depth}:{id}", dungeon.id)),
+            })
+            .collect()
     }
 
     /// Where we stand when we are underground in a dungeon, and how deep.
@@ -271,7 +278,15 @@ impl SharedState {
         };
         let broken = world.dungeon_broken_props(&dungeon.id, depth);
         let floor = dungeon.passability_floor(depth);
-        dungeon.breakables_in_room_of(depth, &pos, broken, |c| world.is_walkable(c.x, c.z, floor))
+        dungeon
+            .breakables_in_room_of(depth, &pos, broken, |c| world.is_walkable(c.x, c.z, floor))
+            .into_iter()
+            .filter(|prop| {
+                self.world_view
+                    .subjects
+                    .contains_key(&format!("prop:{}:{depth}:{}", dungeon.id, prop.prop_id))
+            })
+            .collect()
     }
 
     /// The breakable clutter in the agent's room, for the world state.

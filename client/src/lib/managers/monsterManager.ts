@@ -187,10 +187,7 @@ class MonsterManager {
    */
   adoptOwnership(monster: ServerMonster) {
     const existing = this.monsters.get(monster.id)
-    if (!existing) {
-      this.spawnWithId(monster)
-      return
-    }
+    if (!existing) return
     existing.ownerId = monster.owner_id
     if (monster.floor_level !== undefined) {
       existing.floorLevel = monster.floor_level
@@ -251,6 +248,12 @@ class MonsterManager {
       behavior: this.resolveBehavior(monster.type, aggressive),
       pathFloor: this.pathFloorFor(monster),
     })
+  }
+
+  releaseControl(id: string) {
+    ai_remove_brain(id)
+    const monster = this.monsters.get(id)
+    if (monster) monster.ownerId = undefined
   }
 
   remove(id: string) {

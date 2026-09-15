@@ -124,23 +124,8 @@ mod tests {
     }
 }
 
-/// Distance (game units) within which agent (NPC) clients perceive nearby
-/// humans and monsters: the agent-client surfaces only entities within it to
-/// the LLM, and the server applies it to NPC gameplay checks (e.g. deal
-/// offers). Event *delivery* uses the wider EVENT_DELIVERY_RADIUS.
-pub const NPC_SIGHT_RADIUS: f32 = 27.0;
-
-/// Server AOI for gameplay event delivery, and the client's dungeon
-/// registration / door-resync boundary (exposed to TS via
-/// dungeon_constants()): the farthest world point one fullscreen browser
-/// shows. The isometric camera puts a screen corner at
-/// `sqrt((10*aspect)^2 + 17.32^2)` metres of ground, so 32 covers up to 2.7:1
-/// — 16:10 through 21:9. A 32:9 screen reaches 39.6m and pops entities in at
-/// its corners; that buys ~45% off the per-player fanout and simulation set.
+/// Radius for world state and nearby effects.
 pub const EVENT_DELIVERY_RADIUS: f32 = 32.0;
-
-/// Agent connections must receive everything they perceive.
-const _: () = assert!(EVENT_DELIVERY_RADIUS >= NPC_SIGHT_RADIUS);
 
 /// Player walk speed in units/sec. Client prediction, agent-client walks and
 /// the server's authoritative movement simulation must all agree on this.

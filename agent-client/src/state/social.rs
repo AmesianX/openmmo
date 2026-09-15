@@ -44,14 +44,9 @@ impl SharedState {
 
     /// Human players on our floor, within sight, excluding ourselves.
     fn nearby_human_players(&self) -> impl Iterator<Item = (&PlayerId, &Player)> {
-        let self_pos = self.self_player.as_ref().map(|p| p.position);
         let self_id = self.self_player_id.as_ref();
-        let radius_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
-        self.players_on_my_floor().filter(move |(id, p)| {
-            self_id != Some(*id)
-                && !p.is_official_npc
-                && self_pos.is_some_and(|sp| p.position.dist_xz_sq(&sp) <= radius_sq)
-        })
+        self.players_on_my_floor()
+            .filter(move |(id, p)| self_id != Some(*id) && !p.is_official_npc)
     }
 
     /// Emit an agent event for any player on our floor that just entered
@@ -69,9 +64,9 @@ impl SharedState {
         let arrived: Vec<(PlayerId, String)> = self
             .players_on_my_floor()
             .filter(|(pid, _)| *pid != self_id && !self.seen_nearby_players.contains(pid))
-            .filter_map(|(pid, player)| {
+            .map(|(pid, player)| {
                 let dist = crate::geom::PlanarDelta::between(&player.position, self_pos).dist;
-                (dist <= NEARBY_PLAYER_RADIUS).then(|| {
+                {
                     (
                         *pid,
                         format!(
@@ -84,7 +79,7 @@ impl SharedState {
                             player.position.z
                         ),
                     )
-                })
+                }
             })
             .collect();
 
@@ -211,10 +206,8 @@ impl SharedState {
             return None;
         }
 
-        let position = self.self_player.as_ref()?.position;
         let mut matches = self.players_on_my_floor().filter(|(id, p)| {
             self.self_player_id.as_ref() != Some(*id)
-                && p.position.dist_xz_sq(&position) <= NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS
                 && p.title.as_deref().is_some_and(|title| {
                     name_or_id.eq_ignore_ascii_case(&format!(
                         "{} \"{}\"",
@@ -247,12 +240,6 @@ impl SharedState {
         self.players_on_my_floor()
             .filter(|(_, p)| {
                 p.is_official_npc && crate::shop_info::merchant_shop(&p.name).is_some()
-            })
-            // Only merchants the agent can actually see — the server
-            // broadcasts players well beyond that, and "nearest" must not
-            // start a long blind walk to one outside the CURRENT STATE list.
-            .filter(|(_, p)| {
-                p.position.dist_xz_sq(&self_pos) <= NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS
             })
             .min_by(|(_, a), (_, b)| {
                 let da = a.position.dist_xz_sq(&self_pos);

@@ -23,6 +23,7 @@
   import { tileToRegion } from '../../terrain/terrain-constants'
   import { TERRAIN_TILE_SIZE } from '../game-scene/terrain-utils'
   import { objectManager } from '../../managers/objectManager'
+  import { worldView } from '../../network/worldView'
   import { bridgeManager } from '../../managers/bridgeManager'
   import { furnitureManager } from '../../managers/furnitureManager'
   import {
@@ -65,6 +66,8 @@
   let catalogById = new Map<string, ObjectDef>()
 
   let lastLoadedRegion = { rx: NaN, rz: NaN }
+  let regionLoadGeneration = 0
+  let regionRetry: ReturnType<typeof setTimeout> | undefined
 
   const unsubs: Unsubscriber[] = [
     editorTool.subscribe((v) => (tool = v)),
@@ -98,32 +101,50 @@
         currentObjectData.set(data)
       }
     }),
+    objectManager.onWorldReset(() => {
+      const { rx, rz } = lastLoadedRegion
+      regionLoadGeneration++
+      clearTimeout(regionRetry)
+      lastLoadedRegion = { rx: NaN, rz: NaN }
+      furnitureManager.reset()
+      bridgeManager.reset()
+      currentObjectData.set({ placements: [] })
+      if (Number.isFinite(rx)) void loadRegionObject(rx, rz)
+    }),
   ]
-  onDestroy(() => unsubs.forEach((u) => u()))
+  onDestroy(() => {
+    regionLoadGeneration++
+    clearTimeout(regionRetry)
+    unsubs.forEach((u) => u())
+  })
 
   async function loadRegionObject(rx: number, rz: number) {
     if (rx === lastLoadedRegion.rx && rz === lastLoadedRegion.rz) return
     lastLoadedRegion = { rx, rz }
-
-    if (catalogById.size === 0) {
-      const cat = await objectManager.fetchCatalog()
-      objectCatalog.set(cat)
+    const generation = ++regionLoadGeneration
+    clearTimeout(regionRetry)
+    worldView.staticReady = false
+    try {
+      if (catalogById.size === 0) {
+        const cat = await objectManager.fetchCatalog()
+        if (generation !== regionLoadGeneration) return
+        objectCatalog.set(cat)
+      }
+      const data = await objectManager.fetchObject(rx, rz)
+      if (generation !== regionLoadGeneration) return
+      currentObjectData.set(data)
+      furnitureManager.evictDistant(rx, rz)
+      bridgeManager.evictDistant(rx, rz)
+      worldView.staticReady = true
+    } catch (error) {
+      if (generation !== regionLoadGeneration) return
+      console.error('Object region remains pending', error)
+      regionRetry = setTimeout(() => {
+        if (generation !== regionLoadGeneration) return
+        lastLoadedRegion = { rx: NaN, rz: NaN }
+        void loadRegionObject(rx, rz)
+      }, 1000)
     }
-
-    const data = await objectManager.fetchObject(rx, rz)
-    // A newer region load may have superseded this one while awaiting (fast
-    // region crossing with out-of-order fetch resolution). If so, drop this
-    // stale result: otherwise currentObjectData.set fires the subscription,
-    // which syncs furniture for the *current* lastLoadedRegion — mis-keying
-    // this region's cells under the wrong region — and shows stale objects.
-    if (rx !== lastLoadedRegion.rx || rz !== lastLoadedRegion.rz) return
-    // currentObjectData.set fires the subscription above synchronously, which
-    // syncs bridges + furniture for lastLoadedRegion (== rx,rz here).
-    currentObjectData.set(data)
-    // Sync first, evict after: the new region is in place before its distant
-    // neighbours go, so collision is never momentarily absent underfoot.
-    furnitureManager.evictDistant(rx, rz)
-    bridgeManager.evictDistant(rx, rz)
   }
 
   $effect(() => {

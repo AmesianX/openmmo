@@ -76,6 +76,7 @@ impl EstateChestIndex {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn nearby(&self, position: &Position, floor_level: i8) -> Vec<&EstateChest> {
         let radius = super::EVENT_DELIVERY_RADIUS;
         let mut nearby = Vec::new();
@@ -164,6 +165,11 @@ impl GameState {
                     "Invalid saved estate chest".to_string(),
                 ));
             }
+            self.interest_lock()
+                .publish_state(&ServerMessage::EstateChestVisibility {
+                    added: vec![chest.clone()],
+                    removed: vec![],
+                });
             index.insert(chest);
         }
         let groups: Vec<_> = index
@@ -444,26 +450,10 @@ impl GameState {
         self.sync_estate_chest_bucket(key, &group);
         drop(gold);
         drop(inventories);
-        let recipients: Vec<_> = self
-            .players
-            .read()
-            .await
-            .values()
-            .filter(|candidate| {
-                candidate.floor_level == chest.floor_level
-                    && candidate.position.dist_xz_sq(&chest.position)
-                        <= super::EVENT_DELIVERY_RADIUS.powi(2)
-            })
-            .map(|candidate| candidate.id)
-            .collect();
-        self.send_direct_message_to_players(
-            &recipients,
-            ServerMessage::EstateChestVisibility {
-                added: vec![chest],
-                removed: vec![],
-            },
-        )
-        .await;
+        self.publish_subject_change(ServerMessage::EstateChestVisibility {
+            added: vec![chest],
+            removed: vec![],
+        });
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, updated).await;
         Ok(())
@@ -862,26 +852,13 @@ impl GameState {
         let group = chests.group(key);
         drop(chests);
         self.sync_estate_chest_bucket(key, &group);
-        let recipients: Vec<_> = players
-            .values()
-            .filter(|candidate| {
-                candidate.floor_level == chest.floor_level
-                    && candidate.position.dist_xz_sq(&chest.position)
-                        <= super::EVENT_DELIVERY_RADIUS.powi(2)
-            })
-            .map(|candidate| candidate.id)
-            .collect();
         drop(gold);
         drop(inventories);
         drop(players);
-        self.send_direct_message_to_players(
-            &recipients,
-            ServerMessage::EstateChestVisibility {
-                added: vec![],
-                removed: vec![chest_id],
-            },
-        )
-        .await;
+        self.publish_subject_change(ServerMessage::EstateChestVisibility {
+            added: vec![],
+            removed: vec![chest_id],
+        });
         if drop_recovered_chest {
             self.spawn_ground_item(GroundItem {
                 instance_id: next_id,

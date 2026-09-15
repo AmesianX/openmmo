@@ -71,6 +71,8 @@ export class ObjectManager {
   private catalogCache: ObjectDef[] | null = null
   private footprintCache = new Map<string, FootprintData>()
   private regionChanged = createEvent<(region: ChangedObjectRegion) => void>()
+  private worldReset = createEvent<() => void>()
+  private generation = 0
 
   constructor() {
     this.terrainApiUrl = getTerrainApiUrl()
@@ -101,15 +103,21 @@ export class ObjectManager {
     const cached = this.cache.get(key)
     if (cached) return cached
 
-    try {
-      const data = await this.loadObjectRegion(rx, rz)
-      this.cache.set(key, data)
-      return data
-    } catch {
-      const data: ObjectRegionData = { placements: [] }
-      this.cache.set(key, data)
-      return data
-    }
+    const generation = this.generation
+    const data = await this.loadObjectRegion(rx, rz)
+    if (generation !== this.generation) return this.fetchObject(rx, rz)
+    this.cache.set(key, data)
+    return data
+  }
+
+  resetWorld(): void {
+    this.generation++
+    this.cache.clear()
+    this.worldReset.emit()
+  }
+
+  onWorldReset(cb: () => void): () => void {
+    return this.worldReset.on(cb)
   }
 
   private async loadObjectRegion(

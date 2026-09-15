@@ -1335,7 +1335,7 @@ async fn handle_client_message(
                 reported_version = ?state.reported_client_version,
                 position = ?player.position, rotation = player.rotation, floor = player.floor_level,
                 "Movement session joined");
-            responses.extend(game_state.add_player(player).await);
+            game_state.add_player(player).await;
             // Stamps last_seen_at at the next flush.
             game_state.mark_dirty(&id).await;
 
@@ -1418,6 +1418,11 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::ResyncWorld => {
+            if let Some(id) = &state.player_id {
+                game_state.reset_world_view(id).await;
+            }
+        }
         ClientMessage::WorldReady => {
             if let Some(id) = &state.player_id {
                 game_state.mark_world_ready(id).await;
@@ -1578,26 +1583,15 @@ async fn handle_client_message(
             door_id,
         } => {
             if let Some(id) = &state.player_id {
-                if let Some(is_open) = game_state
+                game_state
                     .toggle_dungeon_door(id, &entrance_id, depth, door_id)
-                    .await
-                {
-                    game_state
-                        .publish_dungeon_door_toggle(id, entrance_id, depth, door_id, is_open)
-                        .await;
-                }
+                    .await;
             }
         }
 
-        ClientMessage::RequestDungeonDoors { entrance_id } => {
+        ClientMessage::RequestDungeonDoors { .. } => {
             if let Some(id) = &state.player_id {
-                let doors = game_state.dungeon_open_doors(&entrance_id).await;
-                game_state
-                    .send_direct_message(
-                        id,
-                        ServerMessage::DungeonDoorsState { entrance_id, doors },
-                    )
-                    .await;
+                game_state.reset_world_view(id).await;
             }
         }
 
@@ -1756,32 +1750,10 @@ async fn handle_client_message(
             wall_dir,
             segment_index,
         } => {
-            // Toggle door is_open and broadcast to all players
             if let Some(ref pid) = state.player_id {
-                let toggled = game_state
+                game_state
                     .toggle_door(pid, &house_id, room_index, wall_dir, segment_index)
                     .await;
-                if let Some(is_open) = toggled {
-                    if let Some((position, _, floor_level)) =
-                        game_state.get_player_position(pid).await
-                    {
-                        game_state
-                            .send_direct_message_to_players_within_position(
-                                &position,
-                                floor_level,
-                                crate::game_state::EVENT_DELIVERY_RADIUS,
-                                ServerMessage::DoorToggled {
-                                    house_id,
-                                    room_index,
-                                    wall_dir,
-                                    segment_index,
-                                    is_open,
-                                },
-                                None,
-                            )
-                            .await;
-                    }
-                }
             }
         }
 

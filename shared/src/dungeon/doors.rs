@@ -21,6 +21,52 @@ const INTERIOR_DOOR_PCT: u32 = 30;
 /// `dungeonManager.ts`.
 pub const ENTRANCE_DOOR_ID: u32 = 0;
 
+pub fn door_position(
+    entrance: &crate::Position,
+    layouts: &[FloorLayout],
+    depth: u8,
+    door_id: u32,
+) -> Option<crate::Position> {
+    let (ox, oz) = super::dungeon_origin(entrance.x, entrance.z);
+    let (x, z) = if depth == 0 {
+        if door_id != ENTRANCE_DOOR_ID {
+            return None;
+        }
+        let shaft = &layouts.first()?.up_shaft;
+        let run = if shaft.reversed {
+            super::SHAFT_LEN as f32 - super::LANDING_CELLS
+        } else {
+            super::LANDING_CELLS
+        };
+        if shaft.along_z {
+            (
+                shaft.x as f32 + super::SHAFT_W as f32 * 0.5,
+                shaft.z as f32 + run,
+            )
+        } else {
+            (
+                shaft.x as f32 + run,
+                shaft.z as f32 + super::SHAFT_W as f32 * 0.5,
+            )
+        }
+    } else {
+        let door = interior_doors(layouts.get(depth as usize - 1)?)
+            .into_iter()
+            .find(|door| door.door_id == door_id)?;
+        let [ax, az, bx, bz] = door.seg();
+        ((ax + bx) as f32 * 0.5, (az + bz) as f32 * 0.5)
+    };
+    Some(crate::Position {
+        x: crate::wrap_world_x(ox + x),
+        y: if depth == 0 {
+            entrance.y
+        } else {
+            super::floor_world_y(entrance.y, depth)
+        },
+        z: oz + z,
+    })
+}
+
 /// Wall side indices, matching the client's `WALL_N/E/S/W`.
 const WALL_N: u8 = 0;
 const WALL_E: u8 = 1;
@@ -180,6 +226,45 @@ pub fn closed_door_segs(layout: &FloorLayout, open: Option<&HashSet<u32>>) -> Ve
 #[cfg(test)]
 mod tests {
     use super::door_hash;
+
+    #[test]
+    fn door_delivery_points_match_opening_midpoints() {
+        for entrance in crate::dungeon::entrances() {
+            let position = crate::Position {
+                x: entrance.x,
+                y: entrance.y,
+                z: entrance.z,
+            };
+            let layouts = crate::dungeon::generate_dungeon_for(&entrance.id);
+            let (ox, oz) = crate::dungeon::dungeon_origin(position.x, position.z);
+            for layout in &layouts {
+                for door in super::interior_doors(layout) {
+                    let point =
+                        super::door_position(&position, &layouts, layout.depth, door.door_id)
+                            .unwrap();
+                    let [ax, az, bx, bz] = door.seg();
+                    assert_eq!(point.x, crate::wrap_world_x(ox + (ax + bx) as f32 * 0.5));
+                    assert_eq!(point.z, oz + (az + bz) as f32 * 0.5);
+                }
+            }
+            let point = super::door_position(&position, &layouts, 0, 0).unwrap();
+            let shaft = &layouts[0].up_shaft;
+            let run = if shaft.along_z {
+                point.z - oz - shaft.z as f32
+            } else {
+                crate::shortest_world_delta_x(ox + shaft.x as f32, point.x)
+            };
+            assert_eq!(
+                run,
+                if shaft.reversed {
+                    crate::dungeon::SHAFT_LEN as f32 - crate::dungeon::LANDING_CELLS
+                } else {
+                    crate::dungeon::LANDING_CELLS
+                }
+            );
+            assert!(super::door_position(&position, &layouts, 0, 99).is_none());
+        }
+    }
 
     /// Golden values computed with the original client JS implementation
     /// (`Math.imul(h ^ (v >>> 0), 16777619)`, then `(h >>> 0) % 1000`). A

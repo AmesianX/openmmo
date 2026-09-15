@@ -237,6 +237,26 @@ function baseInput() {
 }
 
 describe('runPlayerMovementTick', () => {
+  it('keeps the route while waiting for the world snapshot', () => {
+    const input = {
+      ...baseInput(),
+      canAdvance: () => false,
+      isMoving: true,
+      movementTarget: { x: 10, y: 0, z: 0 },
+      movementState: {
+        currentSpeed: 3,
+        startPos: { x: 0, y: 0, z: 0 },
+        targetPos: { x: 10, y: 0, z: 0 },
+        totalDistance: 10,
+      },
+    }
+    runPlayerMovementTick(input)
+    expect(input.writePlayerPosition).not.toHaveBeenCalled()
+    expect(input.sendPlayerMove).not.toHaveBeenCalled()
+    expect(input.actions.movement.stopMovement).not.toHaveBeenCalled()
+    expect(input.actions.movement.setNextWaypoint).not.toHaveBeenCalled()
+  })
+
   it('transitions dead players before terrain or combat processing', () => {
     const input = {
       ...baseInput(),

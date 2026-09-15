@@ -370,23 +370,25 @@ async fn state_snapshot(State(app): State<Arc<AppState>>, Query(q): Query<NpcQue
         let s = state_arc.lock().await;
         let houses: Vec<serde_json::Value> = {
             let wc = s.world_cache.read().unwrap();
-            wc.houses()
-                .values()
-                .map(|h| {
-                    let rooms: Vec<serde_json::Value> = h
-                        .rooms
-                        .iter()
-                        .map(|r| {
-                            json!({
-                                "x": h.origin.x + r.local_x as f32,
-                                "z": h.origin.z + r.local_z as f32,
-                                "w": r.size_x, "d": r.size_z, "floor": r.floor_level,
-                            })
+            wc.houses_for(
+                s.self_player_id
+                    .unwrap_or_else(|| onlinerpg_shared::PlayerId::from(0)),
+            )
+            .map(|h| {
+                let rooms: Vec<serde_json::Value> = h
+                    .rooms
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "x": h.origin.x + r.local_x as f32,
+                            "z": h.origin.z + r.local_z as f32,
+                            "w": r.size_x, "d": r.size_z, "floor": r.floor_level,
                         })
-                        .collect();
-                    json!({ "id": h.id, "rooms": rooms })
-                })
-                .collect()
+                    })
+                    .collect();
+                json!({ "id": h.id, "rooms": rooms })
+            })
+            .collect()
         };
 
         // Underground: ship the real floor layout so the map can draw rock,
@@ -460,7 +462,7 @@ async fn state_snapshot(State(app): State<Arc<AppState>>, Query(q): Query<NpcQue
         json!({
             "npc": label,
             "boot": app.boot_id,
-            "sight": onlinerpg_shared::NPC_SIGHT_RADIUS,
+            "sight": onlinerpg_shared::EVENT_DELIVERY_RADIUS,
             "connected": connected && s.in_game,
             "self": s.self_player,
             "gold": s.self_gold,

@@ -58,10 +58,9 @@ impl GameState {
             player.mounted = mounted;
             (player.position, player.floor_level)
         };
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &position,
             floor,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerMountChanged {
                 player_id: *player_id,
                 mounted,

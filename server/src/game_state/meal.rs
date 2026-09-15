@@ -224,10 +224,9 @@ impl GameState {
         for old in replaced {
             self.announce_meal_removed(&old).await;
         }
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &meal.position,
             meal.floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::MealPlaced { meal: meal.clone() },
             None,
         )
@@ -286,10 +285,9 @@ impl GameState {
             e.meal.eaten = true;
             e.meal.clone()
         };
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &meal.position,
             meal.floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::MealEaten { meal_id },
             None,
         )
@@ -403,10 +401,9 @@ impl GameState {
     }
 
     async fn announce_meal_removed(&self, meal: &Meal) {
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &meal.position,
             meal.floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::MealRemoved { meal_id: meal.id },
             None,
         )

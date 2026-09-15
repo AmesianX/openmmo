@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use onlinerpg_shared::messages::{ActiveDeal, DealKind};
-use onlinerpg_shared::NPC_SIGHT_RADIUS;
+const DEAL_OFFER_MAX_DISTANCE: f32 = 27.0;
 use tracing::info;
 
 use crate::types::{PlayerId, ServerMessage};
@@ -220,7 +220,7 @@ impl super::GameState {
                 npc.floor_level,
             ) {
                 None => Some("player is on another floor"),
-                Some(d) if d > NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS => {
+                Some(d) if d > DEAL_OFFER_MAX_DISTANCE * DEAL_OFFER_MAX_DISTANCE => {
                     Some("player is too far away")
                 }
                 Some(_) => None,

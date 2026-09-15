@@ -427,7 +427,7 @@ async fn fence_visibility_follows_join_movement_and_world_wrap() {
         .await;
     let mut viewer = make_player("Viewer", 1.5, 2.5);
     viewer.position.y = 5.05;
-    let messages = game.add_player(viewer).await;
+    let messages = join_snapshot(&game, viewer).await;
     assert!(messages
         .iter()
         .any(|m| matches!(m, ServerMessage::FenceVisibility { added, .. } if added.len() == 1)));

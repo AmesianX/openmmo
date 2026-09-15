@@ -100,18 +100,15 @@ async fn equipped_torch_syncs_live_and_late_join_player_state() {
     game_state.equip_item(&torch_holder_id, 1).await;
     assert!(game_state.get_all_players().await[&torch_holder_id].torch_on);
 
-    let snapshot = game_state
-        .add_player(make_player("late_joiner", 1.0, 0.0))
+    let snapshot = join_snapshot(&game_state, make_player("late_joiner", 1.0, 0.0))
         .await
         .into_iter()
-        .find(|message| matches!(message, ServerMessage::GameState { .. }))
-        .expect("nearby existing player should produce a GameState snapshot");
-    match snapshot {
-        ServerMessage::GameState { players, .. } => {
-            assert!(find_player(&players, torch_holder_id).torch_on);
-        }
-        other => panic!("expected GameState, got {other:?}"),
-    }
+        .filter_map(|message| match message {
+            ServerMessage::PlayerAppeared { player } => Some(player),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(find_player(&snapshot, torch_holder_id).torch_on);
 
     game_state
         .unequip_item(&torch_holder_id, EquipSlot::OffHand)
@@ -141,21 +138,18 @@ async fn equipped_main_hand_syncs_live_and_late_join_player_state() {
         Some("fishing_rod".to_string())
     );
 
-    let snapshot = game_state
-        .add_player(make_player("late_joiner", 1.0, 0.0))
+    let snapshot = join_snapshot(&game_state, make_player("late_joiner", 1.0, 0.0))
         .await
         .into_iter()
-        .find(|message| matches!(message, ServerMessage::GameState { .. }))
-        .expect("nearby existing player should produce a GameState snapshot");
-    match snapshot {
-        ServerMessage::GameState { players, .. } => {
-            assert_eq!(
-                find_player(&players, angler_id).main_hand.as_deref(),
-                Some("fishing_rod")
-            );
-        }
-        other => panic!("expected GameState, got {other:?}"),
-    }
+        .filter_map(|message| match message {
+            ServerMessage::PlayerAppeared { player } => Some(player),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        find_player(&snapshot, angler_id).main_hand.as_deref(),
+        Some("fishing_rod")
+    );
 
     game_state
         .unequip_item(&angler_id, EquipSlot::MainHand)
@@ -247,7 +241,7 @@ async fn respawn_player_revives_dead_player_only() {
 }
 
 #[tokio::test]
-async fn respawn_reaches_observers_on_other_floors() {
+async fn respawn_does_not_disclose_players_on_other_floors() {
     let game_state = make_test_game_state("respawn_cross_floor");
     let respawn = &world_config().respawn;
 
@@ -306,10 +300,7 @@ async fn respawn_reaches_observers_on_other_floors() {
     let heard = drain(&mut maid_rx).into_iter().any(
         |msg| matches!(msg, ServerMessage::PlayerRespawned { player } if player.id == dead_id),
     );
-    assert!(
-        heard,
-        "an observer on another floor near the sick room must hear the respawn"
-    );
+    assert!(!heard, "respawn must respect the observer space");
 }
 
 fn respawn_bed(id: u32, x: f32) -> onlinerpg_shared::furniture::FurniturePlacement {

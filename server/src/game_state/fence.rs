@@ -58,6 +58,7 @@ impl FenceIndex {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub(super) fn nearby(&self, position: &crate::types::Position) -> Vec<&Fence> {
         let radius = super::EVENT_DELIVERY_RADIUS;
         let mut nearby = Vec::new();
@@ -114,6 +115,11 @@ impl GameState {
                 .entry(fence.edge.cache_key())
                 .or_default()
                 .push(fence.clone());
+            self.interest_lock()
+                .publish_state(&ServerMessage::FenceVisibility {
+                    added: vec![fence.clone()],
+                    removed: vec![],
+                });
             fences.insert(fence);
         }
         let mut cache = self.passability_write();
@@ -130,7 +136,8 @@ impl GameState {
         data: &[u8],
     ) -> std::io::Result<()> {
         let _persistence = self.persistence_lock.lock().await;
-        self.save_terrain_heightmap_locked(tx, tz, data).await
+        self.save_terrain_heightmap_locked(tx, tz, data).await?;
+        self.publish_terrain_tiles(&[(tx, tz)]).await
     }
 
     pub(crate) async fn save_terrain_heightmap_locked(
@@ -142,13 +149,6 @@ impl GameState {
         let tx = wrap_tile_x(tx);
         self.terrain_io.write_heightmap(tx, tz, data).await?;
         self.height_sampler.update_tile(tx, tz, data).await?;
-        let owners: HashMap<_, _> = self
-            .player_characters
-            .read()
-            .await
-            .iter()
-            .map(|(id, (character, _, _))| (*id, *character))
-            .collect();
         let players = self.players.read().await;
         let mut fences = self.fences.write().await;
         let mut changed = Vec::new();
@@ -192,33 +192,12 @@ impl GameState {
                 &group,
             );
         }
-        let messages: Vec<_> = players
-            .values()
-            .filter_map(|player| {
-                let added: Vec<_> = changed
-                    .iter()
-                    .filter(|fence| {
-                        player.floor_level == 0
-                            && (owners.get(&player.id) == Some(&fence.owner_id)
-                                || player.position.dist_xz_sq(&fence.edge.center(fence.y))
-                                    <= super::EVENT_DELIVERY_RADIUS.powi(2))
-                    })
-                    .cloned()
-                    .collect();
-                (!added.is_empty()).then_some((player.id, added))
-            })
-            .collect();
         drop(players);
-        for (id, added) in messages {
-            self.send_direct_message(
-                &id,
-                ServerMessage::FenceVisibility {
-                    added,
-                    removed: vec![],
-                },
-            )
-            .await;
-        }
+        self.interest_lock()
+            .publish_state(&ServerMessage::FenceVisibility {
+                added: changed,
+                removed: vec![],
+            });
         Ok(())
     }
 
@@ -249,7 +228,7 @@ impl GameState {
 
     pub(super) async fn refresh_fence_owners(
         &self,
-        player_id: &PlayerId,
+        _player_id: &PlayerId,
         auth: &AuthService,
     ) -> Result<(), AuthError> {
         let _persistence = self.persistence_lock.lock().await;
@@ -270,33 +249,12 @@ impl GameState {
                 }
             }
         }
-        let messages: Vec<_> = players
-            .values()
-            .filter_map(|player| {
-                let added: Vec<_> = changed
-                    .iter()
-                    .filter(|fence| {
-                        player.id == *player_id
-                            || (player.floor_level == 0
-                                && player.position.dist_xz_sq(&fence.edge.center(fence.y))
-                                    <= super::EVENT_DELIVERY_RADIUS.powi(2))
-                    })
-                    .cloned()
-                    .collect();
-                (!added.is_empty()).then_some((player.id, added))
-            })
-            .collect();
         drop(players);
-        for (id, added) in messages {
-            self.send_direct_message(
-                &id,
-                ServerMessage::FenceVisibility {
-                    added,
-                    removed: vec![],
-                },
-            )
-            .await;
-        }
+        self.interest_lock()
+            .publish_state(&ServerMessage::FenceVisibility {
+                added: changed,
+                removed: vec![],
+            });
         Ok(())
     }
 
@@ -445,27 +403,13 @@ impl GameState {
         let key = edge.cache_key();
         let group = fences.group(edge);
         fence::sync_passability(&mut self.passability_write(), &key, &group);
-        let recipients: Vec<_> = players
-            .values()
-            .filter(|p| {
-                p.id == *player_id
-                    || (p.floor_level == 0
-                        && p.position.dist_xz_sq(&edge.center(y))
-                            <= super::EVENT_DELIVERY_RADIUS.powi(2))
-            })
-            .map(|p| p.id)
-            .collect();
         drop(inventories);
         drop(gold);
         drop(players);
-        self.send_direct_message_to_players(
-            &recipients,
-            ServerMessage::FenceVisibility {
-                added: if place { vec![fence] } else { vec![] },
-                removed: if place { vec![] } else { vec![edge] },
-            },
-        )
-        .await;
+        self.publish_subject_change(ServerMessage::FenceVisibility {
+            added: if place { vec![fence] } else { vec![] },
+            removed: if place { vec![] } else { vec![edge] },
+        });
         drop(fences);
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, updated).await;

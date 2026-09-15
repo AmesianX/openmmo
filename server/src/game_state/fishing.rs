@@ -1068,17 +1068,8 @@ impl GameState {
         .await;
     }
 
-    /// Fishing events go to everyone near the bobber on the overworld floor
-    /// — the angler is inside cast range of it by construction.
-    async fn broadcast_fishing(&self, bobber: &Position, msg: ServerMessage) {
-        self.send_direct_message_to_players_within_position(
-            bobber,
-            OVERWORLD_FLOOR,
-            super::EVENT_DELIVERY_RADIUS,
-            msg,
-            None,
-        )
-        .await;
+    async fn broadcast_fishing(&self, _bobber: &Position, msg: ServerMessage) {
+        self.interest_lock().publish_fishing(msg);
     }
 
     async fn send_fishing_error(&self, player_id: &PlayerId, message: &str) {

@@ -22,7 +22,7 @@ async fn player_aoi_crosses_world_x_seam() {
         .await;
 
     let nearby = game_state
-        .player_ids_within(&east_id, onlinerpg_shared::NPC_SIGHT_RADIUS)
+        .player_ids_within(&east_id, onlinerpg_shared::EVENT_DELIVERY_RADIUS)
         .await;
     assert!(nearby.contains(&east_id));
     assert!(nearby.contains(&west_id));
@@ -70,51 +70,18 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
         );
     }
 
+    seed_subjects(&game_state).await;
+    drain(&mut direct_rx);
     game_state
         .update_player_position(&player_id, move_cmd(entity_position, false), false)
         .await;
     game_state.tick_player_movement(60.0).await;
 
-    match direct_rx.try_recv() {
-        Ok(ServerMessage::MonsterSpawned { monster }) => {
-            assert_eq!(monster.id, "monster_a");
-        }
-        other => panic!("Expected MonsterSpawned when entering AOI, got {:?}", other),
-    }
-
-    // The monster has no owner, so walking up to it adopts it on sight.
-    match direct_rx.try_recv() {
-        Ok(ServerMessage::MonsterAssigned { monster }) => {
-            assert_eq!(monster.id, "monster_a");
-        }
-        other => panic!(
-            "Expected MonsterAssigned for the ownerless monster, got {:?}",
-            other
-        ),
-    }
-
-    match direct_rx.try_recv() {
-        Ok(ServerMessage::GroundItemAppeared { item }) => {
-            assert_eq!(item.instance_id, 42);
-        }
-        other => panic!(
-            "Expected GroundItemAppeared when entering AOI, got {:?}",
-            other
-        ),
-    }
-
-    match direct_rx.try_recv() {
-        Ok(ServerMessage::PlayerMoved {
-            player_id: moved_id,
-            ..
-        }) => {
-            assert_eq!(moved_id, player_id);
-        }
-        other => panic!(
-            "Expected self PlayerMoved after AOI snapshot, got {:?}",
-            other
-        ),
-    }
+    let messages = drain(&mut direct_rx);
+    assert!(messages.iter().any(|message| matches!(message, ServerMessage::MonsterSpawned { monster } if monster.id == "monster_a")));
+    assert!(messages.iter().any(|message| matches!(message, ServerMessage::MonsterAssigned { monster } if monster.id == "monster_a")));
+    assert!(messages.iter().any(|message| matches!(message, ServerMessage::GroundItemAppeared { item } if item.instance_id == 42)));
+    assert!(messages.iter().any(|message| matches!(message, ServerMessage::PlayerMoved { player_id: moved, .. } if *moved == player_id)));
 }
 
 /// The AOI diff visits only the monsters the cell index reports near the step,
@@ -1181,16 +1148,12 @@ async fn outraced_adopter_is_released_and_kept_watching() {
         other => panic!("Expected MonsterAssigned to the first adopter, got {other:?}"),
     }
     match first_rx.try_recv() {
-        Ok(ServerMessage::MonsterRemoved { monster_id }) => assert_eq!(monster_id, "contested"),
+        Ok(ServerMessage::MonsterControlReleased { monster_id }) => {
+            assert_eq!(monster_id, "contested")
+        }
         other => panic!("Expected the outraced adopter's release, got {other:?}"),
     }
-    match first_rx.try_recv() {
-        Ok(ServerMessage::MonsterSpawned { monster }) => {
-            assert_eq!(monster.id, "contested");
-            assert_eq!(monster.owner_id, Some(second));
-        }
-        other => panic!("Expected a bystander respawn for the watcher, got {other:?}"),
-    }
+
     match second_rx.try_recv() {
         Ok(ServerMessage::MonsterAssigned { monster }) => {
             assert_eq!(monster.id, "contested");
@@ -1246,15 +1209,8 @@ async fn stale_controller_move_gets_released() {
         .await;
 
     match stale_rx.try_recv() {
-        Ok(ServerMessage::MonsterRemoved { monster_id }) => assert_eq!(monster_id, "held"),
+        Ok(ServerMessage::MonsterControlReleased { monster_id }) => assert_eq!(monster_id, "held"),
         other => panic!("Expected the stale controller's release, got {other:?}"),
-    }
-    match stale_rx.try_recv() {
-        Ok(ServerMessage::MonsterSpawned { monster }) => {
-            assert_eq!(monster.id, "held");
-            assert_eq!(monster.owner_id, Some(owner));
-        }
-        other => panic!("Expected a bystander respawn for the watcher, got {other:?}"),
     }
 }
 

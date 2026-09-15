@@ -8,8 +8,8 @@ const TICK_SECONDS: u64 = 10;
 const TWO_HOURS_TICKS: u64 = 2 * 3600 / TICK_SECONDS;
 /// How far a roaming bot travels between two ticks (~3m/s for 10s).
 const ROAM_PER_TICK: f32 = 30.0;
-/// The bot chases and kills whatever it can see (NPC_SIGHT_RADIUS).
-const KILL_RADIUS: f32 = onlinerpg_shared::NPC_SIGHT_RADIUS;
+/// The bot chases and kills whatever it can see (EVENT_DELIVERY_RADIUS).
+const KILL_RADIUS: f32 = onlinerpg_shared::EVENT_DELIVERY_RADIUS;
 
 fn lcg(seed: &mut u64) -> f32 {
     *seed = seed
@@ -325,7 +325,7 @@ async fn walking_out_of_a_monsters_aoi_hands_it_off_on_the_spot() {
     );
     assert!(
         drain(&mut owner_rx).iter().any(
-            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } | ServerMessage::MonsterControlReleased { monster_id: id } if *id == monster_id)
         ),
         "the old owner must be told it no longer holds the monster"
     );
@@ -366,7 +366,7 @@ async fn walking_out_with_nobody_near_despawns_on_the_spot() {
     );
     assert!(
         drain(&mut owner_rx).iter().any(
-            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } | ServerMessage::MonsterControlReleased { monster_id: id } if *id == monster_id)
         ),
         "the owner must be told to stop simulating it"
     );
@@ -392,7 +392,7 @@ async fn a_dungeon_orphan_parks_until_someone_walks_back_in() {
     );
     assert!(
         drain(&mut owner_rx).iter().any(
-            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } | ServerMessage::MonsterControlReleased { monster_id: id } if *id == monster_id)
         ),
         "parked still means the owner stops simulating it"
     );
@@ -563,6 +563,8 @@ async fn a_monster_that_wanders_off_is_handed_to_whoever_is_near_it() {
     set_player_xz(&game_state, &stranger, 2.0 * AOI - 6.0, 0.0).await;
     let monster_id = goblin_near_the_edge(&game_state, owner).await;
 
+    let _owner_rx = game_state.register_direct_channel(&owner).await;
+    let _stranger_rx = game_state.register_direct_channel(&stranger).await;
     wander_out(&game_state, &owner, &monster_id).await;
 
     assert_eq!(
@@ -591,7 +593,7 @@ async fn a_monster_that_wanders_out_of_everyones_sight_is_despawned() {
     );
     assert!(
         drain(&mut owner_rx).iter().any(
-            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } | ServerMessage::MonsterControlReleased { monster_id: id } if *id == monster_id)
         ),
         "the owner must be told to stop simulating it"
     );
@@ -643,7 +645,7 @@ async fn despawning_tells_a_faraway_owner_directly() {
 
     assert!(
         drain(&mut owner_rx).iter().any(
-            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } | ServerMessage::MonsterControlReleased { monster_id: id } if *id == monster_id)
         ),
         "the owner is 2km away yet must still hear the removal"
     );

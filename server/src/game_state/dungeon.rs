@@ -61,6 +61,7 @@ const PROP_INTERACT_RANGE: f32 = 2.5;
 /// click at 2m from the leaf it hit. `toggle_dungeon_door` adds half the
 /// opening on top, the reach of a leaf standing open.
 const DOOR_INTERACT_RANGE: f32 = 2.5;
+const ENTRANCE_INTERACT_RANGE: f32 = 32.0;
 /// Chance that a freshly-broken barrel/crate spills a loose coin pile.
 const BROKEN_PROP_COIN_DROP_CHANCE: f64 = 0.20;
 
@@ -231,6 +232,10 @@ impl GameState {
             }
         }
         let layouts = generate_dungeon_for(entrance_id);
+        if let Some(entrance) = self.dungeon_defs.get(entrance_id) {
+            self.interest_lock()
+                .seed_dungeon(entrance_id, &entrance.position(), &layouts);
+        }
         let locked_doors = layouts.iter().map(locked_door_ids).collect();
         info!(
             "Dungeon '{}' runtime created ({} floors)",
@@ -252,17 +257,8 @@ impl GameState {
             });
     }
 
-    /// Toggle a dungeon door's open state and return the new state: the server
-    /// flips the stored state, reseals the floor's passability (a shut interior
-    /// door blocks movement and pathing) and lets the connection layer
-    /// broadcast. Interior door ids map to corridor-mouth segments via
-    /// `interior_doors`.
-    ///
-    /// The door is shared state, so nothing changes until the request is
-    /// authorized against the floor, the door, and the reach to it. A locked
-    /// door also wants the floor's key in the bag, from either side and in
-    /// either direction; the key is not spent, and an opened locked door shuts
-    /// itself after `LOCKED_DOOR_OPEN_DURATION`.
+    /// Validate access, update collision, and publish the door under its runtime lock.
+    /// Locked doors require a reusable key and close after `LOCKED_DOOR_OPEN_DURATION`.
     pub async fn toggle_dungeon_door(
         &self,
         player_id: &PlayerId,
@@ -289,9 +285,7 @@ impl GameState {
             if door_id != ENTRANCE_DOOR_ID {
                 return None;
             }
-            if player_pos.dist_xz_sq(&entrance.position())
-                > super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
-            {
+            if player_pos.dist_xz_sq(&entrance.position()) > ENTRANCE_INTERACT_RANGE.powi(2) {
                 return None;
             }
         }
@@ -344,6 +338,12 @@ impl GameState {
             if locked && !is_open {
                 rt.locked_door_opens.remove(&(depth, door_id));
             }
+            self.publish_subject_change(ServerMessage::DungeonDoorToggled {
+                entrance_id: entrance_id.to_owned(),
+                depth,
+                door_id,
+                is_open,
+            });
             (is_open, opening)
         };
         if let Some(opening) = opening {
@@ -381,7 +381,7 @@ impl GameState {
     /// floor's occupants. Anyone who slipped through without a key is now on
     /// the far side for good — that is the tailgater's own choice.
     async fn close_locked_door(&self, entrance_id: &str, depth: u8, door_id: u32, opening: u64) {
-        let occupants: Vec<PlayerId> = {
+        {
             let mut dungeons = self.dungeons.write().await;
             let Some(rt) = dungeons.get_mut(entrance_id) else {
                 return;
@@ -397,24 +397,16 @@ impl GameState {
             {
                 return;
             }
-            rt.floors
-                .get(&depth)
-                .map(|fr| fr.players.keys().copied().collect())
-                .unwrap_or_default()
         };
         self.rebuild_dungeon_floor_passability(entrance_id, depth)
             .await;
         info!("'{entrance_id}' depth {depth} door {door_id} locked itself again");
-        self.send_direct_message_to_players(
-            &occupants,
-            ServerMessage::DungeonDoorToggled {
-                entrance_id: entrance_id.to_string(),
-                depth,
-                door_id,
-                is_open: false,
-            },
-        )
-        .await;
+        self.publish_subject_change(ServerMessage::DungeonDoorToggled {
+            entrance_id: entrance_id.to_string(),
+            depth,
+            door_id,
+            is_open: false,
+        });
     }
 
     /// The key gate: whether the player carries the key to `entrance`'s
@@ -518,6 +510,7 @@ impl GameState {
     /// snapshot re-pull boundary; interior doors center on the toggler, whom
     /// `toggle_dungeon_door` has already put within reach. The toggler is also
     /// sent directly, so their own reply never rides on the radius sweep.
+    #[cfg(test)]
     pub(crate) async fn publish_dungeon_door_toggle(
         &self,
         player_id: &PlayerId,
@@ -526,37 +519,20 @@ impl GameState {
         door_id: u32,
         is_open: bool,
     ) {
-        let (center, floor_level) = if depth == 0 {
-            let Some(def) = self.dungeon_defs.get(&entrance_id) else {
-                return;
-            };
-            (def.position(), 0)
-        } else {
-            let Some((position, _, _)) = self.get_player_position(player_id).await else {
-                return;
-            };
-            (position, -(depth as i8))
-        };
-        let toggled = ServerMessage::DungeonDoorToggled {
-            entrance_id,
-            depth,
-            door_id,
-            is_open,
-        };
-        self.send_direct_message(player_id, toggled.clone()).await;
-        self.send_direct_message_to_players_within_position(
-            &center,
-            floor_level,
-            super::EVENT_DELIVERY_RADIUS,
-            toggled,
-            Some(player_id),
-        )
-        .await;
+        let _ = player_id;
+        self.interest_lock()
+            .update_dungeon(&ServerMessage::DungeonDoorToggled {
+                entrance_id,
+                depth,
+                door_id,
+                is_open,
+            });
     }
 
     /// Every currently-open door in a dungeon as (depth, door_id) pairs, for the
     /// RequestDungeonDoors snapshot. Reads without creating the runtime — an
     /// untouched dungeon simply has no open doors.
+    #[cfg(test)]
     pub async fn dungeon_open_doors(&self, entrance_id: &str) -> Vec<(u8, u32)> {
         let dungeons = self.dungeons.read().await;
         let Some(rt) = dungeons.get(entrance_id) else {
@@ -851,10 +827,9 @@ impl GameState {
             item_def_ids,
             gold
         );
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &player_pos,
             player_floor,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::DungeonChestOpened {
                 entrance_id: entrance_id.to_string(),
                 player_id: *player_id,
@@ -1106,14 +1081,8 @@ impl GameState {
                 None
             }
             Some(Ok(prop_pos)) => {
-                self.send_direct_message_to_players_within_position(
-                    &player_pos,
-                    player_floor,
-                    super::EVENT_DELIVERY_RADIUS,
-                    on_success,
-                    None,
-                )
-                .await;
+                self.publish_nearby(&player_pos, player_floor, on_success, None)
+                    .await;
                 Some(prop_pos)
             }
             None => None,
@@ -1127,42 +1096,21 @@ impl GameState {
             return;
         }
         self.ensure_dungeon_runtime(entrance_id).await;
-        let (total_depths, floor_players): (u8, Vec<(u8, Vec<PlayerId>)>) = {
+        let layouts = {
             let mut dungeons = self.dungeons.write().await;
             let Some(rt) = dungeons.get_mut(entrance_id) else {
                 return;
             };
             rt.broken_props.clear();
             rt.opened_props.clear();
-            (
-                rt.layouts.len() as u8,
-                rt.floors
-                    .iter()
-                    .map(|(depth, floor)| (*depth, floor.players.keys().cloned().collect()))
-                    .collect(),
-            )
+            rt.layouts.clone()
         };
-
-        for depth in 1..=total_depths {
-            self.rebuild_dungeon_floor_passability(entrance_id, depth)
+        for layout in &layouts {
+            self.rebuild_dungeon_floor_passability(entrance_id, layout.depth)
                 .await;
         }
-
-        for (depth, players) in floor_players {
-            if players.is_empty() {
-                continue;
-            }
-            self.send_direct_message_to_players(
-                &players,
-                ServerMessage::DungeonPropsState {
-                    entrance_id: entrance_id.to_string(),
-                    depth,
-                    broken: Vec::new(),
-                    opened: Vec::new(),
-                },
-            )
-            .await;
-        }
+        self.interest_lock()
+            .reset_dungeon_props(entrance_id, &layouts);
     }
 
     /// Track floor occupancy and monster lifecycles across dungeon floor
@@ -1233,30 +1181,8 @@ impl GameState {
                 .unwrap_or_default();
             (broken, opened)
         };
-        // Tell the arriving player which props are already broken (render the
-        // broken variant + walk through those cells) or opened (chests in the
-        // open pose) from the start (sent even when empty so re-entries reset
-        // cleanly).
-        self.send_direct_message(
-            player_id,
-            ServerMessage::DungeonPropsState {
-                entrance_id: entrance_id.to_string(),
-                depth,
-                broken,
-                opened,
-            },
-        )
-        .await;
-        // Same for doors — see `DungeonDoorsState` for why arrival needs it.
-        let doors = self.dungeon_open_doors(entrance_id).await;
-        self.send_direct_message(
-            player_id,
-            ServerMessage::DungeonDoorsState {
-                entrance_id: entrance_id.to_string(),
-                doors,
-            },
-        )
-        .await;
+        let _ = (broken, opened);
+        self.reconcile_view(player_id).await;
         self.populate_dungeon_floor(entrance_id, depth, player_id)
             .await;
     }

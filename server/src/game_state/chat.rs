@@ -300,17 +300,6 @@ fn prune_expired_mutes(muted: &mut HashMap<String, (String, Instant)>) {
     muted.retain(|_, (_, expiry)| *expiry > now);
 }
 
-/// The one builder of a mid-performance `PlayerMusicStarted`, so the elapsed
-/// clock and message shape cannot drift between the AOI-entry and join paths.
-pub(super) fn music_started_msg(performer: PlayerId, entry: &(String, Instant)) -> ServerMessage {
-    let (track, started) = entry;
-    ServerMessage::PlayerMusicStarted {
-        player_id: performer,
-        track: track.clone(),
-        elapsed_secs: started.elapsed().as_secs_f32(),
-    }
-}
-
 impl super::GameState {
     pub async fn send_chat_message(
         &self,
@@ -524,18 +513,11 @@ impl super::GameState {
             .await
             .insert(*player_id, (track.to_string(), Instant::now()));
 
-        let listeners = self
-            .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
-            .await;
-        self.send_direct_message_to_players(
-            &listeners,
-            ServerMessage::PlayerMusicStarted {
-                player_id: *player_id,
-                track: track.to_string(),
-                elapsed_secs: 0.0,
-            },
-        )
-        .await;
+        self.publish_subject_change(ServerMessage::PlayerMusicStarted {
+            player_id: *player_id,
+            track: track.to_string(),
+            elapsed_secs: 0.0,
+        });
     }
 
     /// `/emote <name>` — like `/play_music` with nothing attached: no object
@@ -651,18 +633,14 @@ impl super::GameState {
         }
         // Chat content stays out of logs on purpose (privacy, F-012).
         info!(from = %player_name, len, "chat message");
-        let mut recipients = self
-            .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
-            .await;
-        let blocked = self.blocked_names.read().await;
-        if !blocked.is_empty() {
-            recipients.retain(|id| {
-                !blocked
-                    .get(id)
-                    .is_some_and(|names| names.contains(&player_name))
-            });
+        let players = self.players.read().await;
+        if let Some(player) = players.get(player_id) {
+            self.interest_lock().publish_effect(
+                onlinerpg_shared::interest::SubjectArea::point(player.position, player.floor_level),
+                &msg,
+                None,
+            );
         }
-        self.send_direct_message_to_players(&recipients, msg).await;
     }
 
     /// Deliver a whisper to the named player, wherever they are, and echo it
@@ -767,23 +745,13 @@ impl super::GameState {
         }
         let mut blocked = self.blocked_names.write().await;
         blocked.insert(*player_id, names.into_iter().collect());
+        drop(blocked);
+        self.sync_interest_blocks().await;
     }
 
     pub(crate) async fn remove_player_blocks(&self, player_id: &PlayerId) {
         self.blocked_names.write().await.remove(player_id);
-    }
-
-    /// Which of `ids` have `name` blocked. One read lock for a whole
-    /// broadcast, and the empty map (the common case) short-circuits.
-    pub(crate) async fn blockers_among(&self, ids: &[PlayerId], name: &str) -> Vec<PlayerId> {
-        let blocked = self.blocked_names.read().await;
-        if blocked.is_empty() {
-            return Vec::new();
-        }
-        ids.iter()
-            .copied()
-            .filter(|id| blocked.get(id).is_some_and(|names| names.contains(name)))
-            .collect()
+        self.sync_interest_blocks().await;
     }
 
     /// Whether that character is under an active mute.
@@ -880,6 +848,7 @@ impl super::GameState {
             .entry(*player_id)
             .or_default()
             .insert(canonical.clone());
+        self.sync_interest_blocks().await;
 
         // Blocking and friendship are mutually exclusive: a friend you cannot
         // hear is a state no other path knows how to explain.
@@ -938,6 +907,8 @@ impl super::GameState {
                 blocked.remove(player_id);
             }
         }
+        drop(blocked);
+        self.sync_interest_blocks().await;
         format!("Unblock: {stored} is no longer blocked.")
     }
 

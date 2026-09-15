@@ -19,7 +19,7 @@ impl SharedState {
     }
 
     /// Emit a [Sighted] event when any point of interest — a monster, dropped
-    /// loot, a dungeon entrance — enters NPC_SIGHT_RADIUS on our floor, and
+    /// loot, a dungeon entrance — enters EVENT_DELIVERY_RADIUS on our floor, and
     /// forget it once it drifts well past the edge so a re-entry announces
     /// again. Without this the agent walks straight past everything between
     /// scheduled turns. Only an aggressive monster wakes the driver; the rest
@@ -35,15 +35,12 @@ impl SharedState {
         // Keys still close enough to stay "seen" — a wider ring than the entry
         // radius so a POI hovering at the edge doesn't announce every tick.
         let mut nearby: HashSet<String> = HashSet::new();
-        let forget_radius = NPC_SIGHT_RADIUS + 5.0;
         let sighted = &self.sighted_pois;
         // Ring bookkeeping shared by every POI kind; hands the key back only
         // when the POI just entered sight.
-        let mut track = |key: String, dist: f32| -> Option<String> {
-            let new = dist <= NPC_SIGHT_RADIUS && !sighted.contains(&key);
-            if dist <= forget_radius {
-                nearby.insert(key.clone());
-            }
+        let mut track = |key: String| -> Option<String> {
+            let new = !sighted.contains(&key);
+            nearby.insert(key.clone());
             new.then_some(key)
         };
 
@@ -56,7 +53,7 @@ impl SharedState {
                 continue;
             }
             let d = crate::geom::PlanarDelta::to_xz(&self_pos, m.position.x, m.position.z);
-            if let Some(key) = track(format!("m:{id}"), d.dist) {
+            if let Some(key) = track(format!("m:{id}")) {
                 newly.push((
                     key,
                     format!(
@@ -83,7 +80,7 @@ impl SharedState {
                 continue;
             }
             let d = crate::geom::PlanarDelta::to_xz(&self_pos, item.position.x, item.position.z);
-            if let Some(key) = track(format!("i:{iid}"), d.dist) {
+            if let Some(key) = track(format!("i:{iid}")) {
                 newly.push((
                     key,
                     format!(
@@ -104,7 +101,10 @@ impl SharedState {
             let wc = self.world_cache.read().unwrap();
             for dg in wc.all_dungeons() {
                 let d = crate::geom::PlanarDelta::to_xz(&self_pos, dg.entrance.x, dg.entrance.z);
-                if let Some(key) = track(format!("d:{}", dg.name), d.dist) {
+                if d.dist > EVENT_DELIVERY_RADIUS {
+                    continue;
+                }
+                if let Some(key) = track(format!("d:{}", dg.name)) {
                     newly.push((
                         key,
                         format!(
@@ -122,7 +122,7 @@ impl SharedState {
             }
         }
 
-        // Drop anything now well outside sight, so a re-entry announces again.
+        // Re-entry announces again after the subject leaves the active view.
         self.sighted_pois.retain(|k| nearby.contains(k));
 
         for (key, note, wake) in newly {
@@ -145,23 +145,16 @@ impl SharedState {
         self.ground_items.get(&instance_id)
     }
 
-    /// The ground items the agent can act on: on its floor, inside
-    /// the sight radius, closest first. The known-item map reaches out to
-    /// the server's event radius, so this is what "nearby" means everywhere
-    /// downstream — the world state listing and pickup alike.
+    /// Active ground items on our floor, closest first.
     pub fn ground_items_in_sight(&self) -> Vec<(f32, &GroundItem)> {
         let Some(sp) = self.self_player.as_ref() else {
             return Vec::new();
         };
-        let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
         let mut in_sight: Vec<_> = self
             .ground_items
             .values()
             .filter(|item| item.floor_level == self.self_floor_level)
-            .filter_map(|item| {
-                let d_sq = item.position.dist_xz_sq(&sp.position);
-                (d_sq <= sight_sq).then_some((d_sq, item))
-            })
+            .map(|item| (item.position.dist_xz_sq(&sp.position), item))
             .collect();
         in_sight.sort_by(|a, b| a.0.total_cmp(&b.0));
         in_sight

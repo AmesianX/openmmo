@@ -2,6 +2,36 @@ use super::*;
 use onlinerpg_shared::landscaping::{LandscapingStroke, TOOLBOX_ITEM};
 use onlinerpg_terrain::land::{plot_addr, LandGrade, REGION_PLOTS};
 
+#[tokio::test]
+async fn one_failed_tile_does_not_skip_other_changed_tiles_and_retries_without_movement() {
+    let game = make_flat_world_game_state("terrain_delivery_retry");
+    let player = make_player("viewer", 0.0, 0.0);
+    game.add_player(player.clone()).await;
+    let mut rx = game.register_direct_channel(&player.id).await;
+    drain(&mut rx);
+    let path = onlinerpg_terrain::coords::heightmap_path(game.terrain_io.base_dir(), 0, 0);
+    tokio::fs::create_dir_all(&path).await.unwrap();
+    assert!(game.publish_terrain_tiles(&[(0, 0), (1, 0)]).await.is_err());
+    assert!(drain(&mut rx).iter().any(|msg| matches!(
+        msg,
+        ServerMessage::TerrainTileSnapshot {
+            tile_x: 1,
+            tile_z: 0,
+            ..
+        }
+    )));
+    tokio::fs::remove_dir(&path).await.unwrap();
+    game.retry_terrain_delivery().await;
+    assert!(drain(&mut rx).iter().any(|msg| matches!(
+        msg,
+        ServerMessage::TerrainTileSnapshot {
+            tile_x: 0,
+            tile_z: 0,
+            ..
+        }
+    )));
+}
+
 async fn gardener(
     game: &GameState,
     auth: &crate::auth::AuthService,
@@ -89,6 +119,8 @@ async fn landscaping_saves_free_road_without_height_edits_and_syncs_near_and_far
         .unwrap()
         .position
         .x = 5000.0;
+    game.reconcile_view(&pid("Far")).await;
+    drain(&mut far);
     let height = game.terrain_io.read_heightmap(0, 0).await.unwrap();
     let bag = game.get_player_inventory(&pid("Gardener")).await.unwrap();
     paint(&game, &auth, &mut rx, road(), true).await;
@@ -101,12 +133,16 @@ async fn landscaping_saves_free_road_without_height_edits_and_syncs_near_and_far
         bag.bag
     );
     assert_eq!(game.splat_sampler.dominant_at(6.0, 4.0).await.unwrap(), 5);
-    assert!(drain(&mut near)
-        .iter()
-        .any(|msg| matches!(msg, ServerMessage::LandscapeChanged { tiles } if tiles.len() == 1)));
-    assert!(drain(&mut far).iter().any(
-        |msg| matches!(msg, ServerMessage::LandscapeInvalidated { tiles } if tiles == &vec![(0, 0)])
-    ));
+    assert!(drain(&mut near).iter().any(|msg| matches!(
+        msg,
+        ServerMessage::TerrainTileSnapshot {
+            tile_x: 0,
+            tile_z: 0,
+            landscape: Some(_),
+            ..
+        }
+    )));
+    assert!(drain(&mut far).is_empty());
     let saved = game
         .terrain_io
         .read_landscaping_tile(0, 0)

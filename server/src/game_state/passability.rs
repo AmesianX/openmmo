@@ -385,6 +385,8 @@ impl super::GameState {
         let mut dungeons = 0usize;
         for def in self.dungeon_defs.all() {
             let layouts = generate_dungeon_for(&def.id);
+            self.interest_lock()
+                .seed_dungeon(&def.id, &def.position(), &layouts);
             let rp = dungeon_passability(&def.position(), &layouts);
             self.passability_write()
                 .insert(dungeon_cache_key(&def.id), rp);
@@ -494,9 +496,12 @@ impl super::GameState {
         let mut cache = self.passability_write();
         cache.insert(house.id.clone(), rp);
         pathfinding::apply_door_overlays(&mut cache, house);
+        drop(cache);
+        self.publish_house(house);
     }
 
     pub async fn passability_remove_house(&self, house_id: &str) {
+        self.remove_house_subject(house_id);
         self.clear_open_doors_for_house(house_id).await;
         self.passability_write().remove(house_id);
         self.rain_shelters

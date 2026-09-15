@@ -202,16 +202,10 @@ impl SharedState {
 
         // Nearby players (exclude self and humans beyond the sight radius)
         let sp = self.self_player.as_ref();
-        let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
         let index = self.pricing.as_ref().map_or(100, |p| p.index_percent);
         for (_, p) in self.players_on_my_floor() {
             if self.self_player_id.as_ref() == Some(&p.id) {
                 continue;
-            }
-            if let Some(sp) = sp {
-                if p.position.dist_xz_sq(&sp.position) > sight_sq {
-                    continue;
-                }
             }
             let npc_tag = if p.is_official_npc { " (NPC)" } else { "" };
             let favor_tag = match self.favor.get(&p.name) {
@@ -237,11 +231,6 @@ impl SharedState {
 
         // Exclude monsters beyond LLM sight radius
         for m in self.monsters_on_my_floor() {
-            if let Some(sp) = sp {
-                if m.position.dist_xz_sq(&sp.position) > sight_sq {
-                    continue;
-                }
-            }
             lines.push(format!(
                 "Monster: {} [{}] HP {}/{} state={} at ({:.1}, {:.1}, {:.1})",
                 m.monster_type,
@@ -297,9 +286,6 @@ impl SharedState {
                     continue;
                 }
                 let d_sq = hat.position.dist_xz_sq(&sp.position);
-                if d_sq > sight_sq {
-                    continue;
-                }
                 let whose = if Some(hat.owner) == self.self_player_id {
                     "yours".to_string()
                 } else {
@@ -316,9 +302,6 @@ impl SharedState {
                     continue;
                 }
                 let d_sq = meal.position.dist_xz_sq(&sp.position);
-                if d_sq > sight_sq {
-                    continue;
-                }
                 let whose = if Some(meal.for_player) == self.self_player_id {
                     "served to you — you eat it on your own once settled in the chair".to_string()
                 } else {

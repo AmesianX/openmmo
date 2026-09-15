@@ -85,6 +85,10 @@ class BridgeManager {
   >()
   private deckGrids = new Map<string, DeckGrid>()
 
+  reset(): void {
+    this.regions.clear()
+  }
+
   /** Rasterise the deck mesh once into a height grid (highest surface per
    *  cell); the runtime lookups below never touch the mesh again. */
   registerBridgeMesh(modelId: string, scene: THREE.Object3D, meta: BridgeMeta) {

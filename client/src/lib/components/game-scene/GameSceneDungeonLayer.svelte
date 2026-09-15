@@ -1013,9 +1013,6 @@
   ) {
     dungeonManager.updateFromPlayerPosition(playerX, playerZ)
 
-    const doorResyncId = dungeonManager.takeDoorSnapshotRequest()
-    if (doorResyncId) networkManager.sendRequestDungeonDoors(doorResyncId)
-
     // Advance one-shot GLB clips; clamped actions hold their final poses.
     if (propMixers.length > 0) {
       const dt = deltaMs / 1000

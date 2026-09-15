@@ -5,8 +5,6 @@ use onlinerpg_shared::messages::{
 };
 use std::sync::atomic::Ordering;
 
-pub(super) const INSTRUMENT_AUDIBLE_RADIUS: f32 = 30.0;
-
 pub(super) fn valid_instrument_batch(events: &[InstrumentNoteEvent]) -> bool {
     if events.is_empty()
         || events.len() > INSTRUMENT_MAX_EVENTS_PER_BATCH
@@ -62,10 +60,9 @@ impl super::GameState {
             .await;
         // Same circle as PlayerMusicStarted: a listener who was hearing the
         // old tune from 31 m must be told it ended.
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &position,
             floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerInstrumentStarted {
                 player_id: *player_id,
             },
@@ -114,27 +111,14 @@ impl super::GameState {
                 ))
             })
         };
-        let Some((position, floor_level, performer_name)) = pose else {
+        let Some((position, floor_level, _performer_name)) = pose else {
             self.cancel_live_instrument_if_active(player_id).await;
             return;
         };
 
-        let mut recipients = self
-            .player_ids_within_position(&position, floor_level, INSTRUMENT_AUDIBLE_RADIUS)
-            .await;
-        // Same rule as chat: a blocked player's output does not reach you.
-        {
-            let blocked = self.blocked_names.read().await;
-            if !blocked.is_empty() {
-                recipients.retain(|id| {
-                    !blocked
-                        .get(id)
-                        .is_some_and(|names| names.contains(&performer_name))
-                });
-            }
-        }
-        self.send_direct_message_to_players_except(
-            &recipients,
+        self.publish_nearby(
+            &position,
+            floor_level,
             ServerMessage::PlayerInstrumentNotes {
                 player_id: *player_id,
                 position,

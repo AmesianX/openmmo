@@ -9,7 +9,7 @@ use onlinerpg_shared::inventory::{EquipSlot, PlayerInventory};
 use onlinerpg_shared::{
     shortest_world_delta_x, wrap_world_x, MAX_MOVE_TARGET_DISTANCE, PLAYER_MOVE_SPEED,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
@@ -258,30 +258,6 @@ pub(super) fn build_save_data(
     }
 }
 
-/// One pass over `items`: which left the mover's AOI and which entered it,
-/// judged against `EVENT_DELIVERY_RADIUS` on the item's own floor.
-fn aoi_diff<T>(
-    items: impl Iterator<Item = T>,
-    place: impl Fn(&T) -> (Position, i8),
-    old: (&Position, i8),
-    new: (&Position, i8),
-) -> (Vec<T>, Vec<T>) {
-    let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
-    let mut left = Vec::new();
-    let mut entered = Vec::new();
-    for item in items {
-        let (position, floor) = place(&item);
-        let was = floor == old.1 && old.0.dist_xz_sq(&position) <= radius_sq;
-        let now = floor == new.1 && new.0.dist_xz_sq(&position) <= radius_sq;
-        match (was, now) {
-            (true, false) => left.push(item),
-            (false, true) => entered.push(item),
-            _ => {}
-        }
-    }
-    (left, entered)
-}
-
 impl super::GameState {
     pub async fn get_or_assign_player_number(&self, player_id: &PlayerId) -> u32 {
         let mut id_state = self.id_state.write().await;
@@ -302,12 +278,15 @@ impl super::GameState {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut channels = self.direct_channels.write().await;
         channels.insert(*player_id, tx);
+        drop(channels);
+        self.reset_world_view(player_id).await;
         rx
     }
 
     pub async fn unregister_connection_channel(&self, player_id: &PlayerId) {
         let mut channels = self.direct_channels.write().await;
         channels.remove(player_id);
+        self.interest_lock().remove_view(*player_id);
     }
 
     pub async fn send_direct_message(&self, player_id: &PlayerId, msg: ServerMessage) {
@@ -367,25 +346,21 @@ impl super::GameState {
         }
     }
 
-    /// Deliver `msg` to every player within `radius` (XZ) of `position` that
-    /// is also on `floor_level`. The floor gate keeps events from leaking
-    /// between stacked floors that share the same XZ footprint (a dungeon
-    /// depth sits directly under the overworld, house upper floors over the
-    /// ground floor), so e.g. a surface guard never perceives — and never
-    /// reacts to — monsters fighting on the dungeon floor beneath it.
-    pub async fn send_direct_message_to_players_within_position(
+    pub(crate) async fn publish_nearby(
         &self,
         position: &Position,
         floor_level: i8,
-        radius: f32,
         msg: ServerMessage,
         skip_player_id: Option<&PlayerId>,
     ) {
-        let player_ids = self
-            .player_ids_within_position(position, floor_level, radius)
-            .await;
-        self.send_direct_message_to_players_except(&player_ids, msg, skip_player_id)
-            .await;
+        let mut interest = self.interest_lock();
+        if !interest.publish_state(&msg) {
+            interest.publish_effect(
+                onlinerpg_shared::interest::SubjectArea::point(*position, floor_level),
+                &msg,
+                skip_player_id,
+            );
+        }
     }
 
     pub async fn register_player_character(
@@ -834,10 +809,8 @@ impl super::GameState {
         }
     }
 
-    /// Registers the player and returns the messages that materialize the
-    /// surroundings for them: the visible-state snapshot, plus any
-    /// performances already underway in earshot (delivered mid-track).
-    pub async fn add_player(&self, mut player: Player) -> Vec<ServerMessage> {
+    /// Register the player and queue their current world snapshot.
+    pub async fn add_player(&self, mut player: Player) {
         // Normalize persisted legacy positions before they enter the spatial
         // index or are sent to clients.
         player.position.x = onlinerpg_shared::wrap_world_x(player.position.x);
@@ -845,7 +818,6 @@ impl super::GameState {
         let player_name = player.name.clone();
         let player_number = self.get_or_assign_player_number(&player_id).await;
         let player_position = player.position;
-        let player_floor = player.floor_level;
 
         {
             let mut players = self.players.write().await;
@@ -865,161 +837,9 @@ impl super::GameState {
             player_name, player_id, player_number
         );
 
-        let nearby_player_ids = self
-            .player_ids_within(&player_id, super::EVENT_DELIVERY_RADIUS)
-            .await;
-        let nearby_player_set: HashSet<_> = nearby_player_ids.iter().cloned().collect();
-        self.send_direct_message_to_players_except(
-            &nearby_player_ids,
-            ServerMessage::PlayerJoined {
-                player: player.clone(),
-            },
-            Some(&player_id),
-        )
-        .await;
-
-        // Return visible game_state to be sent directly to the new player only
-        let current_players = self.players.read().await;
-        let other_players: Vec<Player> = current_players
-            .iter()
-            .filter(|(id, _)| nearby_player_set.contains(*id) && *id != &player_id)
-            .map(|(_, player)| player.clone())
-            .collect();
-        drop(current_players);
-
-        let monsters: HashMap<String, crate::types::Monster> = self
-            .monsters
-            .read()
-            .await
-            .values()
-            .filter(|monster| {
-                monster.floor_level == player_floor
-                    && monster.position.dist_xz_sq(&player_position)
-                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
-            })
-            .map(|monster| (monster.id.clone(), monster.clone()))
-            .collect();
-        let ground_items: Vec<_> = self
-            .ground_items
-            .read()
-            .await
-            .values()
-            .filter(|sgi| {
-                sgi.item.floor_level == player_floor
-                    && sgi.item.position.dist_xz_sq(&player_position)
-                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
-            })
-            .map(|sgi| sgi.item.clone())
-            .collect();
-        let campfires: Vec<_> = self
-            .campfires
-            .read()
-            .await
-            .values()
-            .filter(|e| {
-                e.campfire.floor_level == player_floor
-                    && e.campfire.position.dist_xz_sq(&player_position)
-                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
-            })
-            .map(|e| e.campfire.clone())
-            .collect();
-        let mut stalls: Vec<_> = self
-            .stalls
-            .read()
-            .await
-            .values()
-            .filter(|e| {
-                e.stall.floor_level == player_floor
-                    && e.stall.position.dist_xz_sq(&player_position)
-                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
-            })
-            .map(|e| e.stall.clone())
-            .collect();
-        for stall in &mut stalls {
-            stall.sign = self.visible_sign(stall, &player_id).await;
-        }
-        let tip_hats: Vec<_> = self
-            .tip_hats
-            .read()
-            .await
-            .values()
-            .filter(|h| {
-                h.floor_level == player_floor
-                    && h.position.dist_xz_sq(&player_position)
-                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
-            })
-            .cloned()
-            .collect();
-
-        let meals: Vec<_> = self
-            .meals
-            .read()
-            .await
-            .values()
-            .filter(|e| {
-                e.meal.floor_level == player_floor
-                    && e.meal.position.dist_xz_sq(&player_position)
-                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
-            })
-            .map(|e| e.meal.clone())
-            .collect();
-
-        let mut msgs = Vec::new();
-        let fences = self.fences.read().await;
-        msgs.push(ServerMessage::FenceVisibility {
-            added: if player_floor == 0 {
-                fences
-                    .nearby(&player_position)
-                    .into_iter()
-                    .cloned()
-                    .collect()
-            } else {
-                vec![]
-            },
-            removed: vec![],
-        });
-        drop(fences);
-        let estate_chests = self.estate_chests.read().await;
-        msgs.push(ServerMessage::EstateChestVisibility {
-            added: estate_chests
-                .nearby(&player_position, player_floor)
-                .into_iter()
-                .cloned()
-                .collect(),
-            removed: vec![],
-        });
-        drop(estate_chests);
-        if !other_players.is_empty()
-            || !monsters.is_empty()
-            || !ground_items.is_empty()
-            || !campfires.is_empty()
-            || !stalls.is_empty()
-            || !tip_hats.is_empty()
-            || !meals.is_empty()
-        {
-            msgs.push(ServerMessage::GameState {
-                players: other_players,
-                monsters,
-                ground_items,
-                campfires,
-                stalls,
-                tip_hats,
-                meals,
-            });
-        }
-
-        let performances = self.music_performances.read().await;
-        if !performances.is_empty() {
-            for id in &nearby_player_ids {
-                if *id != player_id {
-                    if let Some(entry) = performances.get(id) {
-                        msgs.push(super::chat::music_started_msg(*id, entry));
-                    }
-                }
-            }
-        }
-
-        msgs
+        self.interest_lock()
+            .publish_state(&ServerMessage::PlayerJoined { player });
+        self.reset_world_view(&player_id).await;
     }
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
@@ -1066,9 +886,6 @@ impl super::GameState {
             removed
         };
 
-        let nearby_player_ids = self
-            .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
-            .await;
         let removed_player = {
             let mut players = self.players.write().await;
             self.combat_audit.logout(player_id);
@@ -1101,14 +918,9 @@ impl super::GameState {
                     .map(|n| format!(" [#{}]", n))
                     .unwrap_or_default()
             );
-            self.send_direct_message_to_players_except(
-                &nearby_player_ids,
-                ServerMessage::PlayerLeft {
-                    player_id: *player_id,
-                },
-                Some(player_id),
-            )
-            .await;
+            self.publish_subject_change(ServerMessage::PlayerLeft {
+                player_id: *player_id,
+            });
         } else {
             warn!("Attempted to remove non-existent player: {}", player_id);
         }
@@ -2334,7 +2146,6 @@ impl super::GameState {
         let update_msg = ServerMessage::PlayerRespawned {
             player: player.clone(),
         };
-        let (respawn_pos, respawn_floor) = (player.position, player.floor_level);
         self.finish_position_update(
             player_id,
             old_position,
@@ -2343,18 +2154,6 @@ impl super::GameState {
             update_msg,
         )
         .await;
-        // Per-floor AOI never tells the floor below — but the inn's maid
-        // stands there, and waking her guests is her job. Same-floor
-        // observers already heard it through the fanout.
-        let downstairs = self
-            .player_ids_near_on_other_floors(
-                &respawn_pos,
-                respawn_floor,
-                super::EVENT_DELIVERY_RADIUS,
-            )
-            .await;
-        self.send_direct_message_to_players(&downstairs, ServerMessage::PlayerRespawned { player })
-            .await;
         self.reset_hunger_on_respawn(player_id).await;
         self.mark_party_vitals_dirty(player_id).await;
     }
@@ -2378,10 +2177,9 @@ impl super::GameState {
         self.mark_dirty(player_id).await;
         self.mark_party_vitals_dirty(player_id).await;
         let (position, floor_level) = (revived.position, revived.floor_level);
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &position,
             floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerRespawned { player: revived },
             None,
         )
@@ -2411,10 +2209,9 @@ impl super::GameState {
         };
 
         if let Some((position, floor_level)) = position {
-            self.send_direct_message_to_players_within_position(
+            self.publish_nearby(
                 &position,
                 floor_level,
-                super::EVENT_DELIVERY_RADIUS,
                 ServerMessage::PlayerTorchToggled {
                     player_id: *player_id,
                     enabled,
@@ -2473,14 +2270,8 @@ impl super::GameState {
 
         let (position, floor_level, messages) = changed;
         for message in messages {
-            self.send_direct_message_to_players_within_position(
-                &position,
-                floor_level,
-                super::EVENT_DELIVERY_RADIUS,
-                message,
-                Some(player_id),
-            )
-            .await;
+            self.publish_nearby(&position, floor_level, message, Some(player_id))
+                .await;
         }
     }
 
@@ -2540,10 +2331,9 @@ impl super::GameState {
                 self.music_performances.write().await.remove(player_id);
                 self.remove_live_instrument(player_id).await;
             }
-            self.send_direct_message_to_players_within_position(
+            self.publish_nearby(
                 &position,
                 floor_level,
-                super::EVENT_DELIVERY_RADIUS,
                 ServerMessage::PlayerInteractionChanged {
                     player_id: *player_id,
                     object_type,
@@ -2675,390 +2465,64 @@ impl super::GameState {
         player: &Player,
         update_msg: ServerMessage,
     ) {
-        // Visibility is per-floor: the old set is who could see the player on
-        // the floor it left, the new set is who can see it on the floor it is
-        // on now. For a same-floor move both use the same floor; for a stair /
-        // teleport / respawn floor change the diff naturally turns into
-        // disappear-from-old-floor + appear-on-new-floor.
-        let new_floor = player.floor_level;
-        let old_visible: HashSet<PlayerId> = self
-            .player_ids_within_position(old_position, old_floor, super::EVENT_DELIVERY_RADIUS)
-            .await
-            .into_iter()
-            .filter(|id| id != player_id)
-            .collect();
-        let new_visible: HashSet<PlayerId> = self
-            .player_ids_within_position(&player.position, new_floor, super::EVENT_DELIVERY_RADIUS)
-            .await
-            .into_iter()
-            .filter(|id| id != player_id)
-            .collect();
-
-        let left: Vec<_> = old_visible.difference(&new_visible).cloned().collect();
-        let entered: Vec<_> = new_visible.difference(&old_visible).cloned().collect();
-        let stayed: Vec<_> = new_visible.intersection(&old_visible).cloned().collect();
-
-        for other_id in &left {
-            self.send_direct_message(
-                player_id,
-                ServerMessage::PlayerDisappeared {
-                    player_id: *other_id,
-                },
-            )
-            .await;
-            self.send_direct_message(
-                other_id,
-                ServerMessage::PlayerDisappeared {
-                    player_id: *player_id,
-                },
-            )
-            .await;
-        }
-
-        let entered_players = {
-            let players = self.players.read().await;
-            entered
-                .iter()
-                .filter_map(|id| players.get(id).cloned())
-                .collect::<Vec<_>>()
-        };
-
-        // Coming into earshot of a running performance delivers it mid-track,
-        // in either direction. Collected here, sent after the appearances so
-        // the receiver already knows the performer.
-        let music_msgs: Vec<(PlayerId, ServerMessage)> = if entered_players.is_empty() {
-            Vec::new()
-        } else {
-            let performances = self.music_performances.read().await;
-            let mut msgs = Vec::new();
-            let mut push = |to: PlayerId, performer: PlayerId| {
-                if let Some(entry) = performances.get(&performer) {
-                    msgs.push((to, super::chat::music_started_msg(performer, entry)));
-                }
-            };
-            for other in &entered_players {
-                push(*player_id, other.id);
-                push(other.id, *player_id);
-            }
-            msgs
-        };
-
-        for other in entered_players {
-            self.send_direct_message(
-                player_id,
-                ServerMessage::PlayerAppeared {
-                    player: other.clone(),
-                },
-            )
-            .await;
-            self.send_direct_message(
-                &other.id,
-                ServerMessage::PlayerAppeared {
-                    player: player.clone(),
-                },
-            )
-            .await;
-        }
-        for (to, msg) in music_msgs {
-            self.send_direct_message(&to, msg).await;
-        }
-
-        let (monsters_left, monsters_entered) = {
+        self.interest_lock()
+            .publish_player_movement(player, *old_position, old_floor, update_msg);
+        self.reconcile_view(player_id).await;
+        let (abandoned, entered) = {
             let monsters = self.monsters.read().await;
-            let (left, entered) = aoi_diff(
-                // Not `values()`: this runs on every accepted move packet, and
-                // the registry holds up to 135k.
-                monsters.near_either(old_position, &player.position),
-                |m| (m.position, m.floor_level),
-                (old_position, old_floor),
-                (&player.position, new_floor),
-            );
-            (
-                left.into_iter()
-                    .map(|m| {
-                        (
-                            m.id.clone(),
-                            m.position,
-                            m.floor_level,
-                            m.lifecycle,
-                            m.owner_id,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-                entered.into_iter().cloned().collect::<Vec<_>>(),
-            )
+            let abandoned = monsters
+                .ids_owned_by(player_id)
+                .filter_map(|id| monsters.get(id))
+                .filter(|monster| {
+                    !self.interest_lock().visible_at(
+                        &format!("monster:{}", monster.id),
+                        player.position,
+                        player.floor_level,
+                    )
+                })
+                .map(|monster| {
+                    (
+                        monster.id.clone(),
+                        monster.position,
+                        monster.floor_level,
+                        monster.lifecycle,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let entered = monsters
+                .near_either(&player.position, &player.position)
+                .filter(|monster| Self::watches(player, monster))
+                .cloned()
+                .collect::<Vec<_>>();
+            (abandoned, entered)
         };
-
-        // Leaving AOI is mere visibility for a watcher, but for the owner it
-        // ends the simulation — its client reads MonsterRemoved as "drop the
-        // brain". Owned monsters are released instead: transferred, despawned
-        // or parked on the spot, each branch delivering the owner's removal.
-        let mut abandoned = Vec::new();
-        for (monster_id, position, floor_level, lifecycle, owner_id) in monsters_left {
-            if owner_id == Some(*player_id) {
-                abandoned.push((monster_id, position, floor_level, lifecycle));
-            } else {
-                self.send_direct_message(player_id, ServerMessage::MonsterRemoved { monster_id })
-                    .await;
-            }
-        }
         if !abandoned.is_empty() {
             self.release_monsters_left_behind(player_id, abandoned)
                 .await;
         }
-        for monster in &monsters_entered {
-            self.send_direct_message(
-                player_id,
-                ServerMessage::MonsterSpawned {
-                    monster: self.wire_monster(monster),
-                },
-            )
-            .await;
-        }
-        self.adopt_unattended_monsters(player_id, &monsters_entered)
-            .await;
-
-        let (items_left, items_entered) = {
-            let ground_items = self.ground_items.read().await;
-            let (left, entered) = aoi_diff(
-                ground_items.values(),
-                |sgi| (sgi.item.position, sgi.item.floor_level),
-                (old_position, old_floor),
-                (&player.position, new_floor),
-            );
-            (
-                left.into_iter()
-                    .map(|sgi| sgi.item.instance_id)
-                    .collect::<Vec<_>>(),
-                entered
-                    .into_iter()
-                    .map(|sgi| sgi.item.clone())
-                    .collect::<Vec<_>>(),
-            )
-        };
-
-        for instance_id in items_left {
-            self.send_direct_message(
-                player_id,
-                ServerMessage::GroundItemRemoved {
-                    instance_id,
-                    picked_up_by: None,
-                },
-            )
-            .await;
-        }
-        for item in items_entered {
-            self.send_direct_message(player_id, ServerMessage::GroundItemAppeared { item })
-                .await;
-        }
-
-        {
-            let fences = self.fences.read().await;
-            let mut candidates: HashMap<_, _> = fences
-                .nearby(old_position)
-                .into_iter()
-                .map(|f| (f.edge, f))
-                .collect();
-            candidates.extend(
-                fences
-                    .nearby(&player.position)
-                    .into_iter()
-                    .map(|f| (f.edge, f)),
-            );
-            let (left, entered) = aoi_diff(
-                candidates.into_values(),
-                |f| (f.edge.center(f.y), 0),
-                (old_position, old_floor),
-                (&player.position, new_floor),
-            );
-            if !left.is_empty() || !entered.is_empty() {
-                self.send_direct_message(
-                    player_id,
-                    ServerMessage::FenceVisibility {
-                        added: entered.into_iter().cloned().collect(),
-                        removed: left.into_iter().map(|f| f.edge).collect(),
-                    },
-                )
-                .await;
-            }
-        }
-
-        {
-            let chests = self.estate_chests.read().await;
-            let mut candidates: HashMap<_, _> = chests
-                .nearby(old_position, old_floor)
-                .into_iter()
-                .map(|chest| (chest.id, chest))
-                .collect();
-            candidates.extend(
-                chests
-                    .nearby(&player.position, new_floor)
-                    .into_iter()
-                    .map(|chest| (chest.id, chest)),
-            );
-            let (left, entered) = aoi_diff(
-                candidates.into_values(),
-                |chest| (chest.position, chest.floor_level),
-                (old_position, old_floor),
-                (&player.position, new_floor),
-            );
-            if !left.is_empty() || !entered.is_empty() {
-                self.send_direct_message(
-                    player_id,
-                    ServerMessage::EstateChestVisibility {
-                        added: entered.into_iter().cloned().collect(),
-                        removed: left.into_iter().map(|chest| chest.id).collect(),
-                    },
-                )
-                .await;
-            }
-        }
-
-        let (fires_left, fires_entered) = {
-            let campfires = self.campfires.read().await;
-            let (left, entered) = aoi_diff(
-                campfires.values(),
-                |e| (e.campfire.position, e.campfire.floor_level),
-                (old_position, old_floor),
-                (&player.position, new_floor),
-            );
-            (
-                left.into_iter().map(|e| e.campfire.id).collect::<Vec<_>>(),
-                entered
-                    .into_iter()
-                    .map(|e| e.campfire.clone())
-                    .collect::<Vec<_>>(),
-            )
-        };
-        for campfire_id in fires_left {
-            self.send_direct_message(player_id, ServerMessage::CampfireRemoved { campfire_id })
-                .await;
-        }
-        for campfire in fires_entered {
-            self.send_direct_message(player_id, ServerMessage::CampfireAppeared { campfire })
-                .await;
-        }
-
-        // The mover's own leash is read off the one lock this pass already takes.
-        let (stalls_left, stalls_entered, stall_strayed) = {
-            let stalls = self.stalls.read().await;
-            let (left, entered) = aoi_diff(
-                stalls.values(),
-                |e| (e.stall.position, e.stall.floor_level),
-                (old_position, old_floor),
-                (&player.position, new_floor),
-            );
-            (
-                left.into_iter().map(|e| e.stall.id).collect::<Vec<_>>(),
-                entered
-                    .into_iter()
-                    .map(|e| e.stall.clone())
-                    .collect::<Vec<_>>(),
-                stalls
-                    .get(player_id)
-                    .is_some_and(|e| e.stall.strayed_from(&player.position, new_floor)),
-            )
-        };
-        for stall_id in stalls_left {
-            self.send_direct_message(player_id, ServerMessage::StallRemoved { stall_id })
-                .await;
-        }
-        for mut stall in stalls_entered {
-            stall.sign = self.visible_sign(&stall, player_id).await;
-            self.send_direct_message(player_id, ServerMessage::StallAppeared { stall })
-                .await;
-        }
+        self.adopt_unattended_monsters(player_id, &entered).await;
+        let stall_strayed = self
+            .stalls
+            .read()
+            .await
+            .get(player_id)
+            .is_some_and(|entry| {
+                entry
+                    .stall
+                    .strayed_from(&player.position, player.floor_level)
+            });
         if stall_strayed {
             self.pack_up_strayed_stall(player_id).await;
         }
-
-        // The mover's own leash is read here too, off the one lock this pass
-        // already takes.
-        let (hats_left, hats_entered, strayed) = {
-            let tip_hats = self.tip_hats.read().await;
-            let (left, entered) = aoi_diff(
-                tip_hats.values(),
-                |h| (h.position, h.floor_level),
-                (old_position, old_floor),
-                (&player.position, new_floor),
-            );
-            (
-                left.into_iter().map(|h| h.id).collect::<Vec<_>>(),
-                entered.into_iter().cloned().collect::<Vec<_>>(),
-                tip_hats
-                    .get(player_id)
-                    .is_some_and(|h| h.strayed_from(&player.position, new_floor)),
-            )
-        };
-        for tip_hat_id in hats_left {
-            self.send_direct_message(player_id, ServerMessage::TipHatRemoved { tip_hat_id })
-                .await;
-        }
-        for tip_hat in hats_entered {
-            self.send_direct_message(player_id, ServerMessage::TipHatAppeared { tip_hat })
-                .await;
-        }
-        if strayed {
+        let hat_strayed = self
+            .tip_hats
+            .read()
+            .await
+            .get(player_id)
+            .is_some_and(|hat| hat.strayed_from(&player.position, player.floor_level));
+        if hat_strayed {
             self.pack_up_strayed_tip_hat(player_id).await;
         }
-
-        let (meals_left, meals_entered) = {
-            let meals = self.meals.read().await;
-            let (left, entered) = aoi_diff(
-                meals.values(),
-                |e| (e.meal.position, e.meal.floor_level),
-                (old_position, old_floor),
-                (&player.position, new_floor),
-            );
-            (
-                left.into_iter().map(|e| e.meal.id).collect::<Vec<_>>(),
-                entered
-                    .into_iter()
-                    .map(|e| e.meal.clone())
-                    .collect::<Vec<_>>(),
-            )
-        };
-        for meal_id in meals_left {
-            self.send_direct_message(player_id, ServerMessage::MealRemoved { meal_id })
-                .await;
-        }
-        for meal in meals_entered {
-            self.send_direct_message(player_id, ServerMessage::MealAppeared { meal })
-                .await;
-        }
-
-        // The mover hears its own update through the same fanout, so the
-        // message is serialized once for everyone. Entered observers hear it
-        // too — after their PlayerAppeared — so a respawn or teleport is an
-        // event to them, not just a body that showed up.
-        let mut recipients = stayed;
-        recipients.extend(entered);
-        recipients.push(*player_id);
-        self.send_direct_message_to_players(&recipients, update_msg)
-            .await;
-    }
-
-    /// Players within `radius` of `position` on any floor BUT `floor_level` —
-    /// what a cross-floor event announcement needs on top of the per-floor
-    /// AOI sets.
-    async fn player_ids_near_on_other_floors(
-        &self,
-        position: &Position,
-        floor_level: i8,
-        radius: f32,
-    ) -> Vec<PlayerId> {
-        let radius_sq = radius * radius;
-        let players = self.players.read().await;
-        let cells = self.player_spatial_cells.read().await;
-        cells
-            .keys_near(position, radius)
-            .filter(|id| {
-                players.get(id).is_some_and(|p| {
-                    p.floor_level != floor_level && position.dist_xz_sq(&p.position) <= radius_sq
-                })
-            })
-            .copied()
-            .collect()
     }
 
     pub async fn player_ids_within_position(
@@ -3106,6 +2570,7 @@ impl super::GameState {
         found.into_iter().collect()
     }
 
+    #[cfg(test)]
     pub async fn player_ids_within(&self, player_id: &PlayerId, radius: f32) -> Vec<PlayerId> {
         let (position, floor_level) = {
             let players = self.players.read().await;

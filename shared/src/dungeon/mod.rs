@@ -33,7 +33,8 @@ mod stairs;
 mod tests;
 
 pub use doors::{
-    closed_door_segs, interior_doors, locked_door_ids, InteriorDoorSpec, ENTRANCE_DOOR_ID,
+    closed_door_segs, door_position, interior_doors, locked_door_ids, InteriorDoorSpec,
+    ENTRANCE_DOOR_ID,
 };
 pub use registry::{entrance, entrance_at, entrances, footprint_contains, DungeonEntranceDef};
 pub use stairs::{

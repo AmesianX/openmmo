@@ -8,6 +8,8 @@ impl Drop for SharedState {
         if let Some(id) = self.self_player_id {
             if let Ok(mut world) = self.world_cache.write() {
                 world.remove_fence_view(id);
+                world.remove_house_view(id);
+                world.remove_dungeon_view(id);
             }
         }
     }
@@ -113,7 +115,6 @@ const TIP_RADIUS: f32 = 6.0;
 /// someone bored or malicious — can't grow the prompt without bound.
 const MAX_TIPS_PER_SONG: usize = 5;
 /// Distance threshold for "player appeared nearby" agent events (in game units).
-const NEARBY_PLAYER_RADIUS: f32 = 10.0;
 /// How many ground items the world state lists before summarising the rest.
 const MAX_LISTED_GROUND_ITEMS: usize = 10;
 /// Real-time cooldown on the wishlist prompt section after the NPC buys
@@ -137,7 +138,7 @@ use onlinerpg_shared::messages::{PARTY_INVITE_TTL, PARTY_SUMMON_TTL};
 /// NPC sight distance for deciding which nearby human and monster activity
 /// matters. Re-exported from the shared crate so the server's event-delivery
 /// radius and the agent's perception radius are guaranteed equal.
-pub(crate) use onlinerpg_shared::NPC_SIGHT_RADIUS;
+pub(crate) use onlinerpg_shared::EVENT_DELIVERY_RADIUS;
 
 /// Eight-way compass word for an offset from the player. North is -z, east
 /// is +x; the diagonal band covers ±22.5° around each diagonal.
@@ -353,7 +354,7 @@ pub struct SharedState {
     /// An invented song title already woke the driver; the next one waits for
     /// the ordinary prompt, so a model that keeps guessing cannot spin.
     bad_song_title_refused: bool,
-    /// POIs currently inside NPC_SIGHT_RADIUS (monsters, loot, dungeon
+    /// POIs currently inside EVENT_DELIVERY_RADIUS (monsters, loot, dungeon
     /// entrances), keyed by a typed id. Entry fires a [Sighted] event so the
     /// LLM reacts mid-walk instead of at the next scheduled turn.
     sighted_pois: HashSet<String>,
@@ -372,6 +373,8 @@ pub struct SharedState {
     pub splat_sampler: Arc<crate::splat::SplatSampler>,
     /// Shared world cache: passability + houses (shared across NPC connections)
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
+    pub world_view: onlinerpg_shared::interest::WorldView,
+    pub pending_terrain: Vec<(String, u64, ServerMessage)>,
     /// Current game time: is_night flag from server
     pub is_night: Option<bool>,
     pub schedule_period: Option<onlinerpg_shared::schedule::SchedulePeriod>,
@@ -397,6 +400,7 @@ pub struct SharedState {
     /// A path that produced a refused step will produce it again, so movers
     /// watch this and abandon the path instead of grinding the same wall.
     pub position_corrections: u32,
+    pub last_correction_at: Option<std::time::Instant>,
     pub mount_recovery_id: u32,
     pub mount_recovery_result: Option<bool>,
     /// Until when `self_player.position` is a promise, not a pose: a schedule
@@ -505,6 +509,8 @@ impl SharedState {
             height_sampler,
             splat_sampler,
             world_cache,
+            world_view: Default::default(),
+            pending_terrain: Vec::new(),
             is_night: None,
             schedule_period: None,
             weather: crate::weather::Weather::default(),
@@ -516,6 +522,7 @@ impl SharedState {
             game_minute: None,
             self_floor_level: 0,
             position_corrections: 0,
+            last_correction_at: None,
             mount_recovery_id: 0,
             mount_recovery_result: None,
             self_pose_settles_at: None,

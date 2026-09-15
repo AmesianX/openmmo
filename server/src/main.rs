@@ -113,8 +113,9 @@ async fn time_sync_tick(game_state: &GameState, auth_service: &Arc<AuthService>,
         game_state.tick_regeneration().await;
     }
 
-    // Count down trade-window holds; releases an NPC ~32s (4 ticks)
-    // after a customer opened its window, even if still open.
+    game_state.retry_terrain_delivery().await;
+
+    // Release NPC trade holds after ~32 seconds.
     game_state.tick_shop_holds().await;
 
     // Close player trades both sides went quiet on.

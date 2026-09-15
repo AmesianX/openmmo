@@ -18,6 +18,7 @@ pub mod fnv;
 pub mod furniture;
 pub mod housing;
 pub mod hunger;
+pub mod interest;
 pub mod inventory;
 pub mod landscaping;
 pub mod mana;
@@ -164,7 +165,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v77: Double Slash cooldown snapshots on login.
 /// v78: server-wide rain overrides in WeatherSync.
 /// v79: owner-only ManaUpdate and Guardian Ward's MP cost.
-pub const PROTOCOL_VERSION: u32 = 79;
+/// v80: revisioned world subscriptions, full terrain snapshots and resync.
+pub const PROTOCOL_VERSION: u32 = 80;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -240,8 +242,8 @@ pub use messages::{
 };
 pub use world::{
     shortest_world_delta_x, wrap_world_x, GameDateTime, NoSpawnZone, Position,
-    EVENT_DELIVERY_RADIUS, MAX_MOVE_TARGET_DISTANCE, NPC_SIGHT_RADIUS, PLAYER_MOVE_SPEED,
-    WORLD_MAX_X, WORLD_MIN_X, WORLD_WIDTH_X,
+    EVENT_DELIVERY_RADIUS, MAX_MOVE_TARGET_DISTANCE, PLAYER_MOVE_SPEED, WORLD_MAX_X, WORLD_MIN_X,
+    WORLD_WIDTH_X,
 };
 
 #[cfg(test)]

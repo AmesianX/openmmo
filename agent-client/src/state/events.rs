@@ -314,6 +314,124 @@ impl SharedState {
     }
 
     pub fn push_event(&mut self, msg: ServerMessage) -> EventUrgency {
+        if let ServerMessage::WorldUpdate {
+            world_epoch,
+            generation,
+            sequence,
+            position,
+            floor_level,
+            reset,
+            ready,
+            events,
+        } = &msg
+        {
+            if !self
+                .world_view
+                .accept(world_epoch, *generation, *sequence, *reset, events)
+            {
+                if !self.world_view.synchronized
+                    && !self
+                        .pending_commands
+                        .iter()
+                        .any(|msg| matches!(msg, ClientMessage::ResyncWorld))
+                {
+                    self.pending_commands.push(ClientMessage::ResyncWorld);
+                }
+                return EventUrgency::Noise;
+            }
+            if !self
+                .world_cache
+                .write()
+                .unwrap()
+                .ensure_world_epoch(world_epoch)
+            {
+                self.world_view.synchronized = false;
+                self.pending_commands.push(ClientMessage::ResyncWorld);
+                return EventUrgency::Noise;
+            }
+            self.world_view.synchronized = *ready;
+            self.world_view.position = Some(*position);
+            self.world_view.floor_level = *floor_level;
+            let mut urgency = EventUrgency::Noise;
+            if let Some(viewer) = self.self_player_id {
+                if *reset {
+                    let mut world = self.world_cache.write().unwrap();
+                    world.remove_house_view(viewer);
+                    world.remove_dungeon_view(viewer);
+                    world.remove_fence_view(viewer);
+                    drop(world);
+                    for id in self.nearby_monsters.keys() {
+                        self.monster_ai.remove_monster(id);
+                    }
+                    self.nearby_players.clear();
+                    self.nearby_monsters.clear();
+                    self.ground_items.clear();
+                    self.campfires.clear();
+                    self.stalls.clear();
+                    self.tip_hats.clear();
+                    self.meals.clear();
+                    self.sighted_pois.clear();
+                    self.seen_nearby_players.clear();
+                    self.pending_terrain.clear();
+                    crate::terrain_http::set_world_epoch(world_epoch);
+                }
+                for event in events {
+                    if (event.subject.starts_with("door:") || event.subject.starts_with("prop:"))
+                        && !self
+                            .world_cache
+                            .write()
+                            .unwrap()
+                            .apply_dungeon_event(viewer, event)
+                    {
+                        continue;
+                    }
+                    if event.subject.starts_with("terrain:") {
+                        for message in &event.messages {
+                            self.pending_terrain.push((
+                                world_epoch.clone(),
+                                event.revision,
+                                message.clone(),
+                            ));
+                        }
+                        continue;
+                    }
+                    if event.subject.starts_with("fence:") {
+                        self.world_cache
+                            .write()
+                            .unwrap()
+                            .apply_fence_event(viewer, event);
+                        continue;
+                    }
+                    if event.subject.starts_with("house:") {
+                        self.world_cache.write().unwrap().apply_house_event(
+                            viewer,
+                            world_epoch,
+                            event,
+                        );
+                    } else {
+                        for message in &event.messages {
+                            urgency = urgency.min(self.push_event(message.clone()));
+                        }
+                    }
+                }
+                if !self
+                    .world_cache
+                    .read()
+                    .unwrap()
+                    .view_complete(viewer, &self.world_view)
+                {
+                    self.world_view.synchronized = false;
+                    if !self
+                        .pending_commands
+                        .iter()
+                        .any(|msg| matches!(msg, ClientMessage::ResyncWorld))
+                    {
+                        self.pending_commands.push(ClientMessage::ResyncWorld);
+                    }
+                }
+            }
+            return urgency;
+        }
         // Feed the spectator panel before mutating, while names still resolve
         if let Some(watch) = self.watch.clone() {
             if let Some(kind) = crate::watch::feed_kind(&msg) {
@@ -339,7 +457,6 @@ impl SharedState {
                 // A character saved underground rejoins there (the server
                 // rehydrates it), so adopt the floor instead of assuming 0.
                 self.adopt_floor_level(player.floor_level);
-                self.request_dungeon_doors_here();
             }
             ServerMessage::MountRecovery {
                 request_id,
@@ -362,6 +479,14 @@ impl SharedState {
                 rotation,
                 floor_level,
             } => {
+                if self
+                    .last_correction_at
+                    .is_some_and(|at| at.elapsed().as_secs() < 3)
+                {
+                    self.world_view.synchronized = false;
+                    self.pending_commands.push(ClientMessage::ResyncWorld);
+                }
+                self.last_correction_at = Some(std::time::Instant::now());
                 self.relocate_self(*position, *rotation, *floor_level);
             }
             ServerMessage::PlayerTeleported {
@@ -409,6 +534,35 @@ impl SharedState {
                     .write()
                     .unwrap()
                     .set_dungeon_doors(entrance_id, doors);
+            }
+            ServerMessage::DungeonDoorState {
+                entrance_id,
+                depth,
+                door_id,
+                is_open,
+            } => {
+                self.world_cache.write().unwrap().set_dungeon_door(
+                    entrance_id,
+                    *depth,
+                    *door_id,
+                    is_open.unwrap_or(false),
+                );
+            }
+            ServerMessage::DungeonPropState {
+                entrance_id,
+                depth,
+                prop_id,
+                active,
+                broken,
+                opened,
+            } => {
+                self.world_cache.write().unwrap().set_dungeon_prop(
+                    entrance_id,
+                    *depth,
+                    *prop_id,
+                    *active && *broken,
+                    *active && *opened,
+                );
             }
             ServerMessage::DungeonDoorToggled {
                 ref entrance_id,
@@ -602,7 +756,11 @@ impl SharedState {
                 }
             }
             ServerMessage::PlayerJoined { player } | ServerMessage::PlayerAppeared { player } => {
-                self.nearby_players.insert(player.id, player.clone());
+                if self.self_player_id == Some(player.id) {
+                    self.self_player = Some(player.clone());
+                } else {
+                    self.nearby_players.insert(player.id, player.clone());
+                }
             }
             ServerMessage::PlayerMountChanged { player_id, mounted } => {
                 if let Some(p) = self.nearby_players.get_mut(player_id) {
@@ -682,14 +840,27 @@ impl SharedState {
             ServerMessage::MonsterSpawned { monster } => {
                 self.nearby_monsters
                     .insert(monster.id.clone(), monster.clone());
+                if monster.owner_id == self.self_player_id && self.self_player_id.is_some() {
+                    self.monster_ai.add_monster(monster);
+                }
+            }
+            ServerMessage::MonsterControlReleased { monster_id } => {
+                self.monster_ai.remove_monster(monster_id);
+                if let Some(monster) = self.nearby_monsters.get_mut(monster_id) {
+                    monster.owner_id = None;
+                }
             }
             ServerMessage::MonsterAssigned { monster } => {
-                self.nearby_monsters
-                    .insert(monster.id.clone(), monster.clone());
-                self.monster_ai.add_monster(monster);
+                if let Some(active) = self.nearby_monsters.get_mut(&monster.id) {
+                    *active = monster.clone();
+                    self.monster_ai.add_monster(monster);
+                }
             }
             ServerMessage::MonsterDead { monster_id, .. } => {
-                self.nearby_monsters.remove(monster_id);
+                if let Some(monster) = self.nearby_monsters.get_mut(monster_id) {
+                    monster.health = 0;
+                    monster.state = MonsterState::Dead;
+                }
                 self.monster_ai.handle_monster_dead(monster_id);
             }
             ServerMessage::MonsterRemoved { monster_id } => {
@@ -1080,18 +1251,8 @@ impl SharedState {
 
         // Deduplicate high-frequency movement events: keep only latest per entity
         match &msg {
-            ServerMessage::MonsterMoved {
-                monster_id,
-                position,
-                ..
-            } => {
-                // Only forward to LLM if monster is within sight radius
-                let dominated_by_distance = self.self_player.as_ref().is_some_and(|sp| {
-                    position.dist_xz_sq(&sp.position) > NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS
-                });
-                if !dominated_by_distance {
-                    self.latest_monster_moves.insert(monster_id.clone(), msg);
-                }
+            ServerMessage::MonsterMoved { monster_id, .. } => {
+                self.latest_monster_moves.insert(monster_id.clone(), msg);
                 return urgency;
             }
             ServerMessage::PlayerMoved { player_id, .. } => {

@@ -81,7 +81,8 @@ async fn floor_monster_ids(game_state: &GameState, entrance: &DungeonEntranceDef
 fn removed_ids(msgs: &[ServerMessage]) -> Vec<String> {
     msgs.iter()
         .filter_map(|m| match m {
-            ServerMessage::MonsterRemoved { monster_id } => Some(monster_id.clone()),
+            ServerMessage::MonsterRemoved { monster_id }
+            | ServerMessage::MonsterControlReleased { monster_id } => Some(monster_id.clone()),
             _ => None,
         })
         .collect()
@@ -91,6 +92,7 @@ fn removed_ids(msgs: &[ServerMessage]) -> Vec<String> {
 fn assert_removed_exactly(msgs: &[ServerMessage], ids: &[String], context: &str) {
     let mut removed = removed_ids(msgs);
     removed.sort();
+    removed.dedup();
     let mut expected = ids.to_vec();
     expected.sort();
     assert_eq!(removed, expected, "{context}");

@@ -58,10 +58,9 @@ impl GameState {
             .write()
             .await
             .insert(*player_id, tip_hat.clone());
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &placement,
             floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::TipHatPlaced { tip_hat },
             None,
         )
@@ -76,10 +75,9 @@ impl GameState {
         let Some(tip_hat) = self.tip_hats.write().await.remove(player_id) else {
             return false;
         };
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &tip_hat.position,
             tip_hat.floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::TipHatRemoved {
                 tip_hat_id: tip_hat.id,
             },

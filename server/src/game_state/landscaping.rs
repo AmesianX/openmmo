@@ -380,42 +380,15 @@ impl GameState {
                 .await;
             saved.push(tile);
         }
-        let messages: Vec<_> = players
-            .values()
-            .map(|recipient| {
-                let mut nearby = Vec::new();
-                let mut distant = Vec::new();
-                for tile in &saved {
-                    if recipient.id == *player_id
-                        || recipient.position.dist_xz_sq(&crate::types::Position {
-                            x: (tile.tile_x * 64) as f32,
-                            y: 0.0,
-                            z: (tile.tile_z * 64) as f32,
-                        }) <= (super::EVENT_DELIVERY_RADIUS + 64.0).powi(2)
-                    {
-                        nearby.push(tile.clone());
-                    } else {
-                        distant.push((tile.tile_x, tile.tile_z));
-                    }
-                }
-                (recipient.id, nearby, distant)
-            })
-            .collect();
         drop(players);
         drop(inventories);
-        for (id, tiles, distant) in messages {
-            if !tiles.is_empty() {
-                self.send_direct_message(&id, ServerMessage::LandscapeChanged { tiles })
-                    .await;
-            }
-            if !distant.is_empty() {
-                self.send_direct_message(
-                    &id,
-                    ServerMessage::LandscapeInvalidated { tiles: distant },
-                )
-                .await;
-            }
-        }
+        let tiles: Vec<_> = saved
+            .iter()
+            .map(|tile| (tile.tile_x, tile.tile_z))
+            .collect();
+        self.publish_terrain_tiles(&tiles)
+            .await
+            .map_err(terrain_error)?;
         match error {
             Some(error) => Err(error),
             None => Ok(()),

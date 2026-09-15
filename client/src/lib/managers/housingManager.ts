@@ -1,11 +1,6 @@
 import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
-import {
-  TERRAIN_TILE_SIZE,
-  getTerrainChunkFromPosition,
-} from '../components/game-scene/terrain-utils'
 import type { HouseData } from '../types/housing'
 import type { WallDirection } from '../utils/house-geometry'
-import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import { setHouseMapFootprints } from '../stores/housingMapStore'
 import {
   ALL_WALL_DIRS,
@@ -50,23 +45,11 @@ import {
 // Re-export for external consumers
 export { getWallByDir } from './housing-passability'
 
-function chunkKey(cx: number, cz: number): string {
-  return `${cx},${cz}`
-}
-
-/** Chunks loaded around the player, as a Chebyshev radius (so 1 = a 3x3 block). */
-const LOAD_RADIUS = 1
-/** Wider than `LOAD_RADIUS` so loitering on a chunk boundary can't thrash a
- *  chunk in and out. Also keeps the house a player stands in safe without a
- *  special case: houses reach ~14 m from their origin against a 64 m chunk, so
- *  the one you are inside is always within a chunk of you. */
-const EVICT_RADIUS = 2
-
 export class HousingManager {
   private apiUrl: string
-  private chunkCache = new Map<string, HouseData[]>()
   private housesById = new Map<string, HouseData>()
-  private inflight = new Map<string, Promise<void>>()
+  private synchronized = false
+  private pending: (() => void)[] = []
 
   private housesChangedListeners: ((houses: HouseData[]) => void)[] = []
 
@@ -84,40 +67,27 @@ export class HousingManager {
     this.apiUrl = getTerrainApiUrl()
   }
 
-  /** Bring the streamed set in line with the player's position. Owns the
-   *  load-then-evict ordering so collision is never momentarily absent. */
-  updateStreaming(wx: number, wz: number) {
-    this.loadChunksAround(wx, wz)
-    this.evictDistantChunks(wx, wz)
+  isSynchronized() {
+    return this.synchronized
   }
 
-  /** Chunks in the `LOAD_RADIUS` block around a world position. */
-  private chunksAround(wx: number, wz: number): [number, number][] {
-    const { x: ccx, z: ccz } = getTerrainChunkFromPosition(
-      { x: wx, y: 0, z: wz },
-      TERRAIN_TILE_SIZE
-    )
-    const chunks: [number, number][] = []
-    for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx++) {
-      for (let dz = -LOAD_RADIUS; dz <= LOAD_RADIUS; dz++) {
-        chunks.push([ccx + dx, ccz + dz])
-      }
-    }
-    return chunks
+  resetView() {
+    for (const id of this.housesById.keys()) passability_remove_house(id)
+    this.housesById.clear()
+    this.synchronized = false
+    this.notifyChanged()
   }
 
-  /** Load houses for chunks around a world position. */
-  loadChunksAround(wx: number, wz: number) {
-    for (const [cx, cz] of this.chunksAround(wx, wz)) {
-      this.ensureChunkLoaded(cx, cz)
-    }
+  completeSnapshot() {
+    this.synchronized = true
+    for (const resolve of this.pending.splice(0)) resolve()
+    this.notifyChanged()
   }
 
-  /** Whether every chunk `loadChunksAround` wants at (wx, wz) has arrived. */
-  isLoadedAround(wx: number, wz: number) {
-    return this.chunksAround(wx, wz).every(([cx, cz]) =>
-      this.chunkCache.has(chunkKey(cx, cz))
-    )
+  waitForSnapshot(): Promise<void> {
+    return this.synchronized
+      ? Promise.resolve()
+      : new Promise((resolve) => this.pending.push(resolve))
   }
 
   stopPathAtHouseEntrance(
@@ -134,80 +104,7 @@ export class HousingManager {
       waypoints
     )
   }
-  /**
-   * Drop chunks beyond `EVICT_RADIUS` of (wx, wz), undoing `loadChunksAround`.
-   * Without this the cache grows by one chunk per chunk walked and never
-   * shrinks. See `doc/RUNTIME_PERFORMANCE.md` for why the radius is what it is.
-   */
-  evictDistantChunks(wx: number, wz: number) {
-    const { x: ccx, z: ccz } = getTerrainChunkFromPosition(
-      { x: wx, y: 0, z: wz },
-      TERRAIN_TILE_SIZE
-    )
-    const centreX = ccx * TERRAIN_TILE_SIZE
-    const reach = EVICT_RADIUS * TERRAIN_TILE_SIZE
-
-    let removed = false
-    for (const [key, houses] of this.chunkCache) {
-      const [cx, cz] = key.split(',').map(Number)
-      // X wraps: the world is a cylinder, so a chunk can be adjacent across
-      // the seam despite a large index difference.
-      const dx = shortestWrappedDeltaX(cx * TERRAIN_TILE_SIZE, centreX)
-      if (Math.abs(dx) <= reach && Math.abs(cz - ccz) <= EVICT_RADIUS) continue
-
-      for (const house of houses) {
-        this.housesById.delete(house.id)
-        passability_remove_house(house.id)
-      }
-      // Drop the key itself, not just its houses: `ensureChunkLoaded` treats a
-      // present key as "already loaded" and would never refetch the chunk.
-      this.chunkCache.delete(key)
-      removed = true
-    }
-    if (removed) this.notifyChanged()
-  }
-
-  private chunkOf(house: HouseData): string {
-    const { x, z } = getTerrainChunkFromPosition(
-      house.origin,
-      TERRAIN_TILE_SIZE
-    )
-    return chunkKey(x, z)
-  }
-
-  private ensureChunkLoaded(cx: number, cz: number) {
-    const key = chunkKey(cx, cz)
-    if (this.chunkCache.has(key) || this.inflight.has(key)) return
-
-    this.inflight.set(key, this.fetchChunk(cx, cz, key))
-  }
-
-  /** Wait for all currently in-flight chunk fetches to complete. */
-  async waitForPending(): Promise<void> {
-    if (this.inflight.size === 0) return
-    await Promise.all(this.inflight.values())
-  }
-
-  private async fetchChunk(cx: number, cz: number, key: string) {
-    try {
-      const resp = await fetch(`${this.apiUrl}/api/housing/area/${cx}/${cz}`)
-      if (!resp.ok) {
-        this.chunkCache.set(key, []) // Cache as empty to prevent retry storm
-        return
-      }
-      const houses: HouseData[] = await resp.json()
-      // Record the chunk even when empty, so `isLoadedAround` can see it.
-      if (!this.chunkCache.has(key)) this.chunkCache.set(key, [])
-      for (const h of houses) this.addToCache(h)
-      this.notifyChanged()
-    } catch {
-      this.chunkCache.set(key, []) // Cache as empty to prevent retry storm
-    } finally {
-      this.inflight.delete(key)
-    }
-  }
-
-  /** Create a house on the server (ID assigned by server) and add to local cache. */
+  /** Create a house; its active state arrives through the world stream. */
   async saveHouse(house: HouseData): Promise<HouseData | null> {
     return this.sendHouse('POST', `${this.apiUrl}/api/housing`, house)
   }
@@ -236,8 +133,6 @@ export class HousingManager {
       if (!resp.ok) return null
 
       const saved: HouseData = await resp.json()
-      this.addToCache(saved)
-      this.notifyChanged()
       return saved
     } catch {
       return null
@@ -252,8 +147,6 @@ export class HousingManager {
       })
       if (!resp.ok) return false
 
-      this.removeFromCache(houseId)
-      this.notifyChanged()
       return true
     } catch {
       return false
@@ -645,30 +538,7 @@ export class HousingManager {
   }
 
   private addToCache(house: HouseData) {
-    const previous = this.housesById.get(house.id)
-    const key = this.chunkOf(house)
-    if (previous) {
-      const previousKey = this.chunkOf(previous)
-      if (previousKey !== key) {
-        const previousChunk = this.chunkCache.get(previousKey)
-        const previousIdx = previousChunk?.findIndex((h) => h.id === house.id)
-        if (previousChunk && previousIdx != null && previousIdx >= 0) {
-          previousChunk.splice(previousIdx, 1)
-        }
-      }
-    }
     this.housesById.set(house.id, house)
-    const chunk = this.chunkCache.get(key)
-    if (chunk) {
-      const idx = chunk.findIndex((h) => h.id === house.id)
-      if (idx >= 0) {
-        chunk[idx] = house
-      } else {
-        chunk.push(house)
-      }
-    } else {
-      this.chunkCache.set(key, [house])
-    }
 
     // Ensure passability grids exist (compute from room data if missing)
     if (!house.passability?.length) {
@@ -682,11 +552,6 @@ export class HousingManager {
     if (!house) return
     this.housesById.delete(houseId)
     passability_remove_house(houseId)
-    const chunk = this.chunkCache.get(this.chunkOf(house))
-    if (chunk) {
-      const idx = chunk.findIndex((h) => h.id === houseId)
-      if (idx >= 0) chunk.splice(idx, 1)
-    }
   }
 
   private notifyChanged(updateMap = true) {

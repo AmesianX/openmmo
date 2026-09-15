@@ -1,7 +1,4 @@
-use crate::{
-    game_state::{GameState, EVENT_DELIVERY_RADIUS},
-    types::ServerMessage,
-};
+use crate::{game_state::GameState, types::ServerMessage};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -108,6 +105,7 @@ async fn create_house(
     State(state): State<HousingRouteState>,
     Json(mut house): Json<HouseData>,
 ) -> Result<(StatusCode, Json<HouseData>), (StatusCode, String)> {
+    let _edit = state.game_state.world_edit_guard().await;
     validate_house(&house).map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
 
     let (cx, cz) = world_to_chunk(house.origin.x, house.origin.z);
@@ -153,6 +151,7 @@ async fn update_house(
     State(state): State<HousingRouteState>,
     Json(mut house): Json<HouseData>,
 ) -> Result<Json<HouseData>, (StatusCode, String)> {
+    let _edit = state.game_state.world_edit_guard().await;
     if !is_valid_house_id(&house_id) {
         return Err((StatusCode::BAD_REQUEST, "invalid house id".to_string()));
     }
@@ -257,6 +256,7 @@ async fn delete_house(
     Path(house_id): Path<String>,
     State(state): State<HousingRouteState>,
 ) -> Result<StatusCode, StatusCode> {
+    let _edit = state.game_state.world_edit_guard().await;
     if !is_valid_house_id(&house_id) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -278,18 +278,6 @@ async fn delete_house(
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             state.game_state.passability_remove_house(&house_id).await;
-            state
-                .game_state
-                .send_direct_message_to_players_within_position(
-                    &h.origin,
-                    // Houses are surface structures: only floor-0 players see
-                    // house changes (dungeon players never should).
-                    0,
-                    EVENT_DELIVERY_RADIUS,
-                    ServerMessage::HouseRemoved { house_id },
-                    None,
-                )
-                .await;
             Ok(StatusCode::NO_CONTENT)
         }
         None => Err(StatusCode::NOT_FOUND),
@@ -348,44 +336,21 @@ pub(crate) async fn remove_house_grass(
 
 pub(crate) async fn broadcast_house_change(
     game_state: &GameState,
-    house: &HouseData,
+    _house: &HouseData,
     house_msg: ServerMessage,
     changed_height_tiles: &[(i32, i32)],
     changed_tree_tiles: &[(i32, i32)],
     changed_grass_tiles: &[(i32, i32)],
 ) {
-    game_state
-        .send_direct_message_to_players_within_position(
-            &house.origin,
-            // Houses live on the surface (floor 0); dungeon players are never
-            // recipients of house or terrain changes.
-            0,
-            EVENT_DELIVERY_RADIUS,
-            house_msg,
-            None,
-        )
-        .await;
+    let _ = house_msg;
 
-    let invalidations = [
-        (!changed_height_tiles.is_empty()).then(|| ServerMessage::HeightTilesInvalidated {
-            tiles: changed_height_tiles.to_vec(),
-        }),
-        (!changed_tree_tiles.is_empty()).then(|| ServerMessage::TreeTilesInvalidated {
-            tiles: changed_tree_tiles.to_vec(),
-        }),
-        (!changed_grass_tiles.is_empty()).then(|| ServerMessage::GrassTilesInvalidated {
-            tiles: changed_grass_tiles.to_vec(),
-        }),
-    ];
-    for message in invalidations.into_iter().flatten() {
-        game_state
-            .send_direct_message_to_players_within_position(
-                &house.origin,
-                0,
-                EVENT_DELIVERY_RADIUS,
-                message,
-                None,
-            )
-            .await;
+    let tiles: Vec<_> = changed_height_tiles
+        .iter()
+        .chain(changed_tree_tiles)
+        .chain(changed_grass_tiles)
+        .copied()
+        .collect();
+    if let Err(error) = game_state.publish_terrain_tiles(&tiles).await {
+        tracing::error!(%error, "Failed to publish changed terrain");
     }
 }

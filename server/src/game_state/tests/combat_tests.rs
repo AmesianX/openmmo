@@ -34,9 +34,10 @@ async fn monster_events_do_not_cross_floors() {
 
     // A surface guard and a dungeon delver share the exact XZ footprint: the
     // guard stands directly above the dungeon floor the delver is on.
-    let mut guard = make_player("guard", 0.0, 0.0);
+    let entrance = game_state.dungeon_defs.all().next().unwrap().position();
+    let mut guard = make_player("guard", entrance.x, entrance.z);
     guard.floor_level = 0;
-    let mut delver = make_player("delver", 0.0, 0.0);
+    let mut delver = make_player("delver", entrance.x, entrance.z);
     delver.floor_level = -1;
     game_state.add_player(guard).await;
     game_state.add_player(delver).await;
@@ -46,9 +47,8 @@ async fn monster_events_do_not_cross_floors() {
     let mut delver_rx = game_state.register_direct_channel(&pid("delver")).await;
 
     let monster_pos = Position {
-        x: 0.0,
-        y: -40.0,
-        z: 0.0,
+        y: entrance.y - 4.0,
+        ..entrance
     };
     {
         let mut monsters = game_state.monsters.write().await;
@@ -57,6 +57,9 @@ async fn monster_events_do_not_cross_floors() {
         monsters.insert("dungeon_monster".to_string(), monster);
     }
 
+    seed_subjects(&game_state).await;
+    drain(&mut guard_rx);
+    drain(&mut delver_rx);
     game_state
         .update_monster_position(
             &pid("keeper"),
@@ -106,6 +109,8 @@ async fn monster_move_requires_ownership() {
         monsters.insert("victim_monster".to_string(), monster);
     }
 
+    seed_subjects(&game_state).await;
+    drain(&mut hijacker_rx);
     game_state
         .update_monster_position(
             &hijacker_id,
@@ -127,17 +132,12 @@ async fn monster_move_requires_ownership() {
     // The non-owner is told to drop its brain and, still being in sight,
     // gets the monster back as a bystander view.
     match hijacker_rx.try_recv() {
-        Ok(ServerMessage::MonsterRemoved { monster_id }) => {
+        Ok(ServerMessage::MonsterControlReleased { monster_id }) => {
             assert_eq!(monster_id, "victim_monster")
         }
         other => panic!("a non-owner move must be answered by a release, got {other:?}"),
     }
-    match hijacker_rx.try_recv() {
-        Ok(ServerMessage::MonsterSpawned { monster }) => {
-            assert_eq!(monster.owner_id, Some(owner_id))
-        }
-        other => panic!("Expected a bystander respawn for the watcher, got {other:?}"),
-    }
+    assert!(hijacker_rx.try_recv().is_err());
 
     game_state
         .update_monster_position(
@@ -280,6 +280,9 @@ async fn monster_move_cannot_report_dead_state() {
         monsters.insert(monster.id.clone(), monster);
     }
 
+    seed_subjects(&game_state).await;
+    drain(&mut owner_rx);
+    drain(&mut observer_rx);
     game_state
         .update_monster_position(
             &owner_id,
@@ -385,6 +388,8 @@ async fn client_monster_move_stores_canonical_world_x() {
     }
 
     let wrapped = pos(1.5 + onlinerpg_shared::WORLD_WIDTH_X * 2.0);
+    seed_subjects(&game_state).await;
+    drain(&mut observer_rx);
     game_state
         .update_monster_position(
             &owner_id,
@@ -451,6 +456,9 @@ async fn client_monster_move_charges_vertical_displacement() {
     }
 
     let forged = Position { y: -40.0, ..start };
+    seed_subjects(&game_state).await;
+    drain(&mut owner_rx);
+    drain(&mut observer_rx);
     game_state
         .update_monster_position(
             &owner_id,
@@ -549,6 +557,9 @@ async fn client_owned_monster_cannot_cross_solid_furniture() {
         monsters.insert(monster.id.clone(), monster);
     }
 
+    seed_subjects(&game_state).await;
+    drain(&mut owner_rx);
+    drain(&mut observer_rx);
     game_state
         .update_monster_position(
             &owner_id,
@@ -669,6 +680,9 @@ async fn monster_move_is_speed_capped() {
     }
 
     // A 50m jump exceeds the absolute step cap and is refused outright.
+    seed_subjects(&game_state).await;
+    drain(&mut observer_rx);
+    drain(&mut owner_rx);
     game_state
         .update_monster_position(
             &owner_id,
@@ -1552,6 +1566,8 @@ async fn dagger_skill_first_hit_kill_reports_skipped_second_strike_without_dupli
         .get_mut("skill_target")
         .unwrap()
         .health = 1;
+    seed_subjects(&game).await;
+    drain(&mut rx);
     game.dagger_double_slash(&pid("archer"), "skill_target".into(), None)
         .await;
     let messages = drain(&mut rx);

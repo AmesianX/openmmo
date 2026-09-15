@@ -206,13 +206,27 @@ async fn player_xz(game_state: &GameState, player_id: &PlayerId) -> (f32, f32) {
 
 /// Decodes direct payloads back into `ServerMessage`, mirroring the
 /// receiver API so tests assert on exactly what a client would decode.
-struct DirectRx(tokio::sync::mpsc::UnboundedReceiver<Bytes>);
+struct DirectRx(
+    tokio::sync::mpsc::UnboundedReceiver<Bytes>,
+    std::collections::VecDeque<ServerMessage>,
+);
 
 impl DirectRx {
     fn try_recv(&mut self) -> Result<ServerMessage, MpscTryRecvError> {
-        self.0.try_recv().map(|bytes| {
-            onlinerpg_shared::deserialize_server_msg(&bytes).expect("direct payload decodes")
-        })
+        loop {
+            if let Some(message) = self.1.pop_front() {
+                return Ok(message);
+            }
+            let bytes = self.0.try_recv()?;
+            let message =
+                onlinerpg_shared::deserialize_server_msg(&bytes).expect("direct payload decodes");
+            if let ServerMessage::WorldUpdate { events, .. } = message {
+                self.1
+                    .extend(events.into_iter().flat_map(|event| event.messages));
+            } else {
+                return Ok(message);
+            }
+        }
     }
 }
 
@@ -223,8 +237,45 @@ trait RegisterDirectChannel {
 
 impl RegisterDirectChannel for GameState {
     async fn register_direct_channel(&self, player_id: &PlayerId) -> DirectRx {
-        DirectRx(self.register_connection_channel(player_id).await)
+        seed_subjects(self).await;
+        let mut rx = DirectRx(
+            self.register_connection_channel(player_id).await,
+            Default::default(),
+        );
+        drain(&mut rx);
+        rx
     }
+}
+
+async fn seed_subjects(game: &GameState) {
+    {
+        let monsters = game.monsters.read().await;
+        let items = game.ground_items.read().await;
+        let mut interest = game.interest.lock().unwrap();
+        for monster in monsters.values() {
+            if !interest.has_subject(&format!("monster:{}", monster.id)) {
+                interest.publish_state(&ServerMessage::MonsterSpawned {
+                    monster: game.wire_monster(monster),
+                });
+            }
+        }
+        for item in items.values() {
+            if !interest.has_subject(&format!("item:{}", item.item.instance_id)) {
+                interest.publish_state(&ServerMessage::GroundItemSpawned {
+                    item: item.item.clone(),
+                });
+            }
+        }
+    }
+}
+
+async fn join_snapshot(game: &GameState, player: Player) -> Vec<ServerMessage> {
+    let mut rx = DirectRx(
+        game.register_connection_channel(&player.id).await,
+        Default::default(),
+    );
+    game.add_player(player).await;
+    drain(&mut rx)
 }
 
 fn drain(rx: &mut DirectRx) -> Vec<ServerMessage> {

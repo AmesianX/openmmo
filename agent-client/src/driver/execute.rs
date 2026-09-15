@@ -1881,7 +1881,7 @@ fn resolve_ground_item(s: &SharedState, r: &PickupRef) -> Option<(u64, String)> 
 mod tests {
     use super::*;
     use crate::state::tests::{ground_item, test_player, test_state};
-    use crate::state::NPC_SIGHT_RADIUS;
+    use crate::state::EVENT_DELIVERY_RADIUS;
     use onlinerpg_shared::inventory::GroundItem;
 
     #[tokio::test]
@@ -2108,17 +2108,17 @@ mod tests {
     /// so a stale id the agent read turns ago is refused instead of walked
     /// at — and refused the same way a nonexistent one is.
     #[test]
-    fn refuses_items_outside_perception() {
+    fn resolves_active_items_and_refuses_missing_or_other_floor_items() {
         let s = state_with(vec![
-            ground_item(1, "iron_sword", NPC_SIGHT_RADIUS + 5.0, 0.0, 0),
+            ground_item(1, "iron_sword", EVENT_DELIVERY_RADIUS + 5.0, 0.0, 0),
             ground_item(2, "healing_potion", 3.0, 0.0, -1),
         ]);
 
+        assert!(resolve_ground_item(&s, &PickupRef::Id(1)).is_some());
+        assert!(resolve_ground_item(&s, &PickupRef::Name("sword".into())).is_some());
         for r in [
-            PickupRef::Id(1),
             PickupRef::Id(2),
             PickupRef::Id(42),
-            PickupRef::Name("sword".to_string()),
             PickupRef::Name("potion".to_string()),
         ] {
             assert!(resolve_ground_item(&s, &r).is_none(), "for {r}");

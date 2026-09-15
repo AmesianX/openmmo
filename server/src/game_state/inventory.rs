@@ -1373,10 +1373,9 @@ impl super::GameState {
         };
         if let Some((health, max_health, position, floor_level)) = healed {
             self.mark_party_vitals_dirty(player_id).await;
-            self.send_direct_message_to_players_within_position(
+            self.publish_nearby(
                 &position,
                 floor_level,
-                super::EVENT_DELIVERY_RADIUS,
                 ServerMessage::PlayerHealthUpdate {
                     player_id: *player_id,
                     health,
@@ -1637,10 +1636,9 @@ impl super::GameState {
         self.send_system_message(player_id, message).await;
         if let Some(weapon) = success {
             if let Some((position, _, floor_level, _)) = self.player_pose(player_id).await {
-                self.send_direct_message_to_players_within_position(
+                self.publish_nearby(
                     &position,
                     floor_level,
-                    super::EVENT_DELIVERY_RADIUS,
                     ServerMessage::EquipmentEnchantSucceeded {
                         player_id: *player_id,
                         weapon,
@@ -1711,10 +1709,9 @@ impl super::GameState {
                 },
             );
         }
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &position,
             floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::GroundItemSpawned { item: ground_item },
             None,
         )
@@ -2239,14 +2236,8 @@ impl super::GameState {
                 picked_up_by: Some(*player_id),
             }
         };
-        self.send_direct_message_to_players_within_position(
-            &item_position,
-            player_floor,
-            super::EVENT_DELIVERY_RADIUS,
-            update,
-            None,
-        )
-        .await;
+        self.publish_nearby(&item_position, player_floor, update, None)
+            .await;
         if remaining > 0 {
             self.send_system_message(
                 player_id,
@@ -2273,10 +2264,9 @@ impl super::GameState {
                 None => return,
             }
         };
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &position,
             floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerInteractionChanged {
                 player_id: *player_id,
                 object_type: Some("pickup".to_string()),
@@ -2352,10 +2342,9 @@ impl super::GameState {
             copper
         );
 
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &ground_item.position,
             player_floor,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::GroundItemRemoved {
                 instance_id,
                 picked_up_by: Some(*player_id),
@@ -2396,10 +2385,9 @@ impl super::GameState {
 
         info!("Despawned {} ground item(s)", removed_items.len());
         for (id, position, floor_level) in removed_items {
-            self.send_direct_message_to_players_within_position(
+            self.publish_nearby(
                 &position,
                 floor_level,
-                super::EVENT_DELIVERY_RADIUS,
                 ServerMessage::GroundItemRemoved {
                     instance_id: id,
                     picked_up_by: None,

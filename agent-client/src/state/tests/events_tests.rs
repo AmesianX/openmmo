@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn control_assignment_does_not_create_a_visible_monster() {
+    let (mut state, _rx) = test_state();
+    let assigned = monster("controlled");
+    state.push_event(ServerMessage::MonsterAssigned {
+        monster: assigned.clone(),
+    });
+    assert!(!state.nearby_monsters.contains_key(&assigned.id));
+    state.push_event(ServerMessage::MonsterSpawned {
+        monster: assigned.clone(),
+    });
+    state.push_event(ServerMessage::MonsterAssigned {
+        monster: assigned.clone(),
+    });
+    state.push_event(ServerMessage::MonsterControlReleased {
+        monster_id: assigned.id.clone(),
+    });
+    assert!(state.nearby_monsters.contains_key(&assigned.id));
+}
+
+#[test]
 fn mana_updates_are_tracked_at_zero_and_cleared_on_character_change() {
     let (mut state, _rx) = test_state();
     state.push_event(ServerMessage::ManaUpdate {
@@ -504,15 +524,16 @@ fn addressed_chat_wakes_with_english_or_korean_names() {
 }
 
 #[test]
-fn distant_or_self_chat_does_not_wake_the_npc() {
+fn active_distant_chat_wakes_the_npc_but_self_chat_does_not() {
     let mut s = chat_state();
     s.nearby_players
         .get_mut(&PlayerId::from(2))
         .unwrap()
         .position
-        .x = NPC_SIGHT_RADIUS + 1.0;
-    assert_eq!(s.push_event(chat("Miriel!")), EventUrgency::Noise);
-    assert!(s.pending_chat().is_empty());
+        .x = EVENT_DELIVERY_RADIUS + 1.0;
+    assert_eq!(s.push_event(chat("Miriel!")), EventUrgency::Urgent);
+    assert!(!s.pending_chat().is_empty());
+    s.drain_events();
     assert_eq!(
         s.push_event(ServerMessage::ChatMessage {
             player_id: s.self_player_id.unwrap(),

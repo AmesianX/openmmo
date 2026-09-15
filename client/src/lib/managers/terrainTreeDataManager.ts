@@ -139,6 +139,33 @@ export class TerrainTreeDataManager {
     }
   }
 
+  applySnapshot(tileX: number, tileZ: number, bytes: number[] | null): void {
+    const heightmap = this.heightManager.getHeightmap(tileX, tileZ)
+    if (!heightmap) throw new Error('Terrain height must arrive before trees')
+    const keys = new Set([tileKey(tileX, tileZ)])
+    for (const key of [...this.cache.keys(), ...this.inflight.keys()]) {
+      const [x, z] = key.split(',').map(Number)
+      if (wrapTileX(x) === wrapTileX(tileX) && z === tileZ) keys.add(key)
+    }
+    for (const key of keys) {
+      const [x, z] = key.split(',').map(Number)
+      this.inflight.delete(key)
+      this.cache.delete(key)
+      this.missingTiles.delete(key)
+      if (bytes === null) this.missingTiles.add(key)
+      else
+        this.cache.set(
+          key,
+          this.filterLandscaping(
+            x,
+            z,
+            decodeTreeData(new Uint8Array(bytes).buffer, x, z, heightmap)
+          )
+        )
+      for (const cb of this.tileUpdateListeners) cb(x, z)
+    }
+  }
+
   invalidate(tileX: number, tileZ: number): void {
     const key = tileKey(tileX, tileZ)
     this.cache.delete(key)

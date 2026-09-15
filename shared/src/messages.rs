@@ -320,6 +320,7 @@ pub fn resolve_title<'a>(
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
+    ResyncWorld,
     /// Mandatory first message: protocol check plus who is connecting. The
     /// server refuses anything else until it arrives, and refuses the
     /// connection outright when `protocol_version` differs from its own.
@@ -850,6 +851,42 @@ impl ClientMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerMessage {
+    MonsterControlReleased {
+        monster_id: String,
+    },
+    DungeonDoorState {
+        entrance_id: String,
+        depth: u8,
+        door_id: u32,
+        is_open: Option<bool>,
+    },
+    DungeonPropState {
+        entrance_id: String,
+        depth: u8,
+        prop_id: u32,
+        active: bool,
+        broken: bool,
+        opened: bool,
+    },
+    TerrainTileSnapshot {
+        tile_x: i32,
+        tile_z: i32,
+        height: Vec<u8>,
+        splat: Vec<u8>,
+        trees: Option<Vec<u8>>,
+        grass: Option<Vec<u8>>,
+        landscape: Option<crate::landscaping::LandscapingTile>,
+    },
+    WorldUpdate {
+        world_epoch: String,
+        generation: u64,
+        sequence: u64,
+        position: Position,
+        floor_level: i8,
+        reset: bool,
+        ready: bool,
+        events: Vec<crate::interest::WorldEvent>,
+    },
     AuthSuccess {
         account_name: String,
         characters: Vec<Character>,
@@ -1813,4 +1850,184 @@ pub fn deserialize_server_msg(bytes: &[u8]) -> Result<ServerMessage, rmp_serde::
 
 fn default_price_index_percent() -> u32 {
     100
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryClass {
+    NearbyState,
+    NearbyEffect,
+    Terrain,
+    Participants,
+    Global,
+    Control,
+}
+
+impl ServerMessage {
+    pub fn delivery_class(&self) -> DeliveryClass {
+        match self {
+            Self::DungeonDoorState { .. }
+            | Self::DungeonPropState { .. }
+            | Self::PlayerJoined { .. }
+            | Self::PlayerLeft { .. }
+            | Self::PlayerAppeared { .. }
+            | Self::PlayerDisappeared { .. }
+            | Self::PlayerMoved { .. }
+            | Self::PlayerTeleported { .. }
+            | Self::DungeonPropBroken { .. }
+            | Self::DungeonPropOpened { .. }
+            | Self::DungeonPropsState { .. }
+            | Self::DungeonDoorToggled { .. }
+            | Self::DungeonDoorsState { .. }
+            | Self::GameState { .. }
+            | Self::MonsterSpawned { .. }
+            | Self::MonsterMoved { .. }
+            | Self::MonsterRemoved { .. }
+            | Self::MonsterDead { .. }
+            | Self::PlayerDead { .. }
+            | Self::PlayerRespawned { .. }
+            | Self::PlayerHealthUpdate { .. }
+            | Self::FishingCasted { .. }
+            | Self::FishingBite { .. }
+            | Self::FishingFight { .. }
+            | Self::FishingEnded { .. }
+            | Self::PlayerTorchToggled { .. }
+            | Self::PlayerMountChanged { .. }
+            | Self::PlayerWetToggled { .. }
+            | Self::PlayerTitleChanged { .. }
+            | Self::FenceVisibility { .. }
+            | Self::EstateChestVisibility { .. }
+            | Self::PlayerMainHandChanged { .. }
+            | Self::PlayerBackChanged { .. }
+            | Self::PlayerInteractionChanged { .. }
+            | Self::PlayerMusicStarted { .. }
+            | Self::PlayerInstrumentStarted { .. }
+            | Self::HouseSpawned { .. }
+            | Self::HouseUpdated { .. }
+            | Self::HouseRemoved { .. }
+            | Self::HousesInArea { .. }
+            | Self::DoorToggled { .. }
+            | Self::GroundItemSpawned { .. }
+            | Self::GroundItemAppeared { .. }
+            | Self::GroundItemRemoved { .. }
+            | Self::GroundItemQuantityChanged { .. }
+            | Self::CampfireSpawned { .. }
+            | Self::CampfireAppeared { .. }
+            | Self::CampfireRemoved { .. }
+            | Self::StallPlaced { .. }
+            | Self::StallAppeared { .. }
+            | Self::StallRemoved { .. }
+            | Self::StallSignChanged { .. }
+            | Self::TipHatPlaced { .. }
+            | Self::TipHatAppeared { .. }
+            | Self::TipHatRemoved { .. }
+            | Self::MealPlaced { .. }
+            | Self::MealAppeared { .. }
+            | Self::MealEaten { .. }
+            | Self::MealRemoved { .. }
+            | Self::PlayerRadianceToggled { .. } => DeliveryClass::NearbyState,
+            Self::DungeonChestOpened { .. }
+            | Self::ChatMessage { .. }
+            | Self::Recital { .. }
+            | Self::PlayerAttacked { .. }
+            | Self::DaggerDoubleSlashStarted { .. }
+            | Self::DaggerDoubleSlashSkipped { .. }
+            | Self::EquipmentEnchantSucceeded { .. }
+            | Self::MonsterProvoked { .. }
+            | Self::MonsterAttackedPlayer { .. }
+            | Self::PlayerInstrumentNotes { .. }
+            | Self::AbilityUsed { .. } => DeliveryClass::NearbyEffect,
+            Self::TerrainTileSnapshot { .. }
+            | Self::LandscapeChanged { .. }
+            | Self::LandscapeInvalidated { .. }
+            | Self::HeightTilesInvalidated { .. }
+            | Self::TreeTilesInvalidated { .. }
+            | Self::GrassTilesInvalidated { .. } => DeliveryClass::Terrain,
+            Self::AuthSuccess { .. }
+            | Self::JoinSuccess { .. }
+            | Self::AuthError { .. }
+            | Self::CharacterCreated { .. }
+            | Self::CharacterStatsRolled { .. }
+            | Self::CharacterDeleted { .. }
+            | Self::CharacterRenameRequired { .. }
+            | Self::CharacterRenamed { .. }
+            | Self::CharacterError { .. }
+            | Self::DungeonDiscoveries { .. }
+            | Self::WhisperMessage { .. }
+            | Self::SystemMessage { .. }
+            | Self::PartyChatMessage { .. }
+            | Self::PartyInviteReceived { .. }
+            | Self::PartyInviteResult { .. }
+            | Self::PlayerTradeRequested { .. }
+            | Self::PlayerTradeRequestResult { .. }
+            | Self::PlayerTradeUpdate { .. }
+            | Self::PlayerTradeEnded { .. }
+            | Self::PlayerTradeError { .. }
+            | Self::PartySummonReceived { .. }
+            | Self::PartyState { .. }
+            | Self::FriendList { .. }
+            | Self::FriendsOnline { .. }
+            | Self::FriendRequestReceived { .. }
+            | Self::PartyPositions { .. }
+            | Self::PartyVitals { .. }
+            | Self::PricingNotice(..)
+            | Self::DaggerDoubleSlashRejected { .. }
+            | Self::PlayerAttackRejected { .. }
+            | Self::ManaUpdate { .. }
+            | Self::XpGained { .. }
+            | Self::SkillsUpdate { .. }
+            | Self::SkillXpGained { .. }
+            | Self::FishingError { .. }
+            | Self::Kicked { .. }
+            | Self::TitleEarned { .. }
+            | Self::PlayerTitles { .. }
+            | Self::CapeDyePrompt { .. }
+            | Self::LandClaimPrompt { .. }
+            | Self::LandscapingMode { .. }
+            | Self::LandscapingPaletteUnlocked { .. }
+            | Self::LandscapeEditResult { .. }
+            | Self::FenceEditResult { .. }
+            | Self::EstateChestMode { .. }
+            | Self::EstateChestEditResult { .. }
+            | Self::EstateChestState { .. }
+            | Self::LandClaimed { .. }
+            | Self::LandRejected { .. }
+            | Self::LandAccountState { .. }
+            | Self::CapeTexturePrompt { .. }
+            | Self::InteractionRejected { .. }
+            | Self::HousePlacementStarted { .. }
+            | Self::HousePlacementResult { .. }
+            | Self::HouseDemolitionResult { .. }
+            | Self::InventoryState { .. }
+            | Self::InventoryUpdated { .. }
+            | Self::ShopState { .. }
+            | Self::GoldUpdate { .. }
+            | Self::EffectiveStatsUpdated { .. }
+            | Self::GoldGained { .. }
+            | Self::TradeError { .. }
+            | Self::DealUpdated { .. }
+            | Self::BuybackUpdated { .. }
+            | Self::TradeBusy { .. }
+            | Self::TradeNotice { .. }
+            | Self::TradeDeclined { .. }
+            | Self::DealResult { .. }
+            | Self::MountRecovery { .. }
+            | Self::PositionCorrected { .. }
+            | Self::HungerUpdate { .. }
+            | Self::DebuffUpdate { .. }
+            | Self::StallState { .. }
+            | Self::GrillStarted
+            | Self::GrillEnded { .. }
+            | Self::DungeonReset
+            | Self::AbilityCooldowns { .. }
+            | Self::BuffUpdate { .. }
+            | Self::AbilityRejected { .. }
+            | Self::BowMarkUpdate { .. } => DeliveryClass::Participants,
+            Self::GameTimeSync { .. } | Self::WeatherSync { .. } | Self::ServerNotice { .. } => {
+                DeliveryClass::Global
+            }
+            Self::WorldUpdate { .. }
+            | Self::MonsterAssigned { .. }
+            | Self::MonsterControlReleased { .. } => DeliveryClass::Control,
+        }
+    }
 }

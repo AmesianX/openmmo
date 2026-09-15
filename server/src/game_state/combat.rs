@@ -729,10 +729,9 @@ impl super::GameState {
         cooldowns.insert(character_id, now);
         drop(cooldowns);
         self.cancel_concentration_if_active(player_id).await;
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &origin,
             floor,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::DaggerDoubleSlashStarted {
                 player_id: *player_id,
                 monster_id: monster_id.clone(),
@@ -804,10 +803,9 @@ impl super::GameState {
                 }
             };
             if let Some(reason) = skip {
-                self.send_direct_message_to_players_within_position(
+                self.publish_nearby(
                     &origin,
                     floor,
-                    super::EVENT_DELIVERY_RADIUS,
                     ServerMessage::DaggerDoubleSlashSkipped {
                         player_id: *player_id,
                         monster_id: monster_id.clone(),
@@ -906,10 +904,9 @@ impl super::GameState {
         }
 
         // Send attack result
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &monster_position,
             monster_floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerAttacked {
                 player_id: *player_id,
                 monster_id: monster_id.clone(),
@@ -940,6 +937,8 @@ impl super::GameState {
 
                     dealt = result_damage.min(monster.health);
                     monster.health = monster.health.saturating_sub(result_damage);
+                    self.interest_lock()
+                        .refresh_monster(&self.wire_monster(monster));
                     debug!(
                         "Monster {} HP: {}/{}",
                         monster_id, monster.health, monster.max_health
@@ -999,10 +998,9 @@ impl super::GameState {
                     crate::dungeon_defs::place_label(&corpse_position, monster_floor_level),
                     dropped_weapon_item_def_id.as_deref().unwrap_or("none")
                 );
-                self.send_direct_message_to_players_within_position(
+                self.publish_nearby(
                     &monster_position,
                     monster_floor_level,
-                    super::EVENT_DELIVERY_RADIUS,
                     ServerMessage::MonsterDead {
                         monster_id: monster_id.clone(),
                         dropped_weapon_item_def_id: dropped_weapon_item_def_id.clone(),
@@ -1177,6 +1175,7 @@ impl super::GameState {
                     self.combat_audit.health(old_health, p, "level_up");
                     leveled.push(*player_id);
                 }
+                self.interest_lock().refresh_player(p);
                 notices.push((
                     *player_id,
                     p.name.clone(),
@@ -1201,6 +1200,11 @@ impl super::GameState {
         }
 
         for (player_id, name, new_xp, new_level, leveled_up, max_hp, current_hp) in notices {
+            self.publish_subject_change(ServerMessage::PlayerHealthUpdate {
+                player_id,
+                health: current_hp,
+                max_health: max_hp,
+            });
             self.send_direct_message(
                 &player_id,
                 ServerMessage::XpGained {
@@ -1449,14 +1453,15 @@ impl super::GameState {
             current_health,
         };
         if let Some((target_position, target_floor)) = target_loc {
-            self.send_direct_message_to_players_within_position(
-                &target_position,
-                target_floor,
-                super::EVENT_DELIVERY_RADIUS,
-                attack_msg,
-                None,
-            )
-            .await;
+            if let Some(player) = self.players.read().await.get(target_player_id) {
+                self.publish_subject_change(ServerMessage::PlayerHealthUpdate {
+                    player_id: *target_player_id,
+                    health: player.health,
+                    max_health: player.max_health,
+                });
+            }
+            self.publish_nearby(&target_position, target_floor, attack_msg, None)
+                .await;
         } else {
             self.send_direct_message(target_player_id, attack_msg).await;
         }
@@ -1488,10 +1493,9 @@ impl super::GameState {
         cause: &str,
     ) {
         self.on_player_died(player_id, cause).await;
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &position,
             floor_level,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerDead {
                 player_id: *player_id,
             },
@@ -1574,14 +1578,7 @@ impl super::GameState {
             }
         }
         for (position, floor_level, msg) in regen_messages {
-            self.send_direct_message_to_players_within_position(
-                &position,
-                floor_level,
-                super::EVENT_DELIVERY_RADIUS,
-                msg,
-                None,
-            )
-            .await;
+            self.publish_nearby(&position, floor_level, msg, None).await;
         }
         if !regen_dirty.is_empty() {
             self.dirty_players.write().await.extend(regen_dirty.iter());

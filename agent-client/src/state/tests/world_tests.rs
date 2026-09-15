@@ -122,7 +122,7 @@ fn world_state_lists_nearby_ground_items() {
         ground_item(1, "small_sword", 5.0, 0.0, 0),
         ground_item(2, "wooden_shield", 2.0, 0.0, 0),
         ground_item(3, "coin_pile", 1.0, 0.0, 0),
-        ground_item(4, "iron_sword", 0.0, NPC_SIGHT_RADIUS + 5.0, 0),
+        ground_item(4, "iron_sword", 0.0, EVENT_DELIVERY_RADIUS + 5.0, 0),
         ground_item(5, "healing_potion", 3.0, 0.0, 1),
     ] {
         s.remember_ground_item(item);
@@ -141,6 +141,7 @@ fn world_state_lists_nearby_ground_items() {
             "Item on ground: coin_pile (1.0m away) [id 3]",
             "Item on ground: wooden_shield (2.0m away) [id 2]",
             "Item on ground: small_sword (5.0m away) [id 1]",
+            "Item on ground: iron_sword (37.0m away) [id 4]",
         ]
     );
 }
@@ -277,7 +278,7 @@ async fn terrain_summary_names_nearest_features_with_bearing() {
         .render()
         .await;
 
-    assert!(line.starts_with("Terrain within 27m: "), "{line}");
+    assert!(line.starts_with("Terrain within 32m: "), "{line}");
     // Road cell (6, 0): 6m due east. River cell (-6, -6): 8m northwest.
     assert!(line.contains("road 6m east"), "{line}");
     assert!(line.contains("water 8m northwest"), "{line}");

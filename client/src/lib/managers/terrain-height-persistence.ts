@@ -17,7 +17,7 @@ export async function loadHeightmap(
   const inflight = inflightHeightmaps.get(key)
   if (inflight) return inflight
 
-  const promise = (async () => {
+  const promise = Promise.resolve().then(async () => {
     try {
       const url = `${terrainApiUrl}/api/terrain/height/${tileX}/${tileZ}`
       const response = await fetch(url)
@@ -28,6 +28,19 @@ export async function loadHeightmap(
       }
       const buffer = await response.arrayBuffer()
       const data = new Uint16Array(buffer)
+      if (inflightHeightmaps.get(key) !== promise) {
+        const current = state.heightmaps.get(key)
+        if (current) return current
+        return loadHeightmap(
+          state,
+          inflightHeightmaps,
+          terrainApiUrl,
+          tileX,
+          tileZ,
+          loadOriginal,
+          onFreshLoad
+        )
+      }
       state.heightmaps.set(key, data)
       loadOriginal(tileX, tileZ)
       onFreshLoad?.()
@@ -36,9 +49,10 @@ export async function loadHeightmap(
       console.error(`Failed to load heightmap (${tileX}, ${tileZ}):`, e)
       throw e
     } finally {
-      inflightHeightmaps.delete(key)
+      if (inflightHeightmaps.get(key) === promise)
+        inflightHeightmaps.delete(key)
     }
-  })()
+  })
   inflightHeightmaps.set(key, promise)
   return promise
 }

@@ -308,6 +308,7 @@ async fn place_apple_pile(game_state: &GameState, instance_id: u64, quantity: u3
             dropped_at_ms: 0,
         },
     );
+    seed_subjects(game_state).await;
 }
 
 #[tokio::test]

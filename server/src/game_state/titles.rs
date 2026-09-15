@@ -268,10 +268,9 @@ impl GameState {
             (p.position, p.floor_level)
         };
         // The owner is inside their own radius, so this reaches them too.
-        self.send_direct_message_to_players_within_position(
+        self.publish_nearby(
             &at.0,
             at.1,
-            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerTitleChanged {
                 player_id: *player_id,
                 title,

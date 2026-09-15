@@ -155,14 +155,10 @@ impl SharedState {
         let Some(sp) = self.self_player.as_ref() else {
             return Vec::new();
         };
-        let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
         let mut found: Vec<(String, f32)> = self
             .monsters_on_my_floor()
             .filter(|m| m.monster_type.eq_ignore_ascii_case(species))
-            .filter_map(|m| {
-                let d_sq = m.position.dist_xz_sq(&sp.position);
-                (d_sq <= sight_sq).then(|| (m.id.clone(), d_sq.sqrt()))
-            })
+            .map(|m| (m.id.clone(), m.position.dist_xz_sq(&sp.position).sqrt()))
             .collect();
         found.sort_by(|a, b| a.1.total_cmp(&b.1));
         found
@@ -327,6 +323,9 @@ impl SharedState {
             .map(|p| p.position.y)
             .unwrap_or(0.0);
         let (position, floor_level) = self.step_pose(x, z, floor, current_y);
+        if !self.world_view.covers(&position) || !self.pending_terrain.is_empty() {
+            anyhow::bail!("Waiting for the server to synchronize the next movement segment");
+        }
         self.adopt_floor_level(floor_level);
         let sprinting = self.sprint_allowed(sprint);
         let cmd = ClientMessage::PlayerMove {

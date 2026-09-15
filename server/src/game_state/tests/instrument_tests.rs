@@ -67,7 +67,7 @@ fn instrument_batch_validation_covers_every_wire_bound() {
 }
 
 #[tokio::test]
-async fn instrument_notes_use_thirty_meter_same_floor_aoi_and_skip_the_player() {
+async fn instrument_notes_use_shared_radius_same_floor_aoi_and_skip_the_player() {
     let game_state = make_test_game_state("live_instrument_aoi");
     let instrumentist = pid("instrumentist");
     let near = pid("near");
@@ -140,7 +140,9 @@ async fn instrument_notes_use_thirty_meter_same_floor_aoi_and_skip_the_player() 
         }
         other => panic!("Expected nearby instrument notes, got {other:?}"),
     }
-    assert!(drain(&mut mid_rx).is_empty());
+    assert!(drain(&mut mid_rx)
+        .iter()
+        .any(|message| matches!(message, ServerMessage::PlayerInstrumentNotes { .. })));
     assert!(drain(&mut far_rx).is_empty());
     assert!(drain(&mut upstairs_rx).is_empty());
 }
