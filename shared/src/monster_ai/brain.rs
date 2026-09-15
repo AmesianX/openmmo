@@ -36,6 +36,8 @@ pub struct MonsterBrain {
     pub(super) waypoints: Vec<PathWaypoint>,
     pub(super) current_waypoint_idx: usize,
     pub(super) path_elapsed_ms: f32,
+    #[serde(default)]
+    pub(super) return_retry_left_ms: f32,
     pub(super) last_known_target_pos: Option<Position>,
     pub(super) spawn_position: Position,
     /// Passability floor for path queries. 0 = overworld/house ground;
@@ -131,6 +133,7 @@ impl MonsterBrain {
             waypoints: Vec::new(),
             current_waypoint_idx: 0,
             path_elapsed_ms: 0.0,
+            return_retry_left_ms: 0.0,
             last_known_target_pos: None,
             spawn_position: position,
             position,
@@ -209,6 +212,7 @@ impl MonsterBrain {
     pub(super) fn advance_timers(&mut self, delta_ms: f32) {
         self.state_timer_ms += delta_ms;
         self.path_elapsed_ms += delta_ms;
+        self.return_retry_left_ms = (self.return_retry_left_ms - delta_ms).max(0.0);
         self.sync_elapsed_ms += delta_ms;
         self.attack_cooldown_left_ms = (self.attack_cooldown_left_ms - delta_ms).max(0.0);
         self.swing_left_ms = (self.swing_left_ms - delta_ms).max(0.0);

@@ -5,6 +5,8 @@ use crate::{MonsterState, PlayerId, Position};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
+mod return_tests;
+
 /// PathProvider that returns a straight-line path to the goal, over open ground.
 struct DirectPath;
 impl PathProvider for DirectPath {

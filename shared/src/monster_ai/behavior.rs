@@ -188,21 +188,41 @@ impl MonsterBrain {
             return BehaviorStatus::Success;
         }
 
-        if self.state != AiState::Return {
-            self.state = AiState::Return;
-            self.state_timer_ms = 0.0;
-            self.move_speed = self.walk_speed;
-            self.target_position = Some(self.spawn_position);
-            self.compute_path(self.spawn_position.x, self.spawn_position.z, path_provider);
-            if self.waypoints.is_empty() {
-                self.transition_to_idle(commands);
+        if self.return_retry_left_ms > 0.0 {
+            return BehaviorStatus::Failure;
+        }
+
+        let path_recalc_ms = param(params, "pathRecalcMs", DEFAULT_PATH_RECALC_MS);
+        if self.state != AiState::Return
+            || self.current_waypoint_idx >= self.waypoints.len()
+            || self.path_elapsed_ms >= path_recalc_ms
+        {
+            let result =
+                self.query_path(self.spawn_position.x, self.spawn_position.z, path_provider);
+            if !result.found || result.waypoints.is_empty() {
+                self.return_retry_left_ms = path_recalc_ms;
+                if self.state == AiState::Return {
+                    self.transition_to_idle(commands);
+                }
                 return BehaviorStatus::Failure;
             }
+
+            if self.state != AiState::Return {
+                self.state = AiState::Return;
+                self.state_timer_ms = 0.0;
+                self.move_speed = self.walk_speed;
+                self.target_position = Some(self.spawn_position);
+            }
+            self.install_path(result.waypoints);
             self.face_first_waypoint();
         }
 
+        let pre_synced = self.sync_due_before_step();
+        if pre_synced {
+            commands.push(self.make_move_cmd());
+        }
         self.follow_path(delta_ms);
-        if self.should_sync_move() {
+        if !pre_synced && self.should_sync_move() {
             commands.push(self.make_move_cmd());
         }
         BehaviorStatus::Running

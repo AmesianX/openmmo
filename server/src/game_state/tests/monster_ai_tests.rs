@@ -220,3 +220,130 @@ async fn a_swing_is_judged_on_the_brain_not_the_synced_registry() {
         "{msgs:?}"
     );
 }
+
+#[tokio::test]
+async fn a_monster_blocked_from_returning_can_be_attacked_and_retaliate() {
+    use onlinerpg_shared::pathfinding::{RuntimeFloorGrid, RuntimePassability};
+
+    const EDGE_N: u8 = 1;
+    const EDGE_E: u8 = 2;
+    const EDGE_S: u8 = 4;
+    const EDGE_W: u8 = 8;
+
+    let game_state = make_flat_world_game_state("server_ai_blocked_return");
+    game_state.enable_server_monster_ai();
+    let player_id = pid("lurer");
+    game_state.add_player(make_player("lurer", 15.0, 0.0)).await;
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+    let goblin = spawn_goblin(&game_state, &player_id, 5.0).await;
+
+    for _ in 0..200 {
+        let x = game_state
+            .brain_position_now(&goblin)
+            .await
+            .map_or(5.0, |p| p.x);
+        game_state
+            .teleport_player(
+                &player_id,
+                Position {
+                    x: x + 10.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                0.0,
+                0,
+            )
+            .await;
+        game_state.tick_monster_ai_by(200.0).await;
+        let monsters = game_state.monsters.read().await;
+        if monsters[&goblin].position.x > 55.0 && monsters[&goblin].state == MonsterState::Walk {
+            break;
+        }
+    }
+    let returning = game_state.monsters.read().await[&goblin].clone();
+    assert!(
+        returning.position.x > 55.0,
+        "the monster must leave its leash"
+    );
+    assert_eq!(returning.state, MonsterState::Walk);
+
+    let mut cells = vec![0; 80 * 4];
+    for x in 0..80 {
+        cells[x] |= EDGE_N;
+        cells[x + 240] |= EDGE_S;
+    }
+    for z in 0..4 {
+        cells[z * 80] |= EDGE_W;
+        cells[z * 80 + 79] |= EDGE_E;
+        cells[z * 80 + 49] |= EDGE_E;
+        cells[z * 80 + 50] |= EDGE_W;
+    }
+    game_state.passability_write().insert(
+        "closed_return_door".into(),
+        RuntimePassability {
+            house_origin_x: 0.0,
+            house_origin_z: -2.0,
+            min_x: 0.0,
+            max_x: 80.0,
+            min_z: -2.0,
+            max_z: 2.0,
+            floors: vec![RuntimeFloorGrid {
+                floor_level: 0,
+                origin_x: 0,
+                origin_z: 0,
+                width: 80,
+                depth: 4,
+                y_base: 0.0,
+                wall_height: 3.0,
+                cells,
+            }],
+            stairwells: vec![],
+            yields_to_trapped_mover: false,
+            allows_projectiles: false,
+            is_ground: false,
+        },
+    );
+    game_state.tick_monster_ai_by(600.0).await;
+    assert_ne!(
+        game_state.monsters.read().await[&goblin].state,
+        MonsterState::Walk
+    );
+
+    let position = game_state.brain_position_now(&goblin).await.unwrap();
+    game_state
+        .teleport_player(
+            &player_id,
+            Position {
+                x: position.x + 1.0,
+                ..position
+            },
+            0.0,
+            0,
+        )
+        .await;
+    drain(&mut rx);
+    game_state
+        .broadcast_player_attack(&player_id, goblin.clone())
+        .await;
+    let messages = drain(&mut rx);
+    assert!(messages
+        .iter()
+        .any(|m| matches!(m, ServerMessage::PlayerAttacked { .. })));
+    assert!(messages
+        .iter()
+        .all(|m| !matches!(m, ServerMessage::PlayerAttackRejected { .. })));
+
+    let mut retaliated = false;
+    for _ in 0..10 {
+        game_state.tick_monster_ai_by(200.0).await;
+        retaliated |= drain(&mut rx).iter().any(|m| {
+            matches!(
+                m,
+                ServerMessage::MonsterAttackedPlayer { monster_id, player_id: target, .. }
+                    if monster_id == &goblin && *target == player_id
+            )
+        });
+    }
+    assert!(retaliated, "the trapped monster must fight back");
+    assert!(monster_x(&game_state, &goblin).await >= 50.0);
+}
