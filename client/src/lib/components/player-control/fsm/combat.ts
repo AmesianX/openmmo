@@ -49,6 +49,7 @@ export interface ChaseMovement extends RoutedLeg {
 
 export type ChaseTargetOutcome =
   | { kind: 'unchanged' }
+  | { kind: 'blocked' }
   | ({ kind: 'updated' } & ChaseMovement)
 
 export function applyChaseTargetUpdate({
@@ -72,6 +73,7 @@ export function applyChaseTargetUpdate({
   }
 
   const leg = routeFirstLeg(currentPos, newTarget, pathing, sendPlayerMove)
+  if (!leg) return { kind: 'blocked' }
 
   // Unlike a click, chase retargets a live integrator rather than starting one.
   const start = { x: currentPos.x, y: currentPos.y, z: currentPos.z }
@@ -152,6 +154,7 @@ export interface TickCombatInput {
 export type CombatTickOutcome =
   | { kind: 'none' }
   | { kind: 'idle' }
+  | { kind: 'chasing_blocked' }
   | { kind: 'reached_attack_range'; monsterId: string }
   | { kind: 'chasing_unchanged' }
   | ({ kind: 'chasing_updated' } & ChaseMovement)
@@ -220,6 +223,7 @@ export function tickCombat({
       })
 
       if (chase.kind === 'unchanged') return { kind: 'chasing_unchanged' }
+      if (chase.kind === 'blocked') return { kind: 'chasing_blocked' }
       return { ...chase, kind: 'chasing_updated' }
     }
     case 'attacking':
@@ -247,6 +251,7 @@ export type CombatOutcomeApplication =
 
 export interface CombatOutcomeActions {
   stopMovingToIdle: () => void
+  cancelBlockedMovement: () => void
   prepareReachedAttackRange: () => void
   beginAttack: (monsterId: string) => void
   setChasingMovement: (chase: ChaseMovement) => void
@@ -259,6 +264,10 @@ export function applyCombatTickOutcome(
   actions: CombatOutcomeActions
 ): CombatOutcomeApplication {
   switch (outcome.kind) {
+    case 'chasing_blocked':
+      actions.cancelBlockedMovement()
+      return { kind: 'handled' }
+
     case 'idle':
       actions.stopMovingToIdle()
       return { kind: 'handled' }

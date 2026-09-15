@@ -28,6 +28,7 @@ vi.mock('../../../managers/bgmManager', () => ({
 function actions(): CombatOutcomeActions {
   return {
     stopMovingToIdle: vi.fn(),
+    cancelBlockedMovement: vi.fn(),
     prepareReachedAttackRange: vi.fn(),
     beginAttack: vi.fn(),
     setChasingMovement: vi.fn(),
@@ -148,7 +149,7 @@ describe('applyChaseTargetUpdate', () => {
     expect(movementState.totalDistance).toBe(10)
   })
 
-  it('falls back to the monster itself when no path is found', () => {
+  it('rejects an unreachable chase without sending a direct move', () => {
     const sendPlayerMove = vi.fn()
 
     const outcome = applyChaseTargetUpdate({
@@ -161,9 +162,8 @@ describe('applyChaseTargetUpdate', () => {
       sendPlayerMove,
     })
 
-    expect(outcome.kind).toBe('updated')
-    if (outcome.kind !== 'updated') return
-    expect(outcome.pathWaypoints).toEqual([{ x: 3, z: 4, floor: 0 }])
+    expect(outcome.kind).toBe('blocked')
+    expect(sendPlayerMove).not.toHaveBeenCalled()
   })
 })
 
@@ -263,6 +263,15 @@ describe('tickCombat', () => {
 })
 
 describe('applyCombatTickOutcome', () => {
+  it('cancels an unreachable chase instead of retrying from idle', () => {
+    const a = actions()
+    expect(applyCombatTickOutcome({ kind: 'chasing_blocked' }, a)).toEqual({
+      kind: 'handled',
+    })
+    expect(a.cancelBlockedMovement).toHaveBeenCalledOnce()
+    expect(a.setChasingMovement).not.toHaveBeenCalled()
+  })
+
   it('handles idle by stopping movement', () => {
     const a = actions()
 

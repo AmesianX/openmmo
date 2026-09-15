@@ -79,8 +79,9 @@ export function startClickMovement({
   sendPlayerMove,
   startSpeed,
   ...pathing
-}: StartClickMovementInput): StartedClickMovement {
+}: StartClickMovementInput): StartedClickMovement | null {
   const leg = routeFirstLeg(currentPos, clickPosition, pathing, sendPlayerMove)
+  if (!leg) return null
   return {
     ...leg,
     currentWaypointIndex: 0,
@@ -104,6 +105,7 @@ interface MoveRequestPlayer {
 export interface MoveRequestActions {
   exitPickupAndRetry: () => void
   exitObjectAndDelay: () => void
+  cancelBlockedMovement: () => void
   applyStartedMovement: (started: StartedClickMovement) => void
 }
 
@@ -155,20 +157,20 @@ export function runMoveRequest({
 
   if (!currentPlayer) return
 
-  actions.applyStartedMovement(
-    startClickMovement({
-      currentPos: {
-        x: currentPlayer.position.x,
-        y: currentPlayer.position.y,
-        z: currentPlayer.position.z,
-      },
-      clickPosition,
-      currentFloor,
-      getFloorAt,
-      findPath,
-      waypointHeight,
-      sendPlayerMove,
-      startSpeed,
-    })
-  )
+  const started = startClickMovement({
+    currentPos: {
+      x: currentPlayer.position.x,
+      y: currentPlayer.position.y,
+      z: currentPlayer.position.z,
+    },
+    clickPosition,
+    currentFloor,
+    getFloorAt,
+    findPath,
+    waypointHeight,
+    sendPlayerMove,
+    startSpeed,
+  })
+  if (started) actions.applyStartedMovement(started)
+  else actions.cancelBlockedMovement()
 }

@@ -43,21 +43,13 @@ export interface RoutedLeg {
   playerRotation: number
 }
 
-/**
- * Route to `goal` and hand the first leg to the server, replacing its queue.
- *
- * The single place a fresh path is built. The server replays every leg it is
- * sent as a straight line, so a goal it cannot walk to directly strands its copy
- * of the player behind geometry the client walked around — routing here, rather
- * than beelining at the goal, is what keeps the two simulations together. The
- * substrate appends the remaining waypoints as each is reached.
- */
+/** Route to the goal and replace the server queue with the first leg. */
 export function routeFirstLeg(
   currentPos: Position,
   goal: Position,
   pathing: Pathing,
   sendPlayerMove: SendPlayerMove
-): RoutedLeg {
+): RoutedLeg | null {
   const goalFloor = pathing.getFloorAt(goal.x, goal.z, goal.y)
   const result = pathing.findPath(
     currentPos.x,
@@ -67,10 +59,8 @@ export function routeFirstLeg(
     goal.z,
     goalFloor
   )
-  const pathWaypoints =
-    result.waypoints.length > 0
-      ? result.waypoints
-      : [{ x: goal.x, z: goal.z, floor: goalFloor }]
+  const pathWaypoints = result.waypoints
+  if (pathWaypoints.length === 0) return null
 
   const firstWp = pathWaypoints[0]
   const movementTarget: Position = {
@@ -116,15 +106,7 @@ interface MovementSubstrateInput {
   sendPlayerMove: SendPlayerMove
 }
 
-/**
- * When a diagonal step is blocked (typically grazing a convex wall corner the
- * 0.3m body radius can't clear), try to keep moving along whichever single axis
- * is still clear. This lets the player slide around corners instead of getting
- * permanently stuck — the pathfinder smooths paths using cell-edge walls only
- * (no radius buffer), so smoothed diagonals can clip corners that continuous
- * collision refuses to cross. Returns the slid position, or null if both axes
- * are blocked (a genuine dead-end).
- */
+/** Slide along a clear axis when a smoothed path clips a wall corner. */
 function resolveWallSlide(
   from: Position,
   to: Position,

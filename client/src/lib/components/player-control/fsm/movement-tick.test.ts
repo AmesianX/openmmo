@@ -218,6 +218,7 @@ function baseInput() {
       resetStoppedSpeed: vi.fn(),
       combat: {
         stopMovingToIdle: vi.fn(),
+        cancelBlockedMovement: vi.fn(),
         prepareReachedAttackRange: vi.fn(),
         beginAttack: vi.fn(),
         setChasingMovement: vi.fn(),

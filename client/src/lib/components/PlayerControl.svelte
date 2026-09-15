@@ -813,13 +813,28 @@
 
   function applyPositionCorrection(correction: PositionCorrection) {
     if (mountRecovery) return
+    keyboardMoveSender.reset()
+    keyboardTapTracker.release(null)
+    keyboardSpeedRamp.reset()
+    lastSentPosition = null
     playerRotation = correction.rotation
     writePlayerPosition(correction, correction.rotation)
     if (startMountRecovery()) return
+    cancelBlockedMovement()
+  }
+
+  function cancelBlockedMovement(sendStop = true) {
     const m = movingState()
     if (m) m.approach = null
+    combatController.cancelCombat()
+    clearDoorInteractionRetry()
+    dungeonManager.clearPendingBreak()
+    dungeonManager.clearPendingOpen()
     stopMovement()
-    cancelAutoTravel('Travel stopped after a position correction.')
+    if (sendStop && currentPlayer) {
+      sendPlayerMove(currentPlayer.position, playerRotation)
+    }
+    cancelAutoTravel('Travel stopped: the route is blocked.')
   }
 
   // Current player state
@@ -1081,6 +1096,7 @@
   // They only read live `$state` inside their closures, so building them once
   // avoids reallocating ~20 closures per frame on the render hot path.
   const combatTickActions = {
+    cancelBlockedMovement,
     stopMovingToIdle: () => {
       if (isMovingNow()) {
         // Leaving the moving state drops its target/movementState. Transition
@@ -1167,8 +1183,7 @@
   const movementTickActions = {
     stopMovement: () => {
       if (startMountRecovery()) return
-      cancelAutoTravel('Travel stopped: the route is blocked.')
-      stopMovement()
+      cancelBlockedMovement(false)
     },
     triggerJumpFeedback,
     setNextWaypoint: (
@@ -1362,6 +1377,7 @@
     options: { approach?: PendingApproach | null }
   ): MoveRequestActions {
     return {
+      cancelBlockedMovement,
       exitPickupAndRetry: () => {
         exitPickupInteraction()
         handleClickToMove(clickPosition, options)

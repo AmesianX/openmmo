@@ -1,6 +1,97 @@
 use super::*;
 
 #[tokio::test]
+async fn estate_storage_correction_clears_the_queue_and_allows_a_surface_detour() {
+    let game = make_test_game_state("estate_storage_audit_detour");
+    let origin = Position {
+        x: -1373.8975,
+        y: 0.6809866,
+        z: 4477.1035,
+    };
+    let goal = Position {
+        x: -1382.1764,
+        y: origin.y,
+        z: 4473.573,
+    };
+    let placements: Vec<_> = [
+        (-1374.5, 0.7125015, 4477.5),
+        (-1374.5, 0.6499939, 4476.0),
+        (-1373.0, 0.625, 4475.5),
+        (-1373.0, 0.7000122, 4477.0),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(
+        |(id, (x, y, z))| onlinerpg_shared::furniture::FurniturePlacement {
+            id: id as u32,
+            type_id: "chest_animated".into(),
+            x,
+            y,
+            z,
+            rotation_deg: 90.0,
+            floor_level: 0,
+        },
+    )
+    .collect();
+    game.passability_write().insert(
+        "furniture:estate-storage:-43,139".into(),
+        onlinerpg_shared::furniture::build_furniture_passability_for_placements(&placements)
+            .unwrap(),
+    );
+    let mut player = make_player("estate_walker", origin.x, origin.z);
+    player.position = origin;
+    let id = player.id;
+    game.add_player(player).await;
+    let mut rx = game.register_direct_channel(&id).await;
+
+    let mut command = move_cmd(goal, false);
+    command.sprinting = true;
+    game.update_player_position(&id, command, false).await;
+    game.update_player_position(&id, move_cmd(goal, true), false)
+        .await;
+    game.tick_player_movement(0.2).await;
+
+    let (corrected, _, floor) = first_correction(&mut rx).expect("surface collision is corrected");
+    assert_eq!(corrected, origin);
+    assert_eq!(floor, 0);
+    assert!(!game.movement_intents.read().await.contains_key(&id));
+    game.tick_player_movement(1.0).await;
+    assert_eq!(player_xz(&game, &id).await, (origin.x, origin.z));
+    assert!(!super::super::passability::sealed_in(
+        &game.passability_read(),
+        &origin,
+        0
+    ));
+
+    let path = onlinerpg_shared::pathfinding::find_and_smooth_path(
+        origin.x,
+        origin.z,
+        0,
+        goal.x,
+        goal.z,
+        0,
+        &game.passability_read(),
+        2000,
+    );
+    assert!(path.found);
+    assert!(path.waypoints.len() > 1);
+    for (i, waypoint) in path.waypoints.iter().enumerate() {
+        let position = Position {
+            x: waypoint.x,
+            y: origin.y,
+            z: waypoint.z,
+        };
+        game.update_player_position(&id, move_cmd(position, i > 0), false)
+            .await;
+    }
+    for _ in 0..100 {
+        game.tick_player_movement(0.2).await;
+    }
+    assert_eq!(player_xz(&game, &id).await, (goal.x, goal.z));
+    assert!(first_correction(&mut rx).is_none());
+}
+
+#[tokio::test]
 async fn simulated_movement_is_blocked_by_solid_furniture() {
     let game_state = make_test_game_state("movement_furniture_block");
     let player_id = pid("wallwalker");

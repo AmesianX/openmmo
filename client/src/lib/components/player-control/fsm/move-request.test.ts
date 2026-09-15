@@ -76,7 +76,7 @@ const clickPosition: Position = { x: 4, y: 0, z: 5 }
 const deps = {
   currentFloor: 0,
   getFloorAt: () => 0,
-  findPath: () => ({ waypoints: [] }),
+  findPath: () => ({ waypoints: [{ x: 4, z: 5, floor: 0 }] }),
   waypointHeight: () => 0,
   sendPlayerMove: vi.fn(),
   startSpeed: 0,
@@ -99,8 +99,8 @@ describe('startClickMovement', () => {
       startSpeed: 0,
     })
 
-    expect(started.pathWaypoints).toEqual([{ x: 2, z: 3, floor: 1 }])
-    expect(started.movementTarget).toEqual({ x: 2, y: 5, z: 3 })
+    expect(started?.pathWaypoints).toEqual([{ x: 2, z: 3, floor: 1 }])
+    expect(started?.movementTarget).toEqual({ x: 2, y: 5, z: 3 })
     expect(sendPlayerMove).toHaveBeenCalledWith(
       { x: 2, y: 5, z: 3 },
       expect.any(Number),
@@ -126,7 +126,7 @@ describe('startClickMovement', () => {
     expect(waypointHeight).toHaveBeenCalledWith(1, 2, 3)
   })
 
-  it('falls back to a direct waypoint when pathfinding returns no path', () => {
+  it('does not send an unreachable goal when pathfinding returns no path', () => {
     const sendPlayerMove = vi.fn()
 
     const started = startClickMovement({
@@ -140,8 +140,8 @@ describe('startClickMovement', () => {
       startSpeed: 0,
     })
 
-    expect(started.pathWaypoints).toEqual([{ x: 4, z: 5, floor: 2 }])
-    expect(started.movementTarget).toEqual({ x: 4, y: 9, z: 5 })
+    expect(started).toBeNull()
+    expect(sendPlayerMove).not.toHaveBeenCalled()
   })
 
   it('carries the running speed into the new leg instead of restarting at 0', () => {
@@ -152,7 +152,7 @@ describe('startClickMovement', () => {
       startSpeed: 4.5,
     })
 
-    expect(started.movementState.currentSpeed).toBe(4.5)
+    expect(started?.movementState.currentSpeed).toBe(4.5)
   })
 })
 
@@ -160,11 +160,32 @@ function actions(): MoveRequestActions {
   return {
     exitPickupAndRetry: vi.fn(),
     exitObjectAndDelay: vi.fn(),
+    cancelBlockedMovement: vi.fn(),
     applyStartedMovement: vi.fn(),
   }
 }
 
 describe('runMoveRequest', () => {
+  it('cancels the previous movement when its replacement has no path', () => {
+    const a = actions()
+    const sendPlayerMove = vi.fn()
+    runMoveRequest({
+      ...deps,
+      clickPosition,
+      currentPlayer: { health: 10, position: currentPos },
+      interactionExit: 'none',
+      isMoving: true,
+      hasKeyboardInput: false,
+      findPath: () => ({ waypoints: [] }),
+      sendPlayerMove,
+      actions: a,
+    })
+
+    expect(a.cancelBlockedMovement).toHaveBeenCalledOnce()
+    expect(a.applyStartedMovement).not.toHaveBeenCalled()
+    expect(sendPlayerMove).not.toHaveBeenCalled()
+  })
+
   it('routes pickup and object interaction exits before starting movement', () => {
     const pickupActions = actions()
     runMoveRequest({
