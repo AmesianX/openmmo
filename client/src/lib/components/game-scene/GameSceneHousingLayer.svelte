@@ -39,10 +39,6 @@
   } from '../../managers/housing-queries'
   import { furnitureManager } from '../../managers/furnitureManager'
   import {
-    TERRAIN_TILE_SIZE,
-    getTerrainChunkFromPosition,
-  } from './terrain-utils'
-  import {
     playerFloorOffset,
     playerVisualFloorLevel,
     playerInsideHouseId,
@@ -74,10 +70,6 @@
   const _allRooms: { house: HouseData; roomIndex: number }[] = []
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const _seenRooms = new Set<string>()
-  let lastChunkX = NaN
-  let lastChunkZ = NaN
-  // Whether the houses around the player have all arrived — see update().
-  let housesLoadedHere = false
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const occludedHouseIds = new Set<string>()
 
@@ -198,9 +190,6 @@
   // Listen for housing data changes from the manager
   const unsubHouses = housingManager.onHousesChanged((allHouses) => {
     syncHouses(allHouses)
-    if (playerPosition) {
-      housesLoadedHere = housingManager.isSynchronized()
-    }
     if (debugPassGroup.visible) debugPassDirty = true
   })
 
@@ -308,27 +297,15 @@
   // stairs; release uses the full footprint.
   const STAIR_ACQUIRE_MARGIN = 0.1
 
-  /** Called from game loop — loads chunks + checks player inside state */
+  /** Update indoor visibility once the destination's world data is ready. */
   export function update(_deltaTime: number) {
     if (!playerPosition) return
 
     // Rebuild passability debug lines if needed
     if (debugPassDirty && debugPassGroup.visible) rebuildPassabilityDebug()
 
-    // Load housing chunks around player when chunk changes
-    const { x: cx, z: cz } = getTerrainChunkFromPosition(
-      playerPosition,
-      TERRAIN_TILE_SIZE
-    )
-    if (cx !== lastChunkX || cz !== lastChunkZ) {
-      lastChunkX = cx
-      lastChunkZ = cz
-      housesLoadedHere = housingManager.isSynchronized()
-    }
-
-    // A respawn/teleport lands before its houses arrive; judging "outdoors"
-    // from an empty chunk would clobber the server-synced floor.
-    if (!housesLoadedHere) return
+    if (!housingManager.isSynchronized(playerPosition.x, playerPosition.z))
+      return
 
     // Player-inside detection (per-room, floor-aware)
     // Use ground-level Y for AABB check, then try multiple floor levels

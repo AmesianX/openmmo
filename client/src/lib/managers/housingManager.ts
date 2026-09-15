@@ -2,6 +2,7 @@ import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
 import type { HouseData } from '../types/housing'
 import type { WallDirection } from '../utils/house-geometry'
 import { setHouseMapFootprints } from '../stores/housingMapStore'
+import { worldView } from '../network/worldView'
 import {
   ALL_WALL_DIRS,
   buildPassability,
@@ -67,8 +68,10 @@ export class HousingManager {
     this.apiUrl = getTerrainApiUrl()
   }
 
-  isSynchronized() {
-    return this.synchronized
+  isSynchronized(x: number, z: number) {
+    return (
+      this.synchronized && worldView.floorLevel >= 0 && worldView.covers(x, z)
+    )
   }
 
   resetView() {

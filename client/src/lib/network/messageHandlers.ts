@@ -200,6 +200,7 @@ import {
   SLASH_EMOTE_ANIMS,
 } from '../stores/emoteStore'
 import { respawnPoseRequest } from '../stores/respawnPoseStore'
+import { syncOwnFloor } from './ownFloor'
 import {
   closeInstrumentPanel,
   openInstrumentPanel,
@@ -540,14 +541,6 @@ function announceGroundItem(
     text: `${actorName(actorId)} ${verb} ${name}${amount}.`,
     sender: 'system',
   })
-}
-
-/** Server-driven floor for our own player: dungeon depth and house storey
- *  (the housing layer only rewrites the storey when its own view changes). */
-function syncOwnFloor(floorLevel: number | undefined, x: number, z: number) {
-  const floor = floorLevel ?? 0
-  dungeonManager.syncFromFloorLevel(floor, x, z)
-  playerVisualFloorLevel.set(Math.max(0, floor))
 }
 
 import { worldView, type WorldUpdate } from './worldView'
