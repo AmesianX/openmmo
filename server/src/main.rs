@@ -25,6 +25,7 @@ mod terrain;
 #[cfg(test)]
 mod test_util;
 mod title_defs;
+mod traffic;
 mod types;
 mod world_config;
 mod world_drop_defs;
@@ -225,6 +226,18 @@ struct Args {
     /// unaffected when the flag is omitted.
     #[arg(long, env = "STATE_DIR", default_value = "./data")]
     state_dir: PathBuf,
+
+    /// External interface to measure; defaults to the IPv4 default route.
+    #[arg(long, env = "NETWORK_INTERFACE")]
+    network_interface: Option<String>,
+
+    /// Network sampling interval in seconds.
+    #[arg(long, env = "NETWORK_SAMPLE_SECONDS", default_value_t = 60, value_parser = clap::value_parser!(u64).range(60..=600))]
+    network_sample_seconds: u64,
+
+    /// Per-site Nginx access log for incremental asset traffic rankings.
+    #[arg(long, env = "NGINX_ACCESS_LOG")]
+    nginx_access_log: Option<PathBuf>,
 
     /// Days to retain combat audit logs; targets remain enabled until removed.
     #[arg(long, env = "COMBAT_AUDIT_RETENTION_DAYS", default_value_t = 30, value_parser = clap::value_parser!(u16).range(1..))]
@@ -543,6 +556,19 @@ async fn main() -> ExitCode {
     let (drain_shutdown_tx, drain_shutdown) = watch::channel(());
     let (connection_shutdown_tx, connection_shutdown) = watch::channel(());
     let mut background = JoinSet::new();
+    let traffic = traffic::TrafficMetrics::new(traffic::Config {
+        path: args.state_dir.join("network_metrics.db"),
+        interface: optional_value(args.network_interface.as_deref()).map(str::to_owned),
+        access_log: args
+            .nginx_access_log
+            .filter(|path| !path.as_os_str().is_empty()),
+        interval_seconds: args.network_sample_seconds,
+    });
+    background.spawn(
+        traffic
+            .clone()
+            .run(Arc::clone(&game_state), drain_shutdown.clone()),
+    );
     let audit_game_state = Arc::clone(&game_state);
     let audit_state_dir = args.state_dir.clone();
     let audit_retention_days = args.combat_audit_retention_days;
@@ -787,6 +813,7 @@ async fn main() -> ExitCode {
         Arc::clone(&auth_service),
         Arc::clone(&auth_ctx),
         args.tales_ledger,
+        traffic,
     ))
     .layer(axum::middleware::from_fn_with_state(
         Arc::clone(&auth_ctx),

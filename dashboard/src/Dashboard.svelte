@@ -17,6 +17,9 @@
   import CombatAuditTargetsPanel from './lib/CombatAuditTargetsPanel.svelte'
   import { parseCombatAuditTargets } from './lib/combatAuditTargets'
   import MetricsError from './lib/MetricsError.svelte'
+  import NetworkPanel from './lib/NetworkPanel.svelte'
+  import AssetTrafficPanel from './lib/AssetTrafficPanel.svelte'
+  import { parseNetworkHistory, parseAssetTraffic, type TrafficHours } from './lib/traffic'
   import PeriodFilter from './lib/PeriodFilter.svelte'
   import { createMetricsResource } from './lib/metricsResource.svelte'
   import { useDashboardAuth } from './lib/auth.svelte'
@@ -28,6 +31,10 @@
   let uniqueHours = $state<UniqueHours>(24)
   let uniquePeriod = $derived(uniquePeriods.find((period) => period.hours === uniqueHours)!)
   const concurrent = createMetricsResource(() => hours, 'concurrent', parseHistory, '접속 현황', () => ({}), 60000)
+  let networkHours = $state<TrafficHours>(24)
+  let assetTrafficHours = $state<TrafficHours>(24)
+  const network = createMetricsResource(() => networkHours, 'network', parseNetworkHistory, '네트워크 현황', () => ({}), 60000)
+  const assetTraffic = createMetricsResource(() => assetTrafficHours, 'asset-traffic', parseAssetTraffic, '정적 파일 전송량', () => ({}), 600000)
   const unique = createMetricsResource(() => uniqueHours, 'unique', parseUniqueHistory)
   let goldHours = $state<GoldHours>(24)
   const gold = createMetricsResource(() => goldHours, 'gold', parseGoldHistory, '골드 현황')
@@ -56,7 +63,7 @@
   const heroicTales = createMetricsResource(() => undefined, 'heroic-tales', parseHeroicTales, '영웅담 원장')
   const combatAuditTargets = createMetricsResource(() => undefined, 'combat-audit-targets', parseCombatAuditTargets, '전투 기록 추적 대상', () => ({}), 60000)
   let markers = $derived(deployMarkers(serverStarts.history?.starts ?? []))
-  const resources = [concurrent, unique, gold, perAccountGold, priceIndex, serverStarts, itemGoldSources, goldSinks, leaderboard, goldLeaderboard, weaponEnchantLeaderboard, weaponEnchantFailures, armorEnchantLeaderboard, landLeaderboard, heroicTales, combatAuditTargets]
+  const resources = [concurrent, network, assetTraffic, unique, gold, perAccountGold, priceIndex, serverStarts, itemGoldSources, goldSinks, leaderboard, goldLeaderboard, weaponEnchantLeaderboard, weaponEnchantFailures, armorEnchantLeaderboard, landLeaderboard, heroicTales, combatAuditTargets]
   let history = $derived(concurrent.history)
   let refreshing = $derived(resources.some((resource) => resource.refreshing))
   let anyError = $derived(resources.some((resource) => resource.error))
@@ -96,7 +103,7 @@
     <div class="update-controls">
       <div class:unavailable={anyError} class="update-status" role="status">
         <span class="status-dot"></span>
-        {#if anyError}연결 확인 필요{:else if anyLoading}연결 중{:else}접속·추적 대상 1분 · 그 외 1시간마다 업데이트{/if}
+        {#if anyError}연결 확인 필요{:else if anyLoading}연결 중{:else}접속·네트워크·추적 대상 1분 · 파일 전송 10분 · 그 외 1시간{/if}
       </div>
       <button class="refresh-button" onclick={() => refresh()} disabled={refreshing} aria-label="월드 현황 새로고침" title="새로고침">
         <svg viewBox="0 0 24 24" fill="none" class:spinning={refreshing} aria-hidden="true"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
@@ -147,6 +154,9 @@
       <span>{history ? `${summary.sampleCount.toLocaleString('ko-KR')}개 기록` : '기록 확인 중'}</span>
     </div>
   </section>
+
+  <NetworkPanel bind:hours={networkHours} resource={network} />
+  <AssetTrafficPanel bind:hours={assetTrafficHours} resource={assetTraffic} />
 
   <section class="chart-panel" aria-labelledby="unique-chart-title" aria-busy={unique.loading}>
     <div class="chart-heading">

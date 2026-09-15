@@ -20,6 +20,8 @@ const ENDPOINTS: &[&str] = &[
     "gold-per-account",
     "heroic-tales",
     "combat-audit-targets",
+    "network",
+    "asset-traffic",
 ];
 
 fn claims() -> Value {
@@ -49,6 +51,12 @@ async fn serve(access: AuthContext) -> (String, tokio::task::JoinHandle<()>) {
         auth,
         Arc::new(access),
         crate::test_util::unique_temp_dir("metrics_access_tales").join("ledger.txt"),
+        crate::traffic::TrafficMetrics::new(crate::traffic::Config {
+            path: crate::test_util::unique_temp_dir("metrics_access_traffic").join("metrics.db"),
+            interface: None,
+            access_log: None,
+            interval_seconds: 60,
+        }),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/api/metrics", listener.local_addr().unwrap());

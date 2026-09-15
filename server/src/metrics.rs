@@ -439,9 +439,11 @@ pub fn metrics_router(
     auth: Arc<AuthService>,
     access: Arc<crate::connection::AuthContext>,
     tales_ledger: std::path::PathBuf,
+    traffic: crate::traffic::TrafficMetrics,
 ) -> Router {
     metrics_routes(game, auth)
         .merge(heroic_tales::router(tales_ledger))
+        .merge(traffic.router())
         .route(
             "/api/metrics/session",
             get(|| async { StatusCode::NO_CONTENT }),

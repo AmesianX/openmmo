@@ -71,6 +71,8 @@ __pycache__/
 
 # Generated data files
 data/*.db
+data/network_metrics.db-shm
+data/network_metrics.db-wal
 data/npc_token
 data/bgm.json
 data/debuffs.json
