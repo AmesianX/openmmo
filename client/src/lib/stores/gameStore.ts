@@ -1,4 +1,5 @@
 import { manaState } from './manaStore'
+import { playerHealthDisplay } from './playerHealthDisplay'
 import { derived, get, writable } from 'svelte/store'
 import { SvelteMap } from 'svelte/reactivity'
 import type { Vector3 } from 'three'
@@ -29,7 +30,6 @@ export interface PlayerDamageInfo {
   damage: number
   hit: boolean
   trigger: number
-  currentHealth?: number
 }
 
 export interface PlayerGoldInfo {
@@ -117,6 +117,7 @@ const initialGameState: GameState = {
 }
 
 export const gameStore = writable<GameState>(initialGameState)
+gameStore.subscribe((state) => playerHealthDisplay.sync(state.currentPlayer))
 
 /** What the cursor is over (texted object, ground item or monster), or null.
  *  Single source of truth: each hover overlay reads the variant it renders,

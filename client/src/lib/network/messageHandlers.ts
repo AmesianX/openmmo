@@ -39,6 +39,7 @@ import {
   serverNotice,
 } from '../stores/gameStore'
 import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
+import { playerHealthDisplay } from '../stores/playerHealthDisplay'
 import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { FishingAnimationName } from '../types/animations'
@@ -308,15 +309,19 @@ function emitCurrentPlayerDamageInfo(
   currentHealth: number,
   delayMs: number
 ) {
+  const applyImpact = playerHealthDisplay.prepareImpact(
+    playerId,
+    hit,
+    currentHealth
+  )
   const emit = () => {
     const state = get(gameStore)
-    if (state.currentPlayer?.id !== playerId) return
+    if (state.currentPlayer?.id !== playerId || !applyImpact()) return
 
     updatePlayer(playerId, {
       lastDamageInfo: {
         damage,
         hit,
-        currentHealth,
         trigger: (state.currentPlayer.lastDamageInfo?.trigger ?? 0) + 1,
       },
     })

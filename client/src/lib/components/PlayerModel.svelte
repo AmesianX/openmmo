@@ -49,6 +49,7 @@
 
 <script lang="ts">
   import { visibleMana } from '../stores/gameStore'
+  import { playerHealthDisplay } from '../stores/playerHealthDisplay'
   import { RiderMotion } from '../utils/riderMotion'
   import {
     ENCHANT_WEAPON_ANIMATION,
@@ -284,25 +285,10 @@
   const damageText = new DamageTextEmitter()
   onDestroy(() => damageText.dispose())
 
-  // svelte-ignore state_referenced_locally
-  let displayedHealth = $state(health)
-
-  // Heals (and remote players) update the bar immediately; it never drops here.
-  $effect(() => {
-    if (!isCurrentPlayer || health >= displayedHealth) {
-      displayedHealth = health
-    }
-  })
-
-  // Damage drops the bar only when a new damage event arrives, keeping it in
-  // sync with the floating damage text (emitted on the same delay). A fresh
-  // lastDamageInfo object fires this once per hit; health is not a dependency,
-  // so a server health update alone won't drop the bar early.
-  $effect(() => {
-    if (isCurrentPlayer && lastDamageInfo) {
-      displayedHealth = lastDamageInfo.currentHealth ?? health
-    }
-  })
+  const displayedPlayerHealth = playerHealthDisplay.displayed
+  const displayedHealth = $derived(
+    isCurrentPlayer ? ($displayedPlayerHealth ?? health) : health
+  )
 
   let displayedHealthRatio = $derived(
     Math.max(0, Math.min(1, displayedHealth / (maxHealth || 1)))
