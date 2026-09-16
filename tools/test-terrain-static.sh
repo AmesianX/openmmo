@@ -11,7 +11,7 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$work/terrain/grass/r+00_+00" "$work/logs" "$work/cache"
-printf 'terrain-fixture' > "$work/terrain/grass/r+00_+00/g_+0000_+0000.bin"
+{ printf '\064\060\122\107\001'; head -c 12287 /dev/zero; } > "$work/terrain/grass/r+00_+00/g_+0000_+0000.bin"
 cargo run --quiet -p onlinerpg-terrain --bin terrain-snapshots -- "$work/terrain"
 snapshot=$(find "$work/terrain/snapshots/full/0/0" -type f | head -1)
 version=$(basename "$snapshot")
@@ -50,7 +50,7 @@ missing=$(printf '%064d' 0)
 code=$(curl --unix-socket "$work/nginx.sock" -sS -D "$work/missing-headers" -o /dev/null -w '%{http_code}' "http://localhost/api/terrain/snapshot/full/0/0/$missing")
 test "$code" = 404
 grep -qi 'Cache-Control: no-store' "$work/missing-headers"
-printf 'updated-fixture' > "$work/terrain/grass/r+00_+00/g_+0000_+0000.bin"
+{ printf '\064\060\122\107\002'; head -c 12287 /dev/zero; } > "$work/terrain/grass/r+00_+00/g_+0000_+0000.bin"
 cargo run --quiet -p onlinerpg-terrain --bin terrain-snapshots -- "$work/terrain"
 test "$(find "$work/terrain/snapshots/full/0/0" -type f | wc -l)" = 2
 curl --unix-socket "$work/nginx.sock" -fsS "$url" -o "$work/old-response"

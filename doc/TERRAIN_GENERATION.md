@@ -91,7 +91,7 @@ shared/src/worldgen/
   roads/               # Phase 6 (MST + K-NN A*; merge_parallel_runs +
                        #          merge_parallel_interiors; bridge snap)
   vector_features.rs   # polyline 공유 유틸 (Chaikin, RiverSegment, projection)
-  vegetation.rs        # Phase 8 (tree V1 + grass V3 per-tile binary)
+  vegetation.rs        # Phase 8 (tree V1 + grass V4 cell densities per-tile binary)
   grass_patches.rs     # warped-Voronoi grass patch field
   tile_bake/           # Phase 7 (per-tile bake)
     mod.rs             # 오케스트레이션 + BakeContext
@@ -173,7 +173,7 @@ terrain-gen probe-point  --seed <N> --at <X,Z>  [--at <X,Z> ...]
 - `splat/r±xx_±zz/s_±xxxxx_±zzzzz.bin` — 64×64×4 bytes (V2)
 - `river-field/r±xx_±zz/r_±xxxxx_±zzzzz.bin` — RFD1 (강 있는 타일만)
 - `trees/r±xx_±zz/t_±xxxxx_±zzzzz.bin` — Phase 8 tree V1
-- `grass/r±xx_±zz/g_±xxxxx_±zzzzz.bin` — Phase 8 grass V3
+- `grass/r±xx_±zz/g_±xxxxx_±zzzzz.bin` — Phase 8 grass V4 cell densities
 - `minimap/r±xx_±zz.png` — 1024px shaded-relief map tile
 - `minimap/{128,256,512}/r±xx_±zz.png` — 월드맵 줌별 LOD
 - `objects/r±xx_±zz.json` — region 단위 오브젝트 목록 (현재 bridge placements)
@@ -396,7 +396,7 @@ cargo run -p terrain-gen --release -- bake --seed 42
 | 5 — 정착지 | `settlements.rs` | habitability 필드 (coast/river dist, slope) + 4-phase greedy (A: 강 drainage basin 별 1 정착지 / B: 내륙 평야 / C: 고립 섬 / D: coverage gap-fill). |
 | 6 — 도로 | `roads/` | Prim MST + K-NN 추가 엣지 + 경사 페널티 A*. `merge_parallel_runs`, `snap_crossings_to_grid` 후처리로 bridge 위치 정렬. |
 | 7 — 타일 베이크 | `tile_bake/` | 65×65 heightmap + 64×64 V2 splatmap + RFD1 강 field (강 있는 타일만). 강 carve = flow-aware depth/width, bed floor clamp. |
-| 8 — 초목 | `vegetation.rs` | Phase 7 의 splatmap vegMeta 바이트(230–249) 를 읽어 tree V1 + grass V3 바이너리를 per-tile 출력. |
+| 8 — 초목 | `vegetation.rs` | Phase 7 의 splatmap vegMeta 바이트(230–249) 를 읽어 tree V1 + grass V4 cell densities 바이너리를 per-tile 출력. |
 
 ### 12.1 베이크 출력물
 
@@ -409,7 +409,7 @@ data/terrain/
   splat/r±xx_±zz/s_±xxxxx_±zzzzz.bin        # 64×64×4 (V2)
   river-field/r±xx_±zz/r_±xxxxx_±zzzzz.bin  # RFD1 (강 있는 타일만)
   trees/r±xx_±zz/t_±xxxxx_±zzzzz.bin        # V1
-  grass/r±xx_±zz/g_±xxxxx_±zzzzz.bin        # V3
+  grass/r±xx_±zz/g_±xxxxx_±zzzzz.bin        # V4: 3 counts per 1m cell
   minimap/r±xx_±zz.png                      # 1024px shaded-relief map tile
   minimap/{128,256,512}/r±xx_±zz.png        # 월드맵 줌별 LOD
   objects/r±xx_±zz.json                     # region 단위 오브젝트 (현재 bridges)

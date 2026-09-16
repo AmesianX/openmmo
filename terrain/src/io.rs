@@ -21,7 +21,7 @@ pub async fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
         .map_err(std::io::Error::other)?
 }
 
-fn atomic_write_sync(path: &Path, data: &[u8]) -> std::io::Result<()> {
+pub(crate) fn atomic_write_sync(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let existing_permissions = match std::fs::metadata(path) {
         Ok(metadata) => Some(metadata.permissions()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -305,24 +305,29 @@ impl TerrainIO {
         remove_files(&stale).await
     }
 
-    /// Read pre-computed grass placement data (variable-length binary).
-    /// Returns None if the file does not exist.
+    /// Read grass cell counts, upgrading legacy placements in memory.
     pub async fn read_grass(&self, tx: i32, tz: i32) -> std::io::Result<Option<Vec<u8>>> {
         let path = coords::grass_path(&self.base_dir, tx, tz);
         match fs::read(&path).await {
-            Ok(data) => match self.read_landscaping_tile(tx, tz).await? {
-                Some(tile) => crate::landscaping::filter_vegetation(data, &tile.cleared).map(Some),
-                None => Ok(Some(data)),
-            },
+            Ok(data) => {
+                let data = onlinerpg_shared::grass_format::into_grass_density(data)?;
+                match self.read_landscaping_tile(tx, tz).await? {
+                    Some(tile) => {
+                        crate::landscaping::filter_vegetation(data, &tile.cleared).map(Some)
+                    }
+                    None => Ok(Some(data)),
+                }
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
     }
 
-    /// Write pre-computed grass placement data (variable-length binary).
+    /// Store grass cell counts.
     pub async fn write_grass(&self, tx: i32, tz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::grass_path(&self.base_dir, tx, tz);
-        write_terrain_file(&path, data).await
+        let data = onlinerpg_shared::grass_format::grass_density(data)?;
+        write_terrain_file(&path, &data).await
     }
 
     /// Read original (pre-housing) heightmap. Returns None if not found.
@@ -420,7 +425,9 @@ impl TerrainIO {
     pub async fn read_original_grass(&self, tx: i32, tz: i32) -> std::io::Result<Option<Vec<u8>>> {
         let path = coords::original_grass_path(&self.base_dir, tx, tz);
         match fs::read(&path).await {
-            Ok(data) => Ok(Some(data)),
+            Ok(data) => Ok(Some(onlinerpg_shared::grass_format::into_grass_density(
+                data,
+            )?)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
@@ -429,7 +436,8 @@ impl TerrainIO {
     /// Write original (pre-housing) grass placement data.
     pub async fn write_original_grass(&self, tx: i32, tz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::original_grass_path(&self.base_dir, tx, tz);
-        write_terrain_file(&path, data).await
+        let data = onlinerpg_shared::grass_format::grass_density(data)?;
+        write_terrain_file(&path, &data).await
     }
 
     /// Copy current heightmap → original heightmap if original doesn't exist yet.

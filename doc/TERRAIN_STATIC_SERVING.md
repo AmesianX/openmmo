@@ -1,12 +1,14 @@
 # 지형 파일의 nginx 직접 제공
 
-지형의 HTTP URL과 MessagePack 형식은 프로토콜 81을 유지한다. 웹은 `full`, 에이전트는 높이·지면 재질만 포함하는 `ground`를 받는다. 게임 서버는 WebSocket으로 버전을 알리고, nginx는 준비된 파일을 읽어 제공한다.
+지형은 기존 HTTP URL과 MessagePack 래퍼를 사용한다. 프로토콜 82부터 풀 payload는 GR04 셀별 개수다. 웹은 `full`, 에이전트는 높이·지면 재질만 포함하는 `ground`를 받는다. 게임 서버는 WebSocket으로 버전을 알리고, nginx는 준비된 파일을 읽어 제공한다.
 
 ## 파일 준비
 
 ```bash
 cargo run --release -p onlinerpg-terrain --bin terrain-snapshots -- data/terrain
 ```
+
+준비 명령은 기존 V3 풀잎 목록도 V4 셀별 개수로 읽어 전송 본문에 담는다. 디스크의 원본까지 줄이려면 서버를 중지하고 [별도 변환 명령](VEGETATION_SYSTEM.md#기존-파일-변환)을 실행한다.
 
 `TERRAIN_DIR/snapshots/` 아래에 다음 파일을 만든다.
 

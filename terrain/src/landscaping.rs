@@ -2,9 +2,11 @@ use crate::{
     coords, defaults,
     io::{write_terrain_file, TerrainIO},
 };
+use onlinerpg_shared::grass_format::{into_grass_density, GRASS_V3_MAGIC, GRASS_V4_MAGIC};
 use onlinerpg_shared::landscaping::{is_cleared, LandscapingTile, CLEARED_BYTES};
-use onlinerpg_shared::tree_format::TREE_V1_MAGIC;
-use onlinerpg_shared::worldgen::vegetation::GRASS_V3_MAGIC;
+use onlinerpg_shared::tree_format::{
+    TREE_V1_BYTES_PER_INSTANCE, TREE_V1_HEADER_BYTES, TREE_V1_MAGIC,
+};
 use std::io;
 
 const MAGIC: &[u8; 4] = b"LND1";
@@ -55,35 +57,37 @@ impl TerrainIO {
 }
 
 pub fn filter_vegetation(data: Vec<u8>, cleared: &[u8]) -> io::Result<Vec<u8>> {
+    if data.starts_with(&GRASS_V4_MAGIC.to_le_bytes())
+        || data.starts_with(&GRASS_V3_MAGIC.to_le_bytes())
+    {
+        let mut data = into_grass_density(data)?;
+        for (index, cell) in data[4..].chunks_exact_mut(3).enumerate() {
+            if is_cleared(cleared, index) {
+                cell.fill(0);
+            }
+        }
+        return Ok(data);
+    }
     if cleared.iter().all(|b| *b == 0) {
         return Ok(data);
     }
     let invalid = || io::Error::new(io::ErrorKind::InvalidData, "Invalid vegetation tile");
-    if data.len() < 12 {
+    if data.len() < TREE_V1_HEADER_BYTES || !data.starts_with(&TREE_V1_MAGIC.to_le_bytes()) {
         return Err(invalid());
     }
     let read = |offset| u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-    let types = match read(0) {
-        TREE_V1_MAGIC => 2,
-        GRASS_V3_MAGIC => 3,
-        _ => return Err(invalid()),
-    };
-    let header = 4 + types * 4;
-    if data.len() < header {
-        return Err(invalid());
-    }
-    let counts: Vec<_> = (0..types).map(|i| read(4 + i * 4) as usize).collect();
+    let counts = [read(4) as usize, read(8) as usize];
     let total: usize = counts.iter().sum();
-    if data.len() != header + total * 6 {
+    if data.len() != TREE_V1_HEADER_BYTES + total * TREE_V1_BYTES_PER_INSTANCE {
         return Err(invalid());
     }
-    let mut output = data[..header].to_vec();
-    let mut offset = header;
+    let mut output = data[..TREE_V1_HEADER_BYTES].to_vec();
+    let mut offset = TREE_V1_HEADER_BYTES;
     for (kind, count) in counts.into_iter().enumerate() {
         let mut kept = 0u32;
         for _ in 0..count {
-            let instance = &data[offset..offset + 6];
-            offset += 6;
+            let instance = &data[offset..offset + TREE_V1_BYTES_PER_INSTANCE];
+            offset += TREE_V1_BYTES_PER_INSTANCE;
             let x = u16::from_le_bytes(instance[..2].try_into().unwrap()) as usize * 64 / 65535;
             let z = u16::from_le_bytes(instance[2..4].try_into().unwrap()) as usize * 64 / 65535;
             if x < 64 && z < 64 && is_cleared(cleared, z * 64 + x) {
@@ -123,6 +127,12 @@ mod tests {
         clear_cell(&mut mask, 0);
         for (magic, types) in [(TREE_V1_MAGIC, 2), (GRASS_V3_MAGIC, 3)] {
             let data = filter_vegetation(vegetation(magic, types), &mask).unwrap();
+            if magic == GRASS_V3_MAGIC {
+                assert_eq!(data.len(), onlinerpg_shared::grass_format::GRASS_FILE_BYTES);
+                assert_eq!(&data[4..7], &[0; 3]);
+                assert_eq!(data[4..].iter().map(|&n| n as usize).sum::<usize>(), 3);
+                continue;
+            }
             assert_eq!(data.len(), 4 + types * 4 + types * 6);
             for kind in 0..types {
                 assert_eq!(
@@ -156,7 +166,8 @@ mod tests {
         terrain.write_landscaping_tile(&tile).await.unwrap();
         let restarted = TerrainIO::new(dir.clone());
         assert_eq!(restarted.read_splatmap(0, 0).await.unwrap()[0], 0x55);
-        assert_eq!(restarted.read_grass(0, 0).await.unwrap().unwrap().len(), 34);
+        let grass = restarted.read_grass(0, 0).await.unwrap().unwrap();
+        assert_eq!(grass[4..].iter().map(|&n| n as usize).sum::<usize>(), 3);
         assert_eq!(restarted.read_trees(0, 0).await.unwrap().unwrap().len(), 24);
         restarted
             .write_splatmap(0, 0, &defaults::default_splatmap())

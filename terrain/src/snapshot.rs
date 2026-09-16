@@ -12,7 +12,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-const SNAPSHOT_FORMAT: u32 = 1;
+const SNAPSHOT_FORMAT: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SourceStamp {
@@ -324,6 +324,12 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    fn grass(count: u8) -> Vec<u8> {
+        let mut data = onlinerpg_shared::grass_format::empty_grass();
+        data[4] = count;
+        data
+    }
+
     fn terrain() -> TerrainIO {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         TerrainIO::new(std::env::temp_dir().join(format!(
@@ -368,7 +374,7 @@ mod tests {
         io.write_heightmap(0, 0, &crate::defaults::default_heightmap())
             .await
             .unwrap();
-        io.write_grass(0, 0, &[1; 64]).await.unwrap();
+        io.write_grass(0, 0, &grass(1)).await.unwrap();
         io.write_splatmap(1, 0, &crate::defaults::default_splatmap())
             .await
             .unwrap();
@@ -384,7 +390,7 @@ mod tests {
             versions(restarted.snapshot_versions(0, 0).await.unwrap()),
             first
         );
-        io.write_grass(0, 0, &[2; 96]).await.unwrap();
+        io.write_grass(0, 0, &grass(2)).await.unwrap();
         let deployed = TerrainIO::new(io.base_dir().clone());
         assert_eq!(deployed.prepare_snapshots().await.unwrap(), 2);
         let changed = versions(deployed.snapshot_versions(0, 0).await.unwrap());
@@ -430,7 +436,7 @@ mod tests {
     #[tokio::test]
     async fn preparation_repairs_missing_bodies_and_detects_deleted_source_tiles() {
         let io = terrain();
-        io.write_grass(-1, -1, &[3; 100]).await.unwrap();
+        io.write_grass(-1, -1, &grass(3)).await.unwrap();
         io.prepare_snapshots().await.unwrap();
         let first = versions(io.snapshot_versions(-1, -1).await.unwrap());
         let ground = io.snapshot_path("ground", -1, -1, &first.1).unwrap();
@@ -454,7 +460,7 @@ mod tests {
         let ground_dir = io.snapshot_dir().join("ground/0/0");
         tokio::fs::remove_dir_all(&ground_dir).await.unwrap();
         tokio::fs::write(&ground_dir, b"blocked").await.unwrap();
-        io.write_grass(0, 0, &[5; 20]).await.unwrap();
+        io.write_grass(0, 0, &grass(5)).await.unwrap();
         assert!(io.rebuild_snapshot(0, 0).await.is_err());
         let entry: SnapshotEntry =
             serde_json::from_slice(&tokio::fs::read(io.snapshot_index_path(0, 0)).await.unwrap())

@@ -16,6 +16,7 @@ pub mod fence;
 pub mod fishing;
 pub mod fnv;
 pub mod furniture;
+pub mod grass_format;
 pub mod housing;
 pub mod hunger;
 pub mod interest;
@@ -166,7 +167,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v78: server-wide rain overrides in WeatherSync.
 /// v79: owner-only ManaUpdate and Guardian Ward's MP cost.
 /// v80: revisioned world subscriptions, full terrain snapshots and resync.
-pub const PROTOCOL_VERSION: u32 = 81;
+/// v82: Grass payloads store per-cell counts (GR04).
+pub const PROTOCOL_VERSION: u32 = 82;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

@@ -1,8 +1,8 @@
 use super::*;
 use onlinerpg_shared::{
+    grass_format::GRASS_V3_MAGIC,
     housing::{HouseData, RoomType},
     tree_format::TREE_V1_MAGIC,
-    worldgen::vegetation::GRASS_V3_MAGIC,
 };
 use onlinerpg_terrain::height::encode_height;
 use onlinerpg_terrain::land::{plot_addr, LandGrade, REGION_PLOTS};
@@ -108,7 +108,10 @@ async fn house_scroll_builds_only_inside_the_owned_estate_and_persists_consumpti
         bag_item(2, "scroll_of_small_house", 1),
         bag_item(4, onlinerpg_shared::landscaping::TOOLBOX_ITEM, 1),
     ];
-    let grass = vegetation(GRASS_V3_MAGIC, 3, 6.0, 6.0);
+    let grass =
+        onlinerpg_shared::grass_format::grass_density(&vegetation(GRASS_V3_MAGIC, 3, 6.0, 6.0))
+            .unwrap()
+            .into_owned();
     let original_heightmap = sloped_heightmap();
     game.save_terrain_heightmap(0, 0, &original_heightmap)
         .await
@@ -189,10 +192,7 @@ async fn house_scroll_builds_only_inside_the_owned_estate_and_persists_consumpti
             .unwrap(),
         original_heightmap
     );
-    assert_eq!(
-        u32::from_le_bytes(cleared_grass[4..8].try_into().unwrap()),
-        0
-    );
+    assert!(cleared_grass[4..].iter().all(|&count| count == 0));
     assert_eq!(
         u32::from_le_bytes(cleared_trees[4..8].try_into().unwrap()),
         0

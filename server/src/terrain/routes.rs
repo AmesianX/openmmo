@@ -772,10 +772,9 @@ mod tests {
         use onlinerpg_shared::{deserialize_server_msg, ServerMessage};
         use onlinerpg_terrain::snapshot::{content_version, encode_snapshot};
         let terrain = Arc::new(TerrainIO::new(unique_temp_dir("http_snapshot_tiles")));
-        terrain
-            .write_grass(0, 0, &vec![0; 256 * 1024])
-            .await
-            .unwrap();
+        let mut grass_data = onlinerpg_shared::grass_format::empty_grass();
+        grass_data[4] = 64;
+        terrain.write_grass(0, 0, &grass_data).await.unwrap();
         let ServerMessage::TerrainTileVersion {
             version,
             ground_version,
@@ -816,7 +815,7 @@ mod tests {
                 assert!(trees.is_none() && grass.is_none() && landscape.is_none());
                 assert!(bytes.len() < 26000);
             } else {
-                assert_eq!(grass.unwrap().len(), 256 * 1024);
+                assert_eq!(grass.unwrap(), grass_data);
             }
             let mut headers = HeaderMap::new();
             headers.insert(header::IF_NONE_MATCH, etag.parse().unwrap());
@@ -832,7 +831,8 @@ mod tests {
             encode_snapshot(&notice).unwrap(),
             encode_snapshot(&reopened.snapshot_versions(0, 0).await.unwrap()).unwrap()
         );
-        terrain.write_grass(0, 0, &[1; 64]).await.unwrap();
+        grass_data[4] = 1;
+        terrain.write_grass(0, 0, &grass_data).await.unwrap();
         let ServerMessage::TerrainTileVersion {
             version: next,
             ground_version: ground_next,

@@ -32,18 +32,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use onlinerpg_shared::housing::{HouseData, RoomData};
 #[cfg(test)]
-use onlinerpg_shared::worldgen::vegetation::{
-    GRASS_V3_BYTES_PER_INSTANCE, GRASS_V3_HEADER_BYTES, GRASS_V3_MAGIC,
-};
+use onlinerpg_shared::grass_format::{GRASS_FILE_BYTES, GRASS_V3_MAGIC, GRASS_V4_MAGIC};
+use onlinerpg_shared::housing::{HouseData, RoomData};
 #[cfg(test)]
 use onlinerpg_terrain::defaults::TILE_DIM;
 #[cfg(test)]
 use onlinerpg_terrain::height::{decode_height, encode_height};
 use onlinerpg_terrain::{
-    coords, defaults::HEIGHTMAP_SIZE, grass::filter_grass_v3_bytes_in_rects,
-    height::flatten_heightmap_tile, trees::TreeExclusionRect,
+    coords, defaults::HEIGHTMAP_SIZE, grass::filter_grass_in_rects, height::flatten_heightmap_tile,
+    trees::TreeExclusionRect,
 };
 
 use crate::prune_house_trees::{
@@ -299,7 +297,7 @@ fn clear_grass(
             Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
         };
 
-        let Some((filtered, removed)) = filter_grass_v3_bytes_in_rects(tx, tz, &data, &rects)
+        let Some((filtered, removed)) = filter_grass_in_rects(tx, tz, &data, &rects)
             .with_context(|| format!("filter {}", path.display()))?
         else {
             continue;
@@ -311,8 +309,11 @@ fn clear_grass(
                 if let Some(parent) = orig_path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                fs::write(&orig_path, &data)
-                    .with_context(|| format!("write {}", orig_path.display()))?;
+                fs::write(
+                    &orig_path,
+                    onlinerpg_shared::grass_format::grass_density(&data)?,
+                )
+                .with_context(|| format!("write {}", orig_path.display()))?;
             }
             fs::write(&path, &filtered).with_context(|| format!("write {}", path.display()))?;
         }
@@ -409,8 +410,7 @@ pub fn run(options: ApplyOptions) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// Build a V3 grass buffer from per-bucket instance positions (local
-    /// tile-space metres), mirroring `encode_grass_v3`'s quantization.
+    /// Legacy placements in tile-local meters.
     fn encode_grass(buckets: [&[(f32, f32)]; 3]) -> Vec<u8> {
         let pos_scale = 65535.0 / TILE_DIM as f32;
         let mut out = Vec::new();
@@ -440,26 +440,18 @@ mod tests {
 
     #[test]
     fn grass_filter_removes_only_instances_inside_rect() {
-        // Tile (0,0) covers world x/z in [-32, 32). Local 32m → world ~0.
-        // Instance A at local (32,32) ≈ world (0,0)   → inside rect
-        // Instance B at local (52,32) ≈ world (20,0)  → outside rect
-        let data = encode_grass([&[(32.0, 32.0)], &[(52.0, 32.0)], &[]]);
+        let data = encode_grass([&[(32.0, 32.0)], &[(52.5, 32.0)], &[]]);
         let rect: Rect = [-5.0, -5.0, 5.0, 5.0];
 
-        let (out, removed) = filter_grass_v3_bytes_in_rects(0, 0, &data, &[rect])
+        let (out, removed) = filter_grass_in_rects(0, 0, &data, &[rect])
             .unwrap()
             .unwrap();
         assert_eq!(removed, 1);
 
-        // Header counts: short dropped to 0, tall kept 1, flower 0.
-        assert_eq!(read_u32_le(&out, 0), GRASS_V3_MAGIC);
-        assert_eq!(read_u32_le(&out, 4), 0);
-        assert_eq!(read_u32_le(&out, 8), 1);
-        assert_eq!(read_u32_le(&out, 12), 0);
-        assert_eq!(
-            out.len(),
-            GRASS_V3_HEADER_BYTES + GRASS_V3_BYTES_PER_INSTANCE
-        );
+        assert_eq!(read_u32_le(&out, 0), GRASS_V4_MAGIC);
+        assert_eq!(out.len(), GRASS_FILE_BYTES);
+        assert_eq!(out[4..].iter().map(|&n| n as usize).sum::<usize>(), 1);
+        assert_eq!(out[4 + (32 * TILE_DIM + 52) * 3 + 1], 1);
     }
 
     #[test]
@@ -467,7 +459,7 @@ mod tests {
         let data = encode_grass([&[(10.0, 10.0)], &[], &[]]);
         // Rect far from the single blade at world ~(-22,-22).
         let rect: Rect = [100.0, 100.0, 110.0, 110.0];
-        assert!(filter_grass_v3_bytes_in_rects(0, 0, &data, &[rect])
+        assert!(filter_grass_in_rects(0, 0, &data, &[rect])
             .unwrap()
             .is_none());
     }
@@ -476,6 +468,6 @@ mod tests {
     fn grass_filter_rejects_bad_magic() {
         let mut data = encode_grass([&[(1.0, 1.0)], &[], &[]]);
         data[0] = 0xff;
-        assert!(filter_grass_v3_bytes_in_rects(0, 0, &data, &[[0.0, 0.0, 1.0, 1.0]]).is_err());
+        assert!(filter_grass_in_rects(0, 0, &data, &[[0.0, 0.0, 1.0, 1.0]]).is_err());
     }
 }
