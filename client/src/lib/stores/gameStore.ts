@@ -3,7 +3,7 @@ import { playerHealthDisplay } from './playerHealthDisplay'
 import { derived, get, writable } from 'svelte/store'
 import { SvelteMap } from 'svelte/reactivity'
 import type { Vector3 } from 'three'
-import type { CharacterClass, Gender } from '../network/networkTypes'
+import type { CharacterClass, Gender, MountKind } from '../network/networkTypes'
 import type { HoverTarget } from '../managers/inputHandler'
 import { resetInventoryStore } from './inventoryStore'
 import { resetLandClaimPreview } from './landClaimStore'
@@ -46,7 +46,7 @@ interface PlayerBase {
   maxHealth: number
   characterClass: CharacterClass
   gender: Gender
-  mounted?: boolean
+  mount?: MountKind | null
   torchOn?: boolean
   radianceOn?: boolean
   /** Soaked, so nearby clients draw wet footprints (doc/DEBUFF.md). */

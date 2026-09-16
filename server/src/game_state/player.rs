@@ -965,7 +965,7 @@ impl super::GameState {
             return;
         }
         new_position.x = wrap_world_x(new_position.x);
-        let (current_floor, current_position, health, posed, received_pose) = {
+        let (current_floor, current_position, health, posed, received_pose, mount) = {
             let players = self.players.read().await;
             match players.get(player_id) {
                 Some(p) => (
@@ -974,6 +974,7 @@ impl super::GameState {
                     p.health,
                     p.object_type.is_some(),
                     Pose::from(p),
+                    p.mount,
                 ),
                 None => {
                     warn!("Attempted to move non-existent player: {}", player_id);
@@ -1054,7 +1055,7 @@ impl super::GameState {
         }
         if floor_level >= 0 {
             new_position.y = self
-                .surface_ground_y(floor_level as u8, &new_position, leg_start.y)
+                .surface_ground_y(floor_level as u8, &new_position, leg_start.y, mount)
                 .await;
         }
         // Pre-read: the write lock is only worth taking for a posed mover.
@@ -1147,15 +1148,14 @@ impl super::GameState {
         let Some(player) = self.players.read().await.get(player_id).cloned() else {
             return;
         };
-        let eligible = player.mounted
-            && player.health > 0
-            && player.floor_level == 0
-            && !Self::in_combat(&player)
-            && goal.is_finite();
+        let eligible =
+            Self::can_steer_mount(&player) && player.floor_level == 0 && goal.is_finite();
         let mut target = if eligible {
             let hunger = self.hunger_movement_profiles_for(&[*player_id]).await;
             let speed = PLAYER_MOVE_SPEED
-                * onlinerpg_shared::world::HORSE_MOVE_MULT
+                * player
+                    .mount
+                    .map_or(1.0, onlinerpg_shared::mount::MountKind::speed_mult)
                 * hunger.get(player_id).map_or(1.0, |p| p.0);
             onlinerpg_shared::mount_movement::recovery_target(
                 &self.passability_read(),
@@ -1163,6 +1163,9 @@ impl super::GameState {
                 player.rotation,
                 goal,
                 speed,
+                player
+                    .mount
+                    .map_or(0.0, onlinerpg_shared::mount::MountKind::turn_radius),
             )
         } else {
             None
@@ -1170,8 +1173,11 @@ impl super::GameState {
         if let Some(end) = target.as_mut() {
             let distance = player.position.dist_xz_sq(end).sqrt();
             let count = (distance / 0.1).ceil() as usize;
+            // Probe on the surface the mount actually rests on, or a boat's
+            // reversing path is measured along the seabed it floats over.
+            let kind = player.mount;
             let mut previous_y = self
-                .surface_ground_y(0, &player.position, player.position.y)
+                .surface_ground_y(0, &player.position, player.position.y, kind)
                 .await;
             let mut probe = player.clone();
             for i in 1..=count {
@@ -1183,8 +1189,11 @@ impl super::GameState {
                     y: player.position.y,
                     z: player.position.z + (end.z - player.position.z) * t,
                 };
-                probe.position.y = self.surface_ground_y(0, &probe.position, previous_y).await;
-                if (probe.position.y - previous_y).abs() > 0.15 || !self.can_ride_here(&probe).await
+                probe.position.y = self
+                    .surface_ground_y(0, &probe.position, previous_y, kind)
+                    .await;
+                if (probe.position.y - previous_y).abs() > 0.15
+                    || !matches!(kind, Some(k) if self.can_ride_here(&probe, k).await)
                 {
                     target = None;
                     break;
@@ -1197,11 +1206,9 @@ impl super::GameState {
         let Some(current) = self.players.read().await.get(player_id).cloned() else {
             return;
         };
-        if !current.mounted
+        if !Self::can_steer_mount(&current)
             || current.floor_level != 0
             || current.object_type.is_some()
-            || current.health == 0
-            || Self::in_combat(&current)
             || current.position != player.position
             || current.rotation != player.rotation
         {
@@ -1234,7 +1241,7 @@ impl super::GameState {
             .read()
             .await
             .get(player_id)
-            .is_some_and(|p| p.mounted)
+            .is_some_and(|p| p.is_mounted())
         {
             queues.remove(player_id);
         }
@@ -1249,7 +1256,7 @@ impl super::GameState {
         let Some(player) = players.get(player_id) else {
             return;
         };
-        if !player.mounted || player.health == 0 || Self::in_combat(player) {
+        if !Self::can_steer_mount(player) {
             return;
         }
         let queue = queues.entry(*player_id).or_default();
@@ -1270,7 +1277,7 @@ impl super::GameState {
     /// broadcast the results. A tick's budget can span several short legs;
     /// consumed waypoints are popped in place, finished queues dropped.
     pub async fn tick_player_movement(&self, dt: f32) {
-        self.validate_horse_mounts().await;
+        self.validate_mounts().await;
         // Exactly the client's speed: headroom ran the sim to the leg end
         // ahead of the client, and monsters swung at that empty spot.
         let base_step = PLAYER_MOVE_SPEED * dt.max(0.0);
@@ -1296,7 +1303,7 @@ impl super::GameState {
                 };
                 let recovery = waypoints.front().and_then(|i| i.recovery);
                 if let Some(request_id) = recovery {
-                    if !player.mounted || player.health == 0 || Self::in_combat(player) {
+                    if !Self::can_steer_mount(player) {
                         recovery_updates.push((
                             *player_id,
                             Self::mount_recovery_update(player, request_id, true, false),
@@ -1316,11 +1323,9 @@ impl super::GameState {
                 let sprinting = waypoints
                     .front()
                     .is_some_and(|intent| intent.sprinting && sprint_allowed);
-                let mount_mult = if player.mounted {
-                    onlinerpg_shared::world::HORSE_MOVE_MULT
-                } else {
-                    1.0
-                };
+                let mount_mult = player
+                    .mount
+                    .map_or(1.0, onlinerpg_shared::mount::MountKind::speed_mult);
                 let base_step = if recovery.is_some() {
                     onlinerpg_shared::mount_movement::BACKWARD_SPEED * dt.max(0.0) / mount_mult
                 } else {
@@ -1361,11 +1366,11 @@ impl super::GameState {
                             player.rotation,
                             travel >= dist,
                         )
-                    } else if player.mounted {
+                    } else if let Some(kind) = player.mount {
                         use onlinerpg_shared::mount_movement::{
                             angle_delta, arc_step, turn_duration, ARRIVAL_DISTANCE, STEP_SECONDS,
-                            TURN_RADIUS,
                         };
+                        let turn_radius = kind.turn_radius();
                         if time_left <= 1e-7 {
                             break;
                         }
@@ -1386,9 +1391,9 @@ impl super::GameState {
                             step_time = step_time.min(turn_duration(delta));
                         }
                         let radius = if intent.turn_only {
-                            TURN_RADIUS
+                            turn_radius
                         } else {
-                            TURN_RADIUS.min(dist / 4.0)
+                            turn_radius.min(dist / 4.0)
                         };
                         let (arc_x, arc_z, rotation) =
                             arc_step(player.rotation, desired, speed, step_time, radius);
@@ -1441,7 +1446,7 @@ impl super::GameState {
                     if intent.check_collision {
                         let step_floor =
                             super::passability::authoritative_floor(&cache, &player.position);
-                        let outcome = if player.mounted {
+                        let outcome = if player.is_mounted() {
                             super::passability::wrapped_block_info(
                                 &cache,
                                 player.position.x,
@@ -1537,7 +1542,7 @@ impl super::GameState {
                         player.floor_level = intent.floor_level;
                         budget -= dist;
                         waypoints.pop_front();
-                    } else if !player.mounted {
+                    } else if !player.is_mounted() {
                         break;
                     }
                 }
@@ -1559,6 +1564,7 @@ impl super::GameState {
                         to: player.position,
                         floor_level: player.floor_level,
                         is_official_npc: player.is_official_npc,
+                        mount: player.mount,
                     });
                 }
                 if position_changed
@@ -1933,10 +1939,10 @@ impl super::GameState {
                 .await;
             return;
         }
-        let (current_floor, position, is_official_npc) = {
+        let (current_floor, position, is_official_npc, mount) = {
             let players = self.players.read().await;
             match players.get(player_id) {
-                Some(p) => (p.floor_level, p.position, p.is_official_npc),
+                Some(p) => (p.floor_level, p.position, p.is_official_npc, p.mount),
                 None => return,
             }
         };
@@ -1964,7 +1970,7 @@ impl super::GameState {
                 )
                 .await;
             let y = self
-                .surface_ground_y(floor as u8, &position, position.y)
+                .surface_ground_y(floor as u8, &position, position.y, mount)
                 .await;
             (floor, y)
         };

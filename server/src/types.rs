@@ -56,7 +56,7 @@ pub fn new_player(
         last_combat_at: 0,
         client_kind,
         back_color: None,
-        mounted: false,
+        mount: None,
         ready_at: crate::game_state::GameState::now_ms() + WORLD_LOADING_GRACE_MS,
     }
 }

@@ -124,6 +124,24 @@ pub fn fishing_trophy_min_tension() -> f32 {
     crate::fishing::TROPHY_MIN_TENSION
 }
 
+/// Mount tuning by wire kind (`shared/src/mount.rs`). The client predicts
+/// movement with these, so it reads the server's table rather than keeping
+/// a copy that can drift. An unknown kind answers as "on foot".
+#[wasm_bindgen]
+pub fn mount_speed_mult(kind: &str) -> f32 {
+    crate::mount::MountKind::from_wire(kind).map_or(1.0, |k| k.speed_mult())
+}
+
+#[wasm_bindgen]
+pub fn mount_turn_radius(kind: &str) -> f32 {
+    crate::mount::MountKind::from_wire(kind).map_or(0.0, |k| k.turn_radius())
+}
+
+#[wasm_bindgen]
+pub fn mount_floats(kind: &str) -> bool {
+    crate::mount::MountKind::from_wire(kind).is_some_and(|k| k.floats())
+}
+
 /// Live instrument batch window, so the client flushes on the server's clock.
 #[wasm_bindgen]
 pub fn instrument_batch_ms() -> u32 {

@@ -762,12 +762,12 @@ impl SharedState {
                     self.nearby_players.insert(player.id, player.clone());
                 }
             }
-            ServerMessage::PlayerMountChanged { player_id, mounted } => {
+            ServerMessage::PlayerMountChanged { player_id, mount } => {
                 if let Some(p) = self.nearby_players.get_mut(player_id) {
-                    p.mounted = *mounted;
+                    p.mount = *mount;
                 }
                 if let Some(me) = self.self_player.as_mut().filter(|me| me.id == *player_id) {
-                    me.mounted = *mounted;
+                    me.mount = *mount;
                 }
             }
             ServerMessage::PlayerTitleChanged { player_id, title } => {

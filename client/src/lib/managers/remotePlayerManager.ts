@@ -10,7 +10,6 @@ import {
   hasTargetChanged,
   DEFAULT_MOVEMENT_CONFIG,
   SPRINT_SPEED_MULT,
-  HORSE_MOVE_MULT,
   scaleMovementConfig,
   type Position,
   type MovementState,
@@ -19,8 +18,11 @@ import {
 } from '../utils/movementUtils'
 import { entityGroundY } from './entity-ground'
 import { FishingAnimationName, SitAnimationName } from '../types/animations'
-import { shortestWrappedDeltaX } from '../terrain/world-wrap'
+import { shortestWrappedDeltaX, wrapWorldX } from '../terrain/world-wrap'
 import type { TerrainHeightManager } from './terrainHeightManager'
+import { mountFloats, mountSpeedMult } from '../utils/mounts'
+import { isMounted } from '../utils/mounts'
+import type { MountKind } from '../network/networkTypes'
 
 // Use the same movement config as local player
 const MOVEMENT_CONFIG: MovementConfig = {
@@ -31,14 +33,23 @@ const SPRINT_MOVEMENT_CONFIG = scaleMovementConfig(
   SPRINT_SPEED_MULT
 )
 
-const HORSE_MOVEMENT_CONFIG = scaleMovementConfig(
-  MOVEMENT_CONFIG,
-  HORSE_MOVE_MULT
-)
-const HORSE_SPRINT_MOVEMENT_CONFIG = scaleMovementConfig(
-  SPRINT_MOVEMENT_CONFIG,
-  HORSE_MOVE_MULT
-)
+/** Built once per mount kind the session actually sees. */
+const mountedConfigs = new Map<string, MovementConfig>()
+
+function movementConfigFor(
+  mount: MountKind | null | undefined,
+  sprinting: boolean
+): MovementConfig {
+  const base = sprinting ? SPRINT_MOVEMENT_CONFIG : MOVEMENT_CONFIG
+  if (!mount) return base
+  const key = `${mount}:${sprinting}`
+  let config = mountedConfigs.get(key)
+  if (!config) {
+    config = scaleMovementConfig(base, mountSpeedMult(mount))
+    mountedConfigs.set(key, config)
+  }
+  return config
+}
 
 /// Far enough that the player went somewhere, rather than the resting flush
 /// that lands on the spot they already stopped at.
@@ -59,6 +70,27 @@ class PlayerStateManager {
     const position = this.players.get(playerId)?.position
     const target = this.targetPositions.get(playerId)
     return !!position && !!target && movedFar(position, target)
+  }
+
+  /** Baked water surface, injected alongside heightManager. Floating mounts
+   *  ride it instead of the bed below. */
+  waterSurfaceAt: ((x: number, z: number) => number) | null = null
+
+  /** Guards `waterSurfaceAt`: a tile still loading answers sea level. */
+  hasWaterSurfaceData: ((x: number, z: number) => boolean) | null = null
+
+  /** Water surface under a floating mount, else null — the remote-player
+   *  mirror of PlayerControl's own float sampling. */
+  floatSurfaceY(mount: MountKind | null, x: number, z: number): number | null {
+    if (!mountFloats(mount) || !this.waterSurfaceAt || !this.heightManager) {
+      return null
+    }
+    const wx = wrapWorldX(x)
+    if (!this.heightManager.hasHeightData(wx, z)) return null
+    if (this.hasWaterSurfaceData?.(wx, z) === false) return null
+    const surface = this.waterSurfaceAt(wx, z)
+    const bed = this.heightManager.getHeightAtWorldPosition(wx, z)
+    return surface - bed > 0 ? surface : null
   }
 
   // Attack animation duration in seconds (updated from actual animation data)
@@ -167,14 +199,9 @@ class PlayerStateManager {
 
       // Calculate movement step
       const sprinting = this.targetSprinting.get(playerId) ?? false
-      const mounted = otherPlayers.get(playerId)?.mounted
-      const movementConfig = mounted
-        ? sprinting
-          ? HORSE_SPRINT_MOVEMENT_CONFIG
-          : HORSE_MOVEMENT_CONFIG
-        : sprinting
-          ? SPRINT_MOVEMENT_CONFIG
-          : MOVEMENT_CONFIG
+      const mount = otherPlayers.get(playerId)?.mount ?? null
+      const mounted = isMounted({ mount })
+      const movementConfig = movementConfigFor(mount, sprinting)
       const result = calculateMovementStep(
         currentPos,
         movement,
@@ -194,13 +221,15 @@ class PlayerStateManager {
       // move protocol has no per-waypoint Y, so the ground has to be
       // resampled here. Without it a remote keeps the Y it entered the floor
       // with, which reads as sinking through dungeon and house stairs.
-      result.newPos.y = entityGroundY(
-        this.heightManager,
-        otherPlayers.get(playerId)?.floorLevel ?? 0,
-        result.newPos.x,
-        result.newPos.z,
-        currentPos.y
-      )
+      result.newPos.y =
+        this.floatSurfaceY(mount, result.newPos.x, result.newPos.z) ??
+        entityGroundY(
+          this.heightManager,
+          otherPlayers.get(playerId)?.floorLevel ?? 0,
+          result.newPos.x,
+          result.newPos.z,
+          currentPos.y
+        )
 
       // Update movement state
       movement.currentSpeed = result.newSpeed

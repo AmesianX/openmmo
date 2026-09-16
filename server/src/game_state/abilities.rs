@@ -214,7 +214,7 @@ impl GameState {
         let players = self.players.read().await;
         let caster = players
             .get(player_id)
-            .filter(|p| p.is_damageable(Self::now_ms()) && !p.mounted)
+            .filter(|p| p.is_damageable(Self::now_ms()) && !p.is_mounted())
             .ok_or(AbilityRejectReason::Unavailable)?;
         let chars = self.player_characters.read().await;
         let character = chars
@@ -298,7 +298,7 @@ impl GameState {
         let players = self.players.read().await;
         let caster = players
             .get(player_id)
-            .filter(|p| p.is_damageable(Self::now_ms()) && !p.mounted)
+            .filter(|p| p.is_damageable(Self::now_ms()) && !p.is_mounted())
             .ok_or(AbilityRejectReason::Unavailable)?;
         let chars = self.player_characters.read().await;
         let character = chars
@@ -337,7 +337,9 @@ impl GameState {
         let caster = players
             .get(player_id)
             .filter(|p| {
-                p.class == CharacterClass::Knight && p.is_damageable(Self::now_ms()) && !p.mounted
+                p.class == CharacterClass::Knight
+                    && p.is_damageable(Self::now_ms())
+                    && !p.is_mounted()
             })
             .ok_or(AbilityRejectReason::Unavailable)?;
         let chars = self.player_characters.read().await;

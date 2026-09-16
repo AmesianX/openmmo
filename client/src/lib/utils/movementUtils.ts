@@ -33,6 +33,9 @@ export function positionShortOfTarget(
 
 export interface MovementConfig {
   mountRotation?: number
+  /** Arc radius of the mount being predicted. Absent means the horse's, so
+   *  existing callers and tests keep their behaviour. */
+  mountTurnRadius?: number
   maxSpeed: number
   acceleration: number
   deceleration: number
@@ -145,7 +148,6 @@ export const DEFAULT_MOVEMENT_CONFIG: MovementConfig = {
 
 // Mirrors shared/src/hunger.rs SPRINT_MOVE_MULT.
 export const SPRINT_SPEED_MULT = 1.5
-export const HORSE_MOVE_MULT = 3
 
 export function scaleMovementConfig(
   config: MovementConfig,
@@ -190,7 +192,8 @@ export function calculateMovementStep(
       config.maxSpeed,
       deltaTimeSeconds,
       movement.targetPos,
-      config.arrivalThreshold
+      config.arrivalThreshold,
+      config.mountTurnRadius
     )
   }
   const { targetPos, totalDistance } = movement

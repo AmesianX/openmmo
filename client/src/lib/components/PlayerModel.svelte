@@ -73,6 +73,9 @@
   import type { Vector3 } from 'three'
   import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
   import { onDestroy, onMount, untrack } from 'svelte'
+  import { BoatMount, ROWBOAT_MODEL_PATH } from '../utils/boatMount'
+  import { seatedFishingClip } from '../utils/seatedFishing'
+  import type { MountKind } from '../network/networkTypes'
   import { SvelteMap } from 'svelte/reactivity'
   import { get } from 'svelte/store'
   import { timeScale } from '../stores/timeStore'
@@ -179,7 +182,7 @@
     playerState: PlayerStateName
     interactionAnim?: string
     interactionCounter?: number
-    mounted?: boolean
+    mount?: MountKind | null
     interactOffsetY?: number
     attackCounter?: number
     hitCounter?: number
@@ -233,7 +236,7 @@
     playerState,
     interactionAnim,
     interactionCounter,
-    mounted = false,
+    mount = null,
     interactOffsetY = 0,
     attackCounter,
     hitCounter,
@@ -329,17 +332,46 @@
   let currentAction = $state<THREE.AnimationAction | null>(null)
   let modelRoot = $state<THREE.Group | null>(null)
   let horseMount = $state<HorseMount | null>(null)
+  let boatMount = $state<BoatMount | null>(null)
   let riderGroup = $state<THREE.Group | undefined>()
   let ridingClip: THREE.AnimationClip | null = null
   let riderMotion: RiderMotion | null = null
   let horseReins: HorseReins | null = null
   const seatPosition = new THREE.Vector3()
+  /// The horse pose fights the attack and interact clips; the boat is just
+  /// furniture the rider sits on, so it stays put through both.
   const riding = $derived(
-    mounted &&
+    mount === 'horse' &&
       health > 0 &&
       playerState !== 'attack' &&
       playerState !== 'interact'
   )
+  const boating = $derived(mount === 'rowboat' && health > 0)
+
+  $effect(() => {
+    if (!boating) return
+    let cancelled = false
+    let boat: BoatMount | null = null
+    // Wait for the chair clips too: played before they land, the seated
+    // branch finds nothing and the rider stands in the hull until the next
+    // state change, which while idle never comes.
+    void Promise.all([loadGLB(ROWBOAT_MODEL_PATH), loadSocialAnimations()])
+      .then(([gltf]) => {
+        if (cancelled) return
+        boat = new BoatMount(gltf)
+        boatMount = boat
+        lastAnimKey = undefined
+        playAnimationForState()
+      })
+      .catch((error) => console.error('Failed to load rowboat mount', error))
+    return () => {
+      cancelled = true
+      boat?.dispose()
+      boatMount = null
+      if (riderGroup) riderGroup.position.set(0, 0, 0)
+      lastAnimKey = undefined
+    }
+  })
 
   $effect(() => {
     const root = modelRoot
@@ -1013,6 +1045,18 @@
       return
     }
 
+    // Seated in the boat. The chair's enter clip is skipped — stepping into
+    // a hull is not lowering yourself onto a stool — so the loop is entered
+    // directly and the cross-fade covers it. Interact states win: casting
+    // from the boat is the whole point, and the seated loop would swallow it.
+    if (boating && playerState !== 'attack' && playerState !== 'interact') {
+      const seated = socialClipsByName.get(SitAnimationName.IDLE)
+      if (seated) {
+        startAction(seated, true)
+        return
+      }
+    }
+
     const hasTorch = isTorchItemDefId(attachedOffhandItemId)
     const torchIdle = hasTorch
       ? pickRandom(
@@ -1078,6 +1122,12 @@
           ? SitAnimationName.STAND_TO_SIT
           : interactionAnim
       clip = clipName ? resolveSocialClip(clipName) : undefined
+      // Aboard, the legs stay in the boat: the cast plays on the spine and
+      // arms over a held seated pose.
+      if (clip && boating && fishingInteraction) {
+        const seated = socialClipsByName.get(SitAnimationName.IDLE)
+        if (seated) clip = seatedFishingClip(clip, seated)
+      }
       // `/anim` may name a clip from any pack.
       if (!clip && clipName && DEBUG_ANIM_NAMES.has(clipName)) {
         clip = resolveClipByName(clipName)
@@ -1537,7 +1587,11 @@
       )
     }
 
-    if (horseMount && riderGroup && modelGroup) {
+    if (boatMount && riderGroup && modelGroup) {
+      boatMount.update(deltaTime, playerState === 'moving' ? _speed : 0)
+      boatMount.seat.getWorldPosition(seatPosition)
+      riderGroup.position.copy(modelGroup.worldToLocal(seatPosition))
+    } else if (horseMount && riderGroup && modelGroup) {
       horseMount.update(
         deltaTime,
         playerState === 'moving' ? _speed : 0,
@@ -1686,19 +1740,21 @@
     // Update animation state
     if (validAnimations.length > 0) {
       const stateKey =
-        riding && ridingClip
-          ? 'riding'
-          : playerState === 'interact'
-            ? `interact:${interactionAnim}:${interactionCounter}`
-            : playerState === 'moving'
-              ? `moving:${movementMode}`
-              : playerState === 'attack'
-                ? `attack:${attackCounter}:${daggerCastAt() ?? ''}`
-                : activeArmorEnchant()
-                  ? 'enchant-armor'
-                  : activeEnchantClip()
-                    ? 'enchant-weapon'
-                    : playerState
+        boating && playerState !== 'interact' && playerState !== 'attack'
+          ? 'boating'
+          : riding && ridingClip
+            ? 'riding'
+            : playerState === 'interact'
+              ? `interact:${interactionAnim}:${interactionCounter}`
+              : playerState === 'moving'
+                ? `moving:${movementMode}`
+                : playerState === 'attack'
+                  ? `attack:${attackCounter}:${daggerCastAt() ?? ''}`
+                  : activeArmorEnchant()
+                    ? 'enchant-armor'
+                    : activeEnchantClip()
+                      ? 'enchant-weapon'
+                      : playerState
       const animKey = `${equippedMainHandItemId ?? ''}:${stateKey}`
       if (lastAnimKey !== animKey) {
         lastAnimKey = animKey
@@ -1725,6 +1781,9 @@
     <!-- 3D Character Model with real animations -->
     {#if horseMount}
       <T is={horseMount.root} />
+    {/if}
+    {#if boatMount}
+      <T is={boatMount.root} />
     {/if}
     <T.Group bind:ref={riderGroup}>
       <T is={modelRoot} />

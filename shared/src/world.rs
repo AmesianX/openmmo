@@ -130,7 +130,6 @@ pub const EVENT_DELIVERY_RADIUS: f32 = 32.0;
 /// Player walk speed in units/sec. Client prediction, agent-client walks and
 /// the server's authoritative movement simulation must all agree on this.
 pub const PLAYER_MOVE_SPEED: f32 = 3.0;
-pub const HORSE_MOVE_MULT: f32 = 3.0;
 
 /// Longest move target (or appended leg) the server accepts; the farthest
 /// in-view click is ~42m. Farther targets are refused and snapped back, so

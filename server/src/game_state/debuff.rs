@@ -294,6 +294,8 @@ impl super::GameState {
             steps
                 .iter()
                 .filter(|s| s.floor_level == 0 && s.player_id.get() % WATER_CHECK_TICKS == bucket)
+                // A boat rides above the water it crosses.
+                .filter(|s| !s.mount.is_some_and(|kind| kind.floats()))
                 // No hunger entry (official NPCs) is the exemption, as
                 // everywhere else in this module.
                 .filter(|s| {

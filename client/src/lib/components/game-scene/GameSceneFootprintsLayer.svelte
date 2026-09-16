@@ -3,6 +3,7 @@
   import * as THREE from 'three'
   import { onDestroy } from 'svelte'
   import { activeDebuffs } from '../../stores/debuffStore'
+  import { isMounted } from '../../utils/mounts'
   import { debuffDurationMs } from '../../data/debuffPresentation'
   import { WetFootprints, STRIDE_M } from '../../effects/wet-footprints'
   import {
@@ -131,7 +132,7 @@
       return
     }
     for (const [id, pose] of remotePlayers) {
-      if (!otherPlayers.get(id)?.wet || otherPlayers.get(id)?.mounted) {
+      if (!otherPlayers.get(id)?.wet || isMounted(otherPlayers.get(id))) {
         remoteStrides.delete(id)
         continue
       }

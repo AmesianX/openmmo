@@ -1347,7 +1347,7 @@ pub enum ServerMessage {
     },
     PlayerMountChanged {
         player_id: PlayerId,
-        mounted: bool,
+        mount: Option<crate::mount::MountKind>,
     },
     /// The `wet` soaking went up or came off this player (doc/DEBUFF.md).
     /// Cosmetic — only the footprint trail reads it.

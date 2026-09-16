@@ -226,7 +226,9 @@ export function applyKeyboardMovement({
       config.mountRotation,
       config.maxSpeed,
       dt,
-      desiredRotation
+      desiredRotation,
+      undefined,
+      config.mountTurnRadius
     )
     const path = resolveHorseSteps(
       result.mountSteps ?? [],

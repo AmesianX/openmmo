@@ -80,13 +80,18 @@
   import {
     DEFAULT_MOVEMENT_CONFIG,
     SPRINT_SPEED_MULT,
-    HORSE_MOVE_MULT,
     scaleMovementConfig,
     type Position,
     type MovementState,
     type MovementConfig,
     type PlayerState,
   } from '../utils/movementUtils'
+  import {
+    isMounted,
+    mountFloats,
+    mountSpeedMult,
+    mountTurnRadius,
+  } from '../utils/mounts'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import {
     playerFloorOffset,
@@ -221,6 +226,7 @@
     attackCooldown?: number
     /** Baked water surface height at a world XZ (for fishing cast detection). */
     waterSurfaceAt?: (x: number, z: number) => number
+    hasWaterSurfaceData?: (x: number, z: number) => boolean
   }
 
   let {
@@ -242,6 +248,7 @@
     propMeshes,
     attackCooldown,
     waterSurfaceAt,
+    hasWaterSurfaceData,
   }: Props = $props()
 
   let floorOffset = 0
@@ -279,7 +286,24 @@
     getCurrentPlayerY: () => currentPlayer?.position.y ?? null,
     getFloorOffset: () => floorOffset,
     getPassabilityFloor: currentPassabilityFloor,
+    getFloatSurfaceY: (x, z) => floatSurfaceY(x, z),
   })
+
+  /** Water surface under a floating mount, else null. Mirrors the server's
+   *  `surface_ground_y`: disagreeing here would fight its snap-backs. */
+  function floatSurfaceY(x: number, z: number): number | null {
+    if (!mountFloats(currentPlayer?.mount)) return null
+    // Unloaded tiles report height 0, which would read as sea-level water;
+    // the remote path guards the same way.
+    if (!heightManager?.hasHeightData(x, z)) return null
+    // A water tile still in flight reads as sea level, which would sink the
+    // boat on a river whose baked surface sits well above it.
+    if (hasWaterSurfaceData?.(x, z) === false) return null
+    const surface = waterSurfaceAt?.(x, z)
+    if (surface === undefined) return null
+    const bed = heightManager.getHeightAtWorldPosition(x, z)
+    return surface - bed > 0 ? surface : null
+  }
   const { sampleHeight, waypointHeight, isMovementBlocked, isUphillTooSteep } =
     physics
 
@@ -308,7 +332,7 @@
     const m = movingState()
     const goal = m?.waypoints.at(-1)
     if (
-      !currentPlayer?.mounted ||
+      !isMounted(currentPlayer) ||
       currentPlayer.health <= 0 ||
       !m ||
       !goal ||
@@ -337,7 +361,7 @@
     const pending = mountRecovery
     if (!pending || pending.id !== update.request_id) return
     if (
-      !currentPlayer?.mounted ||
+      !isMounted(currentPlayer) ||
       currentPlayer.health <= 0 ||
       movingState() !== pending.movement
     ) {
@@ -370,7 +394,7 @@
   let speedMult = $derived(
     ($debugSpeedMode ? 10 : 1) *
       ($hungerState?.moveMult ?? 1) *
-      (currentPlayer?.mounted ? HORSE_MOVE_MULT : 1)
+      mountSpeedMult(currentPlayer?.mount)
   )
   let clickSprinting = false
   let startingClickMovement = false
@@ -492,8 +516,12 @@
       cachedMoveMult = mult
       cachedMoveConfig = scaleMovementConfig(DEFAULT_MOVEMENT_CONFIG, mult)
     }
-    return currentPlayer?.mounted
-      ? { ...cachedMoveConfig, mountRotation: playerRotation }
+    return isMounted(currentPlayer)
+      ? {
+          ...cachedMoveConfig,
+          mountRotation: playerRotation,
+          mountTurnRadius: mountTurnRadius(currentPlayer.mount),
+        }
       : cachedMoveConfig
   }
 
@@ -1265,7 +1293,7 @@
     if (mountRecovery) {
       if (
         performance.now() - mountRecovery.startedAt > 10000 ||
-        !currentPlayer?.mounted ||
+        !isMounted(currentPlayer) ||
         currentPlayer.health <= 0
       ) {
         const m = movingState()
@@ -1409,7 +1437,7 @@
         )
       },
       applyStartedMovement: (started) => {
-        if (!currentPlayer?.mounted) playerRotation = started.playerRotation
+        if (!isMounted(currentPlayer)) playerRotation = started.playerRotation
         // The moving state OWNS the path data. Transition before emit: the
         // projection derives 'moving' from the machine's owned state.
         playerControlMachine.transition({
@@ -2395,7 +2423,7 @@
       !isAbilityAvailable(DAGGER_SKILL.clip, currentPlayer.characterClass) ||
       currentPlayer.health <= 0 ||
       !hasDagger ||
-      currentPlayer.mounted
+      isMounted(currentPlayer)
     ) {
       if (skillState.queued)
         daggerSkillState.update((state) => ({ ...state, queued: false }))

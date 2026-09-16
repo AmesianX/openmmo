@@ -88,7 +88,8 @@ export function moveHorse(
   speed: number,
   dt: number,
   goal: Position | number,
-  arrivalThreshold = 0.05
+  arrivalThreshold = 0.05,
+  turnRadius = HORSE_TURN_RADIUS
 ): MovementResult {
   let current = { ...position }
   let remaining = Math.max(0, dt)
@@ -110,9 +111,7 @@ export function moveHorse(
     const stepTime =
       delta < 1e-4 ? remaining : Math.min(remaining, STEP_SECONDS)
     const radius =
-      typeof goal === 'number'
-        ? HORSE_TURN_RADIUS
-        : Math.min(HORSE_TURN_RADIUS, distance / 4)
+      typeof goal === 'number' ? turnRadius : Math.min(turnRadius, distance / 4)
     const step = horseArcStep(rotation, desired, speed, stepTime, radius)
     const snap =
       typeof goal !== 'number' &&

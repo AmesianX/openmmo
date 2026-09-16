@@ -26,6 +26,7 @@ pub mod meal;
 pub mod messages;
 pub mod monster_ai;
 pub mod moon;
+pub mod mount;
 pub mod mount_movement;
 pub mod pathfinding;
 pub mod pricing;
@@ -166,6 +167,7 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v78: server-wide rain overrides in WeatherSync.
 /// v79: owner-only ManaUpdate and Guardian Ward's MP cost.
 /// v80: revisioned world subscriptions, full terrain snapshots and resync.
+/// v81: mounts carry a kind instead of a bool.
 pub const PROTOCOL_VERSION: u32 = 80;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
@@ -440,7 +442,7 @@ mod tests {
             object_id: None,
             last_combat_at: 0,
             client_kind: Default::default(),
-            mounted: false,
+            mount: None,
             ready_at: 0,
             back_color: None,
             back_texture: None,

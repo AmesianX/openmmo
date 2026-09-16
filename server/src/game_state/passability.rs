@@ -316,13 +316,24 @@ impl super::GameState {
     /// decides deck versus river bed. Keeps the reported Y where
     /// nothing can be derived (a sampler error, or an upper storey whose
     /// room no longer exists).
+    /// Ground a player at `to` rests on. A floating mount rides the water
+    /// surface; everyone else stands on the bed, deck or storey below them.
     pub async fn surface_ground_y(
         &self,
         floor: u8,
         to: &crate::types::Position,
         ref_y: f32,
+        mount: Option<onlinerpg_shared::mount::MountKind>,
     ) -> f32 {
         if floor == 0 {
+            if mount.is_some_and(onlinerpg_shared::mount::MountKind::floats) {
+                let wx = onlinerpg_shared::wrap_world_x(to.x);
+                if let Some((bed, depth)) = self.ground_and_depth_at(wx, to.z).await {
+                    if depth > 0.0 {
+                        return bed + depth;
+                    }
+                }
+            }
             if let Some(entrance) = self.dungeon_defs.entrance_at(to.x, to.z) {
                 let dungeons = self.dungeons.read().await;
                 let ramp_y = dungeons.get(&entrance.id).and_then(|rt| {

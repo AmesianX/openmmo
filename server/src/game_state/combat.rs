@@ -696,7 +696,7 @@ impl super::GameState {
             .read()
             .await
             .get(player_id)
-            .filter(|p| !p.mounted && p.object_type.is_none())
+            .filter(|p| !p.is_mounted() && p.object_type.is_none())
             .map(|p| (p.position, p.floor_level));
         let Some((origin, floor)) = origin else {
             self.reject_dagger_skill(player_id, monster_id, "busy", 0)
@@ -760,7 +760,7 @@ impl super::GameState {
                 break;
             }
             let ready = self.players.read().await.get(player_id).is_some_and(|p| {
-                p.health > 0 && !p.mounted && p.object_type.is_none() && p.floor_level == floor
+                p.health > 0 && !p.is_mounted() && p.object_type.is_none() && p.floor_level == floor
             });
             let moved = self
                 .player_movement_versions

@@ -119,6 +119,7 @@ async fn spawn_path_cost_at_scale() {
                 to,
                 floor_level: 0,
                 is_official_npc: false,
+                mount: None,
             })
             .collect();
         game_state.enable_ambient_spawns();
