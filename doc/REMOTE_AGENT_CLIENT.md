@@ -196,7 +196,7 @@ Online: 12 (9 web, 1 cli, 2 npc)
 
 설계 제약 셋:
 
-1. **집계 전용이다.** 클라이언트 종류는 브로드캐스트되는 `Player` 데이터에 넣지 않는다 (`#[serde(skip)]`). 넣는 순간 다른 클라이언트가 개인을 분류할 수 있게 되고, 그건 위 원칙 위반이다
+1. **서버의 집계에 사용한다.** 지형 본문은 프로토콜 81부터 WebSocket 버전 알림 후 HTTP로 받으며, 에이전트는 높이·지표 재질만 담은 `ground` 프로필을 요청한다. 클라이언트 종류는 브로드캐스트되는 `Player` 데이터에 넣지 않는다 (`#[serde(skip)]`). 다른 클라이언트가 개인을 분류하거나 권한을 구분하는 용도로 쓰지 않는다.
 2. **자기 신고값이고, 그래도 괜찮다.** 클라이언트가 스스로 "나는 web/cli"라고 밝히는 값이라 거짓말이 가능하다. 하지만 이 값은 카운터 말고 아무것에도 쓰이지 않으므로 속일 동기가 없다. 반대로 말하면 **여기에 어떤 정책도 걸면 안 된다** — 거는 순간 거짓 신고 동기가 생긴다
 3. **버전 handshake에 얹어 보낸다.** 아래 프로토콜 버전 절의 `ClientInfo { protocol_version, client_kind, client_version }` 한 메시지로 끝난다 — 종류 표시를 위해 따로 만들 것이 없다
 
@@ -367,3 +367,11 @@ pwsh -NoProfile -Command "cd <repo>; $env:GOOGLE_CLI_CLIENT_SECRET=...; .\tools\
 - **폭주 대응 수단**: 지금은 킥만 있어([`Kicked`](../shared/src/messages.rs)) 재접속 루프를 도는 클라이언트에는 소용이 없다. 계정 단위 일시 차단이 필요하다 — 에이전트 전용이 아니라 공용 운영 수단으로
 - **레이트 리밋 값**: 사람의 정상 플레이를 막지 않으면서 폭주를 잡는 지점이 어디인가. 실제 트래픽을 보고 정해야 한다
 - ~~프로드 리버스 프록시가 `/api/terrain`을 외부에 노출하는지~~ — 확인 완료 (2026-07-22): `https://<host>/api/terrain/height/0/0`이 8450바이트를 정상 반환한다. WebSocket은 `/ws` 경로에서만 업그레이드되고 루트는 게임 페이지를 서빙하므로, 원격 config의 `server`에는 반드시 `/ws`가 붙어야 한다
+
+### 지형 HTTP 스냅샷 (프로토콜 81)
+
+`TerrainTileVersion`의 `ground_version`으로 `/api/terrain/snapshot/ground/{tile_x}/{tile_z}/{ground_version}`을 요청한다. 응답은 `TerrainTileSnapshot` MessagePack이며 높이와 지표 재질만 포함한다. 시각화용 나무·풀·조경 마스크는 내려받지 않는다.
+
+`terrain_cache/snapshots/`에 SHA-256으로 검증한 본문을 원자적으로 저장한다. 같은 내용은 서버·에이전트 재시작 후에도 재사용하고, 여러 NPC의 같은 버전 요청은 공유한다. `terrain`이 로컬 경로면 파일에서 같은 본문을 읽어 해시를 확인한다. HTTP 다운로드는 WebSocket 수신 및 AI 상태 잠금과 분리하고, 필요한 타일이 적용될 때까지 이동을 대기한다. 늦은 응답은 현재 구독·세대·revision을 다시 검사한다. `409`는 최신 버전 재동기화, 일시적 오류는 재시도한다.
+
+서버·웹 WASM·agent-client를 프로토콜 81로 함께 배포해야 한다. 자세한 계약은 [WORLD_EVENT_DELIVERY.md §3.6](WORLD_EVENT_DELIVERY.md#36-조경지형-타일)을 따른다.

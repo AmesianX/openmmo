@@ -40,7 +40,7 @@ import initWasm, {
   close_code_client_desync,
 } from '../wasm/onlinerpg_shared'
 import { createEvent } from './networkEvents'
-import { handleServerMessage } from './messageHandlers'
+import { handleServerMessage, resetTerrainDownloads } from './messageHandlers'
 import { worldView } from './worldView'
 import type {
   AccountCharacter,
@@ -245,6 +245,7 @@ class NetworkManager {
 
     this.socket.onclose = (event) => {
       worldView.synchronized = false
+      resetTerrainDownloads()
       resetFences()
       resetHousePlacement()
       resetEstateStorage()
@@ -1341,6 +1342,7 @@ class NetworkManager {
 
   disconnect() {
     worldView.synchronized = false
+    resetTerrainDownloads()
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null

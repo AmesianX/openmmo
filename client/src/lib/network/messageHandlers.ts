@@ -544,6 +544,9 @@ function announceGroundItem(
 }
 
 import { worldView, type WorldUpdate } from './worldView'
+import { TerrainSnapshots } from './terrainSnapshots'
+import { deserialize_server_message } from '../wasm/onlinerpg_shared'
+import { getTerrainApiUrl } from '../utils/networkUtils'
 
 type TerrainSnapshot = {
   tile_x: number
@@ -555,6 +558,36 @@ type TerrainSnapshot = {
   landscape: LandscapingTile | null
 }
 const terrainSnapshots = new Map<string, TerrainSnapshot>()
+const terrainDownloads = new TerrainSnapshots<TerrainSnapshot>(
+  getTerrainApiUrl,
+  (bytes, version) => {
+    const tile = deserialize_server_message(bytes)
+      .TerrainTileSnapshot as TerrainSnapshot
+    if (
+      !tile ||
+      tile.tile_x !== version.tile_x ||
+      tile.tile_z !== version.tile_z ||
+      tile.height.length !== 65 * 65 * 2 ||
+      tile.splat.length !== 64 * 64 * 4
+    ) {
+      throw new Error('Invalid terrain snapshot')
+    }
+    tile.trees ??= null
+    tile.grass ??= null
+    tile.landscape ??= null
+    return tile
+  },
+  (tile) => {
+    terrainSnapshots.set(`${tile.tile_x},${tile.tile_z}`, tile)
+    applyTerrainSnapshots([tile])
+  },
+  () => resyncWorld()
+)
+export function resetTerrainDownloads() {
+  terrainDownloads.reset()
+  terrainSnapshots.clear()
+  worldView.pendingTerrain.clear()
+}
 let requestResync = () => {}
 let resyncTimer: ReturnType<typeof setTimeout> | undefined
 let lastCorrection = -Infinity
@@ -620,10 +653,11 @@ export function handleServerMessage(
 
   requestResync = resync
   switch (type) {
-    case 'TerrainTileSnapshot': {
-      terrainSnapshots.set(data.tile_x + ',' + data.tile_z, data)
-      worldView.pendingTerrain.add(`${data.tile_x},${data.tile_z}`)
-      applyTerrainSnapshots([data])
+    case 'TerrainTileVersion': {
+      const key = `${data.tile_x},${data.tile_z}`
+      terrainSnapshots.delete(key)
+      worldView.pendingTerrain.add(key)
+      terrainDownloads.set(data)
       break
     }
     case 'WorldUpdate': {
@@ -639,8 +673,7 @@ export function handleServerMessage(
           objectManager.resetWorld()
         }
         housingManager.resetView()
-        terrainSnapshots.clear()
-        worldView.pendingTerrain.clear()
+        resetTerrainDownloads()
         resetFences()
         resetEstateStorage()
         dungeonManager.resetDynamicView()
@@ -662,8 +695,12 @@ export function handleServerMessage(
         mealManager.reset()
       }
       for (const event of update.events) {
-        if (event.change === 'Leave' && event.subject.startsWith('terrain:')) {
+        if (
+          (event.change === 'Leave' || event.change === 'Delete') &&
+          event.subject.startsWith('terrain:')
+        ) {
           const key = event.subject.slice(8)
+          terrainDownloads.remove(key)
           terrainSnapshots.delete(key)
           worldView.pendingTerrain.delete(key)
         }

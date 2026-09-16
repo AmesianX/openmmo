@@ -128,9 +128,7 @@ impl Player {
     }
 }
 
-/// Client program on the other end of a connection. Self-reported, so it may
-/// only ever inform counts — never permissions, or clients would have a
-/// reason to lie (`doc/REMOTE_AGENT_CLIENT.md`).
+/// Self-reported client kind for metrics, never permissions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientKind {
     /// Never sent a handshake (only reachable for players created in tests).

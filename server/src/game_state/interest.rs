@@ -715,25 +715,7 @@ impl super::GameState {
     pub(crate) async fn publish_terrain_tiles(&self, tiles: &[(i32, i32)]) -> std::io::Result<()> {
         let mut first_error = None;
         for &(x, z) in tiles.iter().collect::<std::collections::BTreeSet<_>>() {
-            let result: std::io::Result<_> = async {
-                let height = self.terrain_io.read_heightmap(x, z).await?;
-                if height.len() != onlinerpg_terrain::defaults::HEIGHTMAP_SIZE {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Invalid heightmap size",
-                    ));
-                }
-                Ok(ServerMessage::TerrainTileSnapshot {
-                    tile_x: x,
-                    tile_z: z,
-                    height,
-                    splat: self.terrain_io.read_splatmap(x, z).await?,
-                    trees: self.terrain_io.read_trees(x, z).await?,
-                    grass: self.terrain_io.read_grass(x, z).await?,
-                    landscape: self.terrain_io.read_landscaping_tile(x, z).await?,
-                })
-            }
-            .await;
+            let result = self.terrain_io.snapshot_versions(x, z).await;
             let message = match result {
                 Ok(message) => message,
                 Err(error) => {

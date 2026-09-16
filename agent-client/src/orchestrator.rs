@@ -176,6 +176,7 @@ impl NpcConfig {
 
 /// Resources shared across all NPC connections.
 pub struct SharedResources {
+    pub terrain_snapshots: Arc<crate::terrain_snapshots::TerrainSnapshots>,
     pub height_sampler: Arc<HeightSampler>,
     pub splat_sampler: Arc<crate::splat::SplatSampler>,
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
@@ -580,6 +581,19 @@ async fn run_npc_session(
         }
     });
 
+    let terrain_state = Arc::clone(&state);
+    let terrain_source = Arc::clone(&shared.terrain_snapshots);
+    let terrain_notify = Arc::clone(&state.lock().await.terrain_notify);
+    let terrain_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = terrain_notify.notified() => {},
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {},
+            }
+            apply_pending_terrain(&terrain_state, &terrain_source).await;
+        }
+    });
+
     let llm_task = spawn_llm_task(npc, &state, shared, server_url, watch.clone());
 
     // Monster AI tick task (1Hz)
@@ -605,7 +619,6 @@ async fn run_npc_session(
             if !s.in_game {
                 continue;
             }
-            apply_pending_terrain(&mut s).await;
             if !s.world_view.synchronized {
                 let _ = s.send_background_command(ClientMessage::ResyncWorld).await;
                 continue;
@@ -665,6 +678,7 @@ async fn run_npc_session(
 
     tx_task.abort();
     ai_task.abort();
+    terrain_task.abort();
     if let Some(t) = llm_task {
         t.abort();
     }
@@ -711,8 +725,6 @@ async fn handle_incoming(state: &Arc<Mutex<SharedState>>, label: &str, msg: Serv
 
     s.push_event(msg);
 
-    apply_pending_terrain(&mut s).await;
-
     if needs_height_sync {
         if let Err(e) = s.sync_height().await {
             warn!("[{label}] Failed to sync height after relocation: {e}");
@@ -720,63 +732,67 @@ async fn handle_incoming(state: &Arc<Mutex<SharedState>>, label: &str, msg: Serv
     }
 }
 
-async fn apply_pending_terrain(s: &mut SharedState) {
-    if !s
-        .world_cache
-        .read()
-        .unwrap()
-        .is_current_epoch(&s.world_view.world_epoch)
-    {
-        return;
-    }
-    type TerrainRevisions = std::collections::HashMap<(String, i32, i32), u64>;
-    static TERRAIN_REVISIONS: std::sync::LazyLock<tokio::sync::Mutex<TerrainRevisions>> =
-        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(TerrainRevisions::new()));
-    static APPLIED_EPOCH: tokio::sync::Mutex<String> = tokio::sync::Mutex::const_new(String::new());
-    let mut applied_epoch = APPLIED_EPOCH.lock().await;
-    if !s.world_view.world_epoch.is_empty() && *applied_epoch != s.world_view.world_epoch {
-        s.height_sampler.clear().await;
-        s.splat_sampler.clear().await;
-        TERRAIN_REVISIONS.lock().await.clear();
-        *applied_epoch = s.world_view.world_epoch.clone();
-    }
-    let pending = std::mem::take(&mut s.pending_terrain);
-    for (epoch, revision, message) in pending {
-        if let ServerMessage::TerrainTileSnapshot {
-            tile_x,
-            tile_z,
-            height,
-            splat,
-            ..
-        } = &message
+async fn apply_pending_terrain(
+    state: &Arc<Mutex<SharedState>>,
+    source: &crate::terrain_snapshots::TerrainSnapshots,
+) {
+    let pending = state.lock().await.pending_terrain.clone();
+    for tile in pending {
+        let message = match source.load(&tile).await {
+            Ok(message) => message,
+            Err(error) => {
+                warn!(%error, x = tile.x, z = tile.z, "Terrain snapshot remains pending");
+                if error
+                    .downcast_ref::<reqwest::Error>()
+                    .and_then(|error| error.status())
+                    == Some(reqwest::StatusCode::CONFLICT)
+                {
+                    let mut s = state.lock().await;
+                    if s.pending_terrain.contains(&tile) {
+                        s.world_view.synchronized = false;
+                        let _ = s.send_background_command(ClientMessage::ResyncWorld).await;
+                    }
+                }
+                continue;
+            }
+        };
+        let mut s = state.lock().await;
+        if !s.pending_terrain.contains(&tile)
+            || s.world_view.world_epoch != tile.epoch
+            || s.world_view.generation != tile.generation
+            || s.world_view
+                .subjects
+                .get(&format!("terrain:{},{}", tile.x, tile.z))
+                != Some(&tile.revision)
+            || !s.world_cache.read().unwrap().is_current_epoch(&tile.epoch)
         {
-            if epoch != s.world_view.world_epoch
-                || !s
-                    .world_view
-                    .subjects
-                    .contains_key(&format!("terrain:{tile_x},{tile_z}"))
-            {
-                continue;
-            }
-            let mut revisions = TERRAIN_REVISIONS.lock().await;
-            let key = (epoch.clone(), *tile_x, *tile_z);
-            if revisions
-                .get(&key)
-                .is_some_and(|current| *current >= revision)
-            {
-                continue;
-            }
-            match s.height_sampler.update_tile(*tile_x, *tile_z, height).await {
-                Ok(()) => {
-                    s.splat_sampler.update_tile(*tile_x, *tile_z, splat).await;
-                    revisions.insert(key, revision);
+            continue;
+        }
+        let mut applied = source.applied.lock().await;
+        if !s.world_cache.read().unwrap().is_current_epoch(&tile.epoch) {
+            continue;
+        }
+        if applied.epoch != tile.epoch {
+            s.height_sampler.clear().await;
+            s.splat_sampler.clear().await;
+            applied.revisions.clear();
+            applied.epoch = tile.epoch.clone();
+        }
+        if !applied
+            .revisions
+            .get(&(tile.x, tile.z))
+            .is_some_and(|revision| *revision > tile.revision)
+        {
+            if let ServerMessage::TerrainTileSnapshot { height, splat, .. } = message {
+                if let Err(error) = s.height_sampler.update_tile(tile.x, tile.z, &height).await {
+                    warn!(%error, "Could not apply terrain snapshot");
+                    continue;
                 }
-                Err(error) => {
-                    warn!(%error, "Terrain snapshot remains unsynchronized");
-                    s.pending_terrain.push((epoch, revision, message));
-                }
+                s.splat_sampler.update_tile(tile.x, tile.z, &splat).await;
+                applied.revisions.insert((tile.x, tile.z), tile.revision);
             }
         }
+        s.pending_terrain.retain(|pending| pending != &tile);
     }
 }
 
@@ -1183,6 +1199,82 @@ fn spawn_llm_task(
 mod tests {
     use super::*;
     use onlinerpg_shared::CharacterAttributes;
+
+    #[tokio::test]
+    async fn terrain_http_does_not_lock_state_and_old_responses_cannot_apply() {
+        use crate::terrain_snapshots::{PendingTerrain, TerrainSnapshots};
+        use onlinerpg_terrain::{
+            io::TerrainIO,
+            snapshot::{content_version, encode_snapshot},
+        };
+        let dir = std::env::temp_dir().join(format!("terrain_async_{}", rand::random::<u64>()));
+        let message = TerrainIO::new(dir.clone())
+            .read_snapshot(0, 0, false)
+            .await
+            .unwrap();
+        let bytes = encode_snapshot(&message).unwrap();
+        let version = content_version(&bytes);
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let request_started = started.clone();
+        let request_release = release.clone();
+        let app = axum::Router::new().route(
+            "/api/terrain/snapshot/ground/{x}/{z}/{version}",
+            axum::routing::get(move || {
+                let bytes = bytes.clone();
+                let started = request_started.clone();
+                let release = request_release.clone();
+                async move {
+                    started.notify_one();
+                    release.notified().await;
+                    bytes
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let source = Arc::new(TerrainSnapshots::new(&origin, dir.to_str().unwrap()));
+        let (mut s, _rx) = crate::state::tests::test_state();
+        s.world_view.world_epoch = "world".into();
+        s.world_view.generation = 1;
+        s.world_view.subjects.insert("terrain:0,0".into(), 1);
+        s.world_cache.write().unwrap().ensure_world_epoch("world");
+        let tile = PendingTerrain {
+            epoch: "world".into(),
+            generation: 1,
+            revision: 1,
+            x: 0,
+            z: 0,
+            version,
+        };
+        s.pending_terrain.push(tile.clone());
+        let state = Arc::new(Mutex::new(s));
+        let worker_state = state.clone();
+        let worker_source = source.clone();
+        let worker =
+            tokio::spawn(async move { apply_pending_terrain(&worker_state, &worker_source).await });
+        tokio::time::timeout(Duration::from_secs(2), started.notified())
+            .await
+            .unwrap();
+        {
+            let mut s = tokio::time::timeout(Duration::from_secs(2), state.lock())
+                .await
+                .expect("HTTP must not hold shared state");
+            assert_eq!(s.pending_terrain.len(), 1);
+            s.world_view.generation = 2;
+            s.pending_terrain[0].generation = 2;
+        }
+        release.notify_one();
+        worker.await.unwrap();
+        assert!(source.applied.lock().await.revisions.is_empty());
+        assert_eq!(state.lock().await.pending_terrain.len(), 1);
+        apply_pending_terrain(&state, &source).await;
+        assert!(state.lock().await.pending_terrain.is_empty());
+        assert_eq!(source.applied.lock().await.revisions.get(&(0, 0)), Some(&1));
+        server.abort();
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
 
     fn schedule(at: &str) -> ScheduleEntry {
         ScheduleEntry {

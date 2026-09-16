@@ -374,7 +374,8 @@ pub struct SharedState {
     /// Shared world cache: passability + houses (shared across NPC connections)
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
     pub world_view: onlinerpg_shared::interest::WorldView,
-    pub pending_terrain: Vec<(String, u64, ServerMessage)>,
+    pub pending_terrain: Vec<crate::terrain_snapshots::PendingTerrain>,
+    pub terrain_notify: Arc<tokio::sync::Notify>,
     /// Current game time: is_night flag from server
     pub is_night: Option<bool>,
     pub schedule_period: Option<onlinerpg_shared::schedule::SchedulePeriod>,
@@ -511,6 +512,7 @@ impl SharedState {
             world_cache,
             world_view: Default::default(),
             pending_terrain: Vec::new(),
+            terrain_notify: Arc::default(),
             is_night: None,
             schedule_period: None,
             weather: crate::weather::Weather::default(),

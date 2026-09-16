@@ -49,7 +49,17 @@ pub fn terrain_router(
             "/api/terrain/objects/{rx}/{rz}",
             get(get_object).put(put_object),
         )
+        .route(
+            "/api/terrain/grass/{x}/{z}",
+            get(get_grass)
+                .put(put_grass)
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
         .route("/api/terrain/weather-sectors", get(get_weather_sectors))
+        .route(
+            "/api/terrain/snapshot/{profile}/{x}/{z}/{version}",
+            get(get_snapshot),
+        )
         .with_state(ObjectsState {
             terrain: Arc::clone(&terrain_io),
             game_state,
@@ -62,12 +72,6 @@ pub fn terrain_router(
         .route(
             "/api/terrain/height-original/{x}/{z}/ensure",
             post(ensure_original_heightmap),
-        )
-        .route(
-            "/api/terrain/grass/{x}/{z}",
-            get(get_grass)
-                .put(put_grass)
-                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
         )
         .route(
             "/api/terrain/grass-original/{x}/{z}",
@@ -99,6 +103,59 @@ pub fn terrain_router(
         .with_state(terrain_io)
         .merge(objects_router)
         .merge(ownership_router)
+}
+
+async fn get_snapshot(
+    Path((profile, x, z, version)): Path<(String, i32, i32, String)>,
+    State(state): State<ObjectsState>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    use onlinerpg_terrain::snapshot::{content_version, encode_snapshot};
+    let visuals = match profile.as_str() {
+        "full" => true,
+        "ground" => false,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    if version.len() != 64 || !version.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let result = async {
+        let _guard = state.game_state.world_edit_guard().await;
+        let message = state.terrain.read_snapshot(x, z, visuals).await?;
+        encode_snapshot(&message)
+    }
+    .await;
+    let bytes = match result {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            warn!(%error, x, z, "Failed to read terrain snapshot");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::CACHE_CONTROL, "no-store")],
+            )
+                .into_response();
+        }
+    };
+    if content_version(&bytes) != version {
+        return (StatusCode::CONFLICT, [(header::CACHE_CONTROL, "no-store")]).into_response();
+    }
+    let etag = format!("\"{version}\"");
+    let metadata = [
+        (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
+        (
+            header::CACHE_CONTROL,
+            "public, max-age=31536000, immutable".to_owned(),
+        ),
+        (header::ETAG, etag.clone()),
+    ];
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        == Some(etag.as_str())
+    {
+        return (StatusCode::NOT_MODIFIED, metadata).into_response();
+    }
+    (metadata, bytes).into_response()
 }
 
 async fn get_land_ownership(
@@ -301,13 +358,13 @@ async fn put_splatmap(
 async fn get_grass(
     Path((x, z)): Path<(i32, i32)>,
     request_headers: axum::http::HeaderMap,
-    State(terrain): State<Arc<TerrainIO>>,
+    State(state): State<ObjectsState>,
 ) -> Result<Response, StatusCode> {
     serve_vegetation(
-        &terrain,
+        &state.terrain,
         x,
         z,
-        coords::grass_path(terrain.base_dir(), x, z),
+        coords::grass_path(state.terrain.base_dir(), x, z),
         &request_headers,
     )
     .await
@@ -315,10 +372,19 @@ async fn get_grass(
 
 async fn put_grass(
     Path((x, z)): Path<(i32, i32)>,
-    State(terrain): State<Arc<TerrainIO>>,
+    State(state): State<ObjectsState>,
     body: Bytes,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    terrain.write_grass(x, z, &body).await.map_err(|e| {
+    let _guard = state.game_state.world_edit_guard().await;
+    let result = async {
+        state.terrain.write_grass(x, z, &body).await?;
+        state
+            .game_state
+            .publish_terrain_tiles(&[(coords::wrap_tile_x(x), z)])
+            .await
+    }
+    .await;
+    result.map_err(|e| {
         error!("Failed to write grass ({}, {}): {}", x, z, e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -692,6 +758,119 @@ mod tests {
     use super::*;
     use crate::test_util::unique_temp_dir;
     use axum::http::HeaderMap;
+
+    #[tokio::test]
+    async fn snapshot_versions_are_immutable_and_ground_omits_visuals() {
+        use onlinerpg_shared::{deserialize_server_msg, ServerMessage};
+        use onlinerpg_terrain::snapshot::{content_version, encode_snapshot};
+        let game = Arc::new(crate::game_state::tests::make_test_game_state(
+            "http_snapshot",
+        ));
+        let terrain = Arc::new(TerrainIO::new(unique_temp_dir("http_snapshot_tiles")));
+        terrain
+            .write_grass(0, 0, &vec![0; 256 * 1024])
+            .await
+            .unwrap();
+        let ServerMessage::TerrainTileVersion {
+            version,
+            ground_version,
+            ..
+        } = terrain.snapshot_versions(0, 0).await.unwrap()
+        else {
+            panic!()
+        };
+        let notice = terrain.snapshot_versions(0, 0).await.unwrap();
+        assert!(encode_snapshot(&notice).unwrap().len() < 256);
+        let state = ObjectsState {
+            terrain: terrain.clone(),
+            game_state: game,
+        };
+        for (profile, hash) in [("full", &version), ("ground", &ground_version)] {
+            let request = || Path((profile.to_owned(), 0, 0, hash.clone()));
+            let response = get_snapshot(request(), State(state.clone()), HeaderMap::new()).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "public, max-age=31536000, immutable"
+            );
+            let etag = etag_of(&response);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(content_version(&bytes), *hash);
+            let ServerMessage::TerrainTileSnapshot {
+                height,
+                splat,
+                trees,
+                grass,
+                landscape,
+                ..
+            } = deserialize_server_msg(&bytes).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(height.len(), 8450);
+            assert_eq!(splat.len(), 16384);
+            if profile == "ground" {
+                assert!(trees.is_none() && grass.is_none() && landscape.is_none());
+                assert!(bytes.len() < 26000);
+            } else {
+                assert_eq!(grass.unwrap().len(), 256 * 1024);
+            }
+            let mut headers = HeaderMap::new();
+            headers.insert(header::IF_NONE_MATCH, etag.parse().unwrap());
+            assert_eq!(
+                get_snapshot(request(), State(state.clone()), headers)
+                    .await
+                    .status(),
+                StatusCode::NOT_MODIFIED
+            );
+        }
+        let reopened = TerrainIO::new(terrain.base_dir().to_path_buf());
+        assert_eq!(
+            encode_snapshot(&notice).unwrap(),
+            encode_snapshot(&reopened.snapshot_versions(0, 0).await.unwrap()).unwrap()
+        );
+        terrain.write_grass(0, 0, &[1; 64]).await.unwrap();
+        let ServerMessage::TerrainTileVersion {
+            version: next,
+            ground_version: ground_next,
+            ..
+        } = terrain.snapshot_versions(0, 0).await.unwrap()
+        else {
+            panic!()
+        };
+        assert_ne!(next, version);
+        assert_eq!(ground_next, ground_version);
+        let stale = get_snapshot(
+            Path(("full".into(), 0, 0, version)),
+            State(state.clone()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        assert_eq!(stale.headers()[header::CACHE_CONTROL], "no-store");
+        let mut splat = terrain.read_splatmap(0, 0).await.unwrap();
+        splat[0] = 5;
+        terrain.write_splatmap(0, 0, &splat).await.unwrap();
+        let stale = get_snapshot(
+            Path(("ground".into(), 0, 0, ground_version)),
+            State(state.clone()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        let path = onlinerpg_terrain::coords::heightmap_path(terrain.base_dir(), 0, 0);
+        tokio::fs::create_dir_all(path).await.unwrap();
+        let failure = get_snapshot(
+            Path(("full".into(), 0, 0, next)),
+            State(state),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(failure.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(failure.headers()[header::CACHE_CONTROL], "no-store");
+    }
 
     fn etag_of(response: &Response) -> String {
         response

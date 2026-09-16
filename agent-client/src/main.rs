@@ -17,6 +17,7 @@ mod splat;
 mod state;
 mod tales;
 mod terrain_http;
+mod terrain_snapshots;
 mod title_defs;
 mod transcript;
 mod update;
@@ -309,6 +310,10 @@ async fn main() -> anyhow::Result<()> {
         .collect();
     let shared = Arc::new(SharedResources {
         maid_names,
+        terrain_snapshots: Arc::new(terrain_snapshots::TerrainSnapshots::new(
+            &config.terrain,
+            &config.terrain_cache,
+        )),
         height_sampler,
         splat_sampler,
         world_cache,
@@ -449,6 +454,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
     match msg {
         ServerMessage::DungeonDoorState { .. } => "DungeonDoorState",
         ServerMessage::DungeonPropState { .. } => "DungeonPropState",
+        ServerMessage::TerrainTileVersion { .. } => "TerrainTileVersion",
         ServerMessage::TerrainTileSnapshot { .. } => "TerrainTileSnapshot",
         ServerMessage::WorldUpdate { .. } => "WorldUpdate",
         ServerMessage::EquipmentEnchantSucceeded { .. } => "EquipmentEnchantSucceeded",

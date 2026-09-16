@@ -386,13 +386,30 @@ impl SharedState {
                         continue;
                     }
                     if event.subject.starts_with("terrain:") {
+                        self.pending_terrain.retain(|tile| {
+                            format!("terrain:{},{}", tile.x, tile.z) != event.subject
+                        });
                         for message in &event.messages {
-                            self.pending_terrain.push((
-                                world_epoch.clone(),
-                                event.revision,
-                                message.clone(),
-                            ));
+                            if let ServerMessage::TerrainTileVersion {
+                                tile_x,
+                                tile_z,
+                                ground_version,
+                                ..
+                            } = message
+                            {
+                                self.pending_terrain.push(
+                                    crate::terrain_snapshots::PendingTerrain {
+                                        epoch: world_epoch.clone(),
+                                        generation: *generation,
+                                        revision: event.revision,
+                                        x: *tile_x,
+                                        z: *tile_z,
+                                        version: ground_version.clone(),
+                                    },
+                                );
+                            }
                         }
+                        self.terrain_notify.notify_one();
                         continue;
                     }
                     if event.subject.starts_with("fence:") {

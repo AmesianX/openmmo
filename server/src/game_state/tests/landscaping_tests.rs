@@ -14,7 +14,7 @@ async fn one_failed_tile_does_not_skip_other_changed_tiles_and_retries_without_m
     assert!(game.publish_terrain_tiles(&[(0, 0), (1, 0)]).await.is_err());
     assert!(drain(&mut rx).iter().any(|msg| matches!(
         msg,
-        ServerMessage::TerrainTileSnapshot {
+        ServerMessage::TerrainTileVersion {
             tile_x: 1,
             tile_z: 0,
             ..
@@ -24,7 +24,7 @@ async fn one_failed_tile_does_not_skip_other_changed_tiles_and_retries_without_m
     game.retry_terrain_delivery().await;
     assert!(drain(&mut rx).iter().any(|msg| matches!(
         msg,
-        ServerMessage::TerrainTileSnapshot {
+        ServerMessage::TerrainTileVersion {
             tile_x: 0,
             tile_z: 0,
             ..
@@ -112,6 +112,10 @@ async fn landscaping_saves_free_road_without_height_edits_and_syncs_near_and_far
     claim(&game, &auth).await;
     let (_, mut near) = gardener(&game, &auth, "Near").await;
     let (_, mut far) = gardener(&game, &auth, "Far").await;
+    let mut agent = make_player("Agent", 1.5, 1.5);
+    agent.client_kind = onlinerpg_shared::entity::ClientKind::Cli;
+    game.add_player(agent.clone()).await;
+    let mut agent_rx = game.register_direct_channel(&agent.id).await;
     game.players
         .write()
         .await
@@ -135,14 +139,46 @@ async fn landscaping_saves_free_road_without_height_edits_and_syncs_near_and_far
     assert_eq!(game.splat_sampler.dominant_at(6.0, 4.0).await.unwrap(), 5);
     assert!(drain(&mut near).iter().any(|msg| matches!(
         msg,
-        ServerMessage::TerrainTileSnapshot {
+        ServerMessage::TerrainTileVersion {
             tile_x: 0,
             tile_z: 0,
-            landscape: Some(_),
             ..
         }
     )));
     assert!(drain(&mut far).is_empty());
+    let agent_messages = drain(&mut agent_rx);
+    let version = agent_messages
+        .iter()
+        .rev()
+        .find_map(|message| match message {
+            ServerMessage::TerrainTileVersion {
+                tile_x: 0,
+                tile_z: 0,
+                ground_version,
+                ..
+            } => Some(ground_version),
+            _ => None,
+        })
+        .expect("agent receives updated ground version");
+    let snapshot = game.terrain_io.read_snapshot(0, 0, false).await.unwrap();
+    assert_eq!(
+        &onlinerpg_terrain::snapshot::content_version(
+            &onlinerpg_terrain::snapshot::encode_snapshot(&snapshot).unwrap()
+        ),
+        version
+    );
+    let ServerMessage::TerrainTileSnapshot {
+        splat,
+        trees,
+        grass,
+        landscape,
+        ..
+    } = snapshot
+    else {
+        panic!()
+    };
+    assert!(trees.is_none() && grass.is_none() && landscape.is_none());
+    assert_eq!(splat, game.terrain_io.read_splatmap(0, 0).await.unwrap());
     let saved = game
         .terrain_io
         .read_landscaping_tile(0, 0)

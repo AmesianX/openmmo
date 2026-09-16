@@ -868,6 +868,12 @@ pub enum ServerMessage {
         broken: bool,
         opened: bool,
     },
+    TerrainTileVersion {
+        tile_x: i32,
+        tile_z: i32,
+        version: String,
+        ground_version: String,
+    },
     TerrainTileSnapshot {
         tile_x: i32,
         tile_z: i32,
@@ -1936,7 +1942,8 @@ impl ServerMessage {
             | Self::MonsterAttackedPlayer { .. }
             | Self::PlayerInstrumentNotes { .. }
             | Self::AbilityUsed { .. } => DeliveryClass::NearbyEffect,
-            Self::TerrainTileSnapshot { .. }
+            Self::TerrainTileVersion { .. }
+            | Self::TerrainTileSnapshot { .. }
             | Self::LandscapeChanged { .. }
             | Self::LandscapeInvalidated { .. }
             | Self::HeightTilesInvalidated { .. }

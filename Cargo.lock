@@ -1208,6 +1208,7 @@ dependencies = [
  "async-trait",
  "onlinerpg-shared",
  "serde_json",
+ "sha2",
  "tokio",
  "tracing",
 ]

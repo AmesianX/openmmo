@@ -171,23 +171,7 @@ async fn house_scroll_builds_only_inside_the_owned_estate_and_persists_consumpti
         .any(|message| matches!(message, ServerMessage::HousePlacementResult { error: None })));
     assert!(messages.iter().any(|message| matches!(
         message,
-        ServerMessage::TerrainTileSnapshot {
-            tile_x: 0,
-            tile_z: 0,
-            ..
-        }
-    )));
-    assert!(messages.iter().any(|message| matches!(
-        message,
-        ServerMessage::TerrainTileSnapshot {
-            tile_x: 0,
-            tile_z: 0,
-            ..
-        }
-    )));
-    assert!(messages.iter().any(|message| matches!(
-        message,
-        ServerMessage::TerrainTileSnapshot {
+        ServerMessage::TerrainTileVersion {
             tile_x: 0,
             tile_z: 0,
             ..
@@ -282,7 +266,7 @@ async fn house_scroll_builds_only_inside_the_owned_estate_and_persists_consumpti
     )));
     assert!(messages.iter().any(|message| matches!(
         message,
-        ServerMessage::TerrainTileSnapshot {
+        ServerMessage::TerrainTileVersion {
             tile_x: 0,
             tile_z: 0,
             ..
