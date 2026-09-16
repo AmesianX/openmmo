@@ -1,3 +1,4 @@
+import { loadTerrainFile } from '../network/terrainFileSource'
 import { apiFetch } from '../utils/networkUtils'
 import { tileKey, type TerrainHeightState } from './terrain-height-types'
 
@@ -19,15 +20,13 @@ export async function loadHeightmap(
 
   const promise = Promise.resolve().then(async () => {
     try {
-      const url = `${terrainApiUrl}/api/terrain/height/${tileX}/${tileZ}`
-      const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error(
-          `HTTP ${response.status} for heightmap (${tileX}, ${tileZ})`
-        )
-      }
-      const buffer = await response.arrayBuffer()
-      const data = new Uint16Array(buffer)
+      const { bytes } = await loadTerrainFile(
+        terrainApiUrl,
+        tileX,
+        tileZ,
+        'height'
+      )
+      const data = new Uint16Array(bytes!.buffer)
       if (inflightHeightmaps.get(key) !== promise) {
         const current = state.heightmaps.get(key)
         if (current) return current

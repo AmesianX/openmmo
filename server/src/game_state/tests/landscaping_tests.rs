@@ -147,38 +147,29 @@ async fn landscaping_saves_free_road_without_height_edits_and_syncs_near_and_far
     )));
     assert!(drain(&mut far).is_empty());
     let agent_messages = drain(&mut agent_rx);
-    let version = agent_messages
+    let files = agent_messages
         .iter()
         .rev()
         .find_map(|message| match message {
             ServerMessage::TerrainTileVersion {
                 tile_x: 0,
                 tile_z: 0,
-                ground_version,
+                files,
                 ..
-            } => Some(ground_version),
+            } => Some(files),
             _ => None,
         })
-        .expect("agent receives updated ground version");
-    let snapshot = game.terrain_io.read_snapshot(0, 0, false).await.unwrap();
+        .expect("agent receives updated terrain hashes");
+    let file = files.landscape.as_ref().unwrap();
+    let bytes = tokio::fs::read(game.terrain_io.base_dir().join(&file.path))
+        .await
+        .unwrap();
+    assert_eq!(onlinerpg_terrain::manifest::content_hash(&bytes), file.hash);
+    let decoded = onlinerpg_terrain::landscaping::decode_landscaping(&bytes, 0, 0).unwrap();
     assert_eq!(
-        &onlinerpg_terrain::snapshot::content_version(
-            &onlinerpg_terrain::snapshot::encode_snapshot(&snapshot).unwrap()
-        ),
-        version
+        decoded.splat,
+        game.terrain_io.read_splatmap(0, 0).await.unwrap()
     );
-    let ServerMessage::TerrainTileSnapshot {
-        splat,
-        trees,
-        grass,
-        landscape,
-        ..
-    } = snapshot
-    else {
-        panic!()
-    };
-    assert!(trees.is_none() && grass.is_none() && landscape.is_none());
-    assert_eq!(splat, game.terrain_io.read_splatmap(0, 0).await.unwrap());
     let saved = game
         .terrain_io
         .read_landscaping_tile(0, 0)

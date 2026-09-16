@@ -34,6 +34,7 @@ pub mod schedule;
 pub mod skills;
 pub mod stall;
 pub mod tales;
+pub mod terrain_files;
 pub mod tip_hat;
 pub mod tree_format;
 pub mod weather;
@@ -168,7 +169,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v79: owner-only ManaUpdate and Guardian Ward's MP cost.
 /// v80: revisioned world subscriptions, full terrain snapshots and resync.
 /// v82: Grass payloads store per-cell counts (GR04).
-pub const PROTOCOL_VERSION: u32 = 82;
+/// v83: terrain file manifests and direct binary downloads.
+pub const PROTOCOL_VERSION: u32 = 83;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

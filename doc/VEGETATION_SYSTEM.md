@@ -123,7 +123,7 @@ Material: `FLOWER_CONFIG` — baseColor 진녹, windStrength 0.04 (뻣뻣한 줄
 cargo run --release -p onlinerpg-terrain --bin terrain-grass-migrate -- data/terrain
 ```
 
-`grass/`와 `grass-original/` 파일을 각각 임시 파일 + rename으로 교체한다. 서버·클라이언트는 전환 중 남아 있는 V3 파일도 셀별 개수로 읽으며 새로 저장하는 파일은 V4다. 변환 후 `terrain-snapshots`로 전송 본문을 준비하고 서버를 재시작해 메모리의 타일 버전을 갱신한다. 스냅샷 준비 자체는 원본 파일을 수정하지 않는다.
+`grass/`와 `grass-original/` 파일을 각각 임시 파일 + rename으로 교체한다. 서버·클라이언트는 전환 중 남아 있는 V3 파일도 셀별 개수로 읽으며 새로 저장하는 파일은 V4다. 변환 후 `terrain-manifests`로 원본 파일 해시 목록을 준비하고 서버를 재시작해 메모리의 타일 버전을 갱신한다. 해시 목록 준비는 원본 파일을 수정하거나 전송용 본문을 복제하지 않는다.
 
 ### Tree (v1 — "TR01")
 

@@ -511,9 +511,17 @@ export function decodeGrassData(
   buffer: ArrayBuffer,
   tileX: number,
   tileZ: number,
-  heightmap: Uint16Array | null
+  heightmap: Uint16Array | null,
+  cleared?: Uint8Array
 ): GrassPlacementData {
-  const density = readGrassDensity(buffer)
+  let density = readGrassDensity(buffer)
+  if (cleared) {
+    density = density.slice()
+    for (let cell = 0; cell < TILE_DIM * TILE_DIM; cell++) {
+      if ((cleared[cell >> 3] & (1 << (cell & 7))) !== 0)
+        density.fill(0, cell * 3, cell * 3 + 3)
+    }
+  }
   const total = density.reduce((sum, count) => sum + count, 0)
   const output = new ArrayBuffer(HEADER_BYTES + total * FLOATS_PER_INSTANCE * 4)
   const header = new Uint32Array(output, 0, 3)

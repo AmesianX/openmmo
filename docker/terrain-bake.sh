@@ -30,7 +30,7 @@ if [ -f "$TERRAIN_DIR/worldgen.json" ] && [ -z "${TERRAIN_FORCE_BAKE:-}" ]; then
     echo "terrain-init: worldgen.json present, skipping bake"
     seed_zones
     own_volume "$TERRAIN_DIR"
-    gosu openmmo terrain-snapshots "$TERRAIN_DIR"
+    gosu openmmo terrain-manifests "$TERRAIN_DIR"
     exit 0
 fi
 
@@ -48,5 +48,5 @@ seed_zones
 # The bake ran as root and rewrote the tree, so own_volume's fast path
 # would wrongly skip.
 chown -R openmmo:openmmo "$TERRAIN_DIR"
-gosu openmmo terrain-snapshots "$TERRAIN_DIR"
+gosu openmmo terrain-manifests "$TERRAIN_DIR"
 echo "terrain-init: done"

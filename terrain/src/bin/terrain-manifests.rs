@@ -6,7 +6,7 @@ fn main() -> io::Result<()> {
     let dir = args.next().map(PathBuf::from).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Usage: terrain-snapshots TERRAIN_DIR",
+            "Usage: terrain-manifests TERRAIN_DIR",
         )
     })?;
     if args.next().is_some() || !dir.is_dir() {
@@ -19,10 +19,10 @@ fn main() -> io::Result<()> {
     let count = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(terrain.prepare_snapshots())?;
+        .block_on(terrain.prepare_manifests())?;
     println!(
-        "Prepared {count} terrain snapshots in {}",
-        terrain.snapshot_dir().display()
+        "Prepared {count} terrain manifests in {}",
+        terrain.manifest_dir().display()
     );
     Ok(())
 }

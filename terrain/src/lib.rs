@@ -6,7 +6,7 @@ pub mod height;
 pub mod io;
 pub mod land;
 pub mod landscaping;
-pub mod snapshot;
+pub mod manifest;
 pub mod splat;
 mod tile_cache;
 pub mod trees;

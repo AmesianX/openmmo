@@ -1,3 +1,4 @@
+import { loadTerrainFile } from '../network/terrainFileSource'
 import { getTerrainApiUrl } from '../utils/networkUtils'
 import {
   decodeTreeData,
@@ -43,25 +44,21 @@ export class TerrainTreeDataManager {
     const promise = Promise.resolve().then(
       async (): Promise<TreePlacementData | null> => {
         try {
-          const url = `${this.terrainApiUrl}/api/terrain/trees/${tileX}/${tileZ}`
-          const response = await fetch(url)
+          const { bytes, cleared } = await loadTerrainFile(
+            this.terrainApiUrl,
+            tileX,
+            tileZ,
+            'trees'
+          )
           if (gen !== this.generation) return null
           if (this.inflight.get(key) !== promise)
             return this.loadTreeData(tileX, tileZ)
-          if (response.status === 404) {
+          if (!bytes) {
             this.missingTiles.add(key)
             return null
           }
-          if (!response.ok) {
-            console.error(
-              `Failed to load tree data (${tileX}, ${tileZ}): ${response.status}`
-            )
-            return null
-          }
-          const buffer = await response.arrayBuffer()
-          if (gen !== this.generation) return null
-          if (this.inflight.get(key) !== promise)
-            return this.loadTreeData(tileX, tileZ)
+          this.applyLandscapingMask(tileX, tileZ, cleared)
+          const buffer = bytes.buffer
           let heightmap = this.heightManager.getHeightmap(tileX, tileZ)
           if (!heightmap) {
             heightmap = await this.heightManager.loadHeightmap(tileX, tileZ)
@@ -139,7 +136,11 @@ export class TerrainTreeDataManager {
     }
   }
 
-  applySnapshot(tileX: number, tileZ: number, bytes: number[] | null): void {
+  applySnapshot(
+    tileX: number,
+    tileZ: number,
+    bytes: number[] | Uint8Array | null
+  ): void {
     const heightmap = this.heightManager.getHeightmap(tileX, tileZ)
     if (!heightmap) throw new Error('Terrain height must arrive before trees')
     const keys = new Set([tileKey(tileX, tileZ)])

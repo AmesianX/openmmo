@@ -1,3 +1,4 @@
+import { loadTerrainFile } from '../network/terrainFileSource'
 import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
 import {
   decodeGrassData,
@@ -76,25 +77,21 @@ export class TerrainGrassDataManager {
     const promise = Promise.resolve().then(
       async (): Promise<GrassPlacementData | null> => {
         try {
-          const url = `${this.terrainApiUrl}/api/terrain/grass/${tileX}/${tileZ}`
-          const response = await fetch(url)
+          const { bytes, cleared } = await loadTerrainFile(
+            this.terrainApiUrl,
+            tileX,
+            tileZ,
+            'grass'
+          )
           if (gen !== this.generation) return null
           if (this.inflight.get(key) !== promise)
             return this.loadGrassData(tileX, tileZ)
-          if (response.status === 404) {
+          if (!bytes) {
             this.missingTiles.add(key)
             return null
           }
-          if (!response.ok) {
-            console.error(
-              `Failed to load grass data (${tileX}, ${tileZ}): ${response.status}`
-            )
-            return null
-          }
-          const buffer = await response.arrayBuffer()
-          if (gen !== this.generation) return null
-          if (this.inflight.get(key) !== promise)
-            return this.loadGrassData(tileX, tileZ)
+          this.applyLandscapingMask(tileX, tileZ, cleared)
+          const buffer = bytes.buffer
           let heightmap = this.heightManager.getHeightmap(tileX, tileZ)
           if (!heightmap) {
             heightmap = await this.heightManager.loadHeightmap(tileX, tileZ)
@@ -102,10 +99,12 @@ export class TerrainGrassDataManager {
             if (this.inflight.get(key) !== promise)
               return this.loadGrassData(tileX, tileZ)
           }
-          const data = this.filterLandscaping(
+          const data = decodeGrassData(
+            buffer,
             tileX,
             tileZ,
-            decodeGrassData(buffer, tileX, tileZ, heightmap)
+            heightmap,
+            this.landscapingMasks.get(tileKey(wrapTileX(tileX), tileZ))
           )
           this.cache.set(key, data)
           return data
@@ -348,7 +347,11 @@ export class TerrainGrassDataManager {
     }
   }
 
-  applySnapshot(tileX: number, tileZ: number, bytes: number[] | null): void {
+  applySnapshot(
+    tileX: number,
+    tileZ: number,
+    bytes: number[] | Uint8Array | null
+  ): void {
     const heightmap = this.heightManager.getHeightmap(tileX, tileZ)
     if (!heightmap) throw new Error('Terrain height must arrive before grass')
     const keys = new Set([tileKey(tileX, tileZ)])
@@ -365,10 +368,12 @@ export class TerrainGrassDataManager {
       else
         this.cache.set(
           key,
-          this.filterLandscaping(
+          decodeGrassData(
+            new Uint8Array(bytes).buffer,
             x,
             z,
-            decodeGrassData(new Uint8Array(bytes).buffer, x, z, heightmap)
+            heightmap,
+            this.landscapingMasks.get(tileKey(wrapTileX(x), z))
           )
         )
       for (const cb of this.tileUpdateListeners) cb(x, z)

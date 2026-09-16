@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   decodeGrassData,
   encodeGrassBuffer,
+  filterGrassData,
   getInstanceData,
   removeGrassInRect,
 } from './grass-data'
+import { clearedCellAt } from '../terrain/landscaping'
 
 const size = 4 + 64 * 64 * 3
 const heights = new Uint16Array(65 * 65).fill(10200)
@@ -57,6 +59,28 @@ describe('grass cell densities', () => {
     )
   })
 
+  it('skips cleared cells while preserving source bytes and surviving placements', () => {
+    const bytes = density([
+      [0, 0, 255, 255, 255],
+      [32, 32, 8, 4, 1],
+      [63, 63, 255, 255, 255],
+    ])
+    const original = bytes.slice(0)
+    const mask = new Uint8Array(512)
+    mask[0] = 1
+    mask[511] = 128
+    const all = decodeGrassData(bytes, -256, 7, heights)
+    const filtered = filterGrassData(all, (x, z) =>
+      clearedCellAt(mask, -256, 7, x, z)
+    )!
+    expect(decodeGrassData(bytes, -256, 7, heights, mask)).toEqual(filtered)
+    expect(bytes).toEqual(original)
+    mask.fill(255)
+    expect(
+      decodeGrassData(bytes, -256, 7, heights, mask).buffer.byteLength
+    ).toBe(12)
+  })
+
   it('uses the same pattern across the world seam', () => {
     const bytes = density([[32, 32, 8, 2, 1]])
     const first = getInstanceData(
@@ -107,6 +131,15 @@ describe('grass cell densities', () => {
         [63, 63, 0, 0, 1],
       ])
     )
+    const mask = new Uint8Array(512)
+    mask[0] = 1
+    expect(
+      encodeGrassBuffer(
+        decodeGrassData(bytes.buffer, 0, 0, heights, mask),
+        0,
+        0
+      )
+    ).toEqual(density([[63, 63, 0, 0, 1]]))
   })
 
   it('skips underwater placements and accepts empty tiles', () => {

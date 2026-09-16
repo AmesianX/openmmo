@@ -544,39 +544,12 @@ function announceGroundItem(
 }
 
 import { worldView, type WorldUpdate } from './worldView'
-import { TerrainSnapshots } from './terrainSnapshots'
-import { deserialize_server_message } from '../wasm/onlinerpg_shared'
+import { TerrainSnapshots, type TerrainSnapshot } from './terrainSnapshots'
 import { getTerrainApiUrl } from '../utils/networkUtils'
 
-type TerrainSnapshot = {
-  tile_x: number
-  tile_z: number
-  height: number[]
-  splat: number[]
-  trees: number[] | null
-  grass: number[] | null
-  landscape: LandscapingTile | null
-}
 const terrainSnapshots = new Map<string, TerrainSnapshot>()
-const terrainDownloads = new TerrainSnapshots<TerrainSnapshot>(
+const terrainDownloads = new TerrainSnapshots(
   getTerrainApiUrl,
-  (bytes, version) => {
-    const tile = deserialize_server_message(bytes)
-      .TerrainTileSnapshot as TerrainSnapshot
-    if (
-      !tile ||
-      tile.tile_x !== version.tile_x ||
-      tile.tile_z !== version.tile_z ||
-      tile.height.length !== 65 * 65 * 2 ||
-      tile.splat.length !== 64 * 64 * 4
-    ) {
-      throw new Error('Invalid terrain snapshot')
-    }
-    tile.trees ??= null
-    tile.grass ??= null
-    tile.landscape ??= null
-    return tile
-  },
   (tile) => {
     terrainSnapshots.set(`${tile.tile_x},${tile.tile_z}`, tile)
     applyTerrainSnapshots([tile])
@@ -618,9 +591,7 @@ function applyTerrainSnapshots(
     for (const tile of tiles) {
       heights.applySnapshot(tile.tile_x, tile.tile_z, tile.height)
       splat.setSplatmap(tile.tile_x, tile.tile_z, new Uint8Array(tile.splat))
-      const mask = tile.landscape
-        ? new Uint8Array(tile.landscape.cleared)
-        : new Uint8Array((64 * 64) / 8)
+      const mask = tile.cleared
       trees.applyLandscapingMask(tile.tile_x, tile.tile_z, mask)
       grass.applyLandscapingMask(tile.tile_x, tile.tile_z, mask)
       trees.applySnapshot(tile.tile_x, tile.tile_z, tile.trees)

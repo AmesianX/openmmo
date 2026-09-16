@@ -724,9 +724,9 @@ impl super::GameState {
         let mut first_error = None;
         for &(x, z) in tiles.iter().collect::<std::collections::BTreeSet<_>>() {
             let result = if rebuild {
-                self.terrain_io.rebuild_snapshot(x, z).await
+                self.terrain_io.rebuild_manifest(x, z).await
             } else {
-                self.terrain_io.snapshot_versions(x, z).await
+                self.terrain_io.tile_manifest(x, z).await
             };
             let message = match result {
                 Ok(message) => message,

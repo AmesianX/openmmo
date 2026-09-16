@@ -93,8 +93,8 @@ else
     echo "==> dashboard unchanged; keeping published bundle"
 fi
 
-echo "==> prepare terrain snapshot files"
-target/release/terrain-snapshots "${TERRAIN_DIR:-$REPO/data/terrain}"
+echo "==> prepare terrain file hashes"
+target/release/terrain-manifests "${TERRAIN_DIR:-$REPO/data/terrain}"
 
 # Publish only after every required build succeeds.
 if [[ "$dashboard_changed" == 1 ]]; then

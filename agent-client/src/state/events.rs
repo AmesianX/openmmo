@@ -393,7 +393,7 @@ impl SharedState {
                             if let ServerMessage::TerrainTileVersion {
                                 tile_x,
                                 tile_z,
-                                ground_version,
+                                files,
                                 ..
                             } = message
                             {
@@ -404,7 +404,7 @@ impl SharedState {
                                         revision: event.revision,
                                         x: *tile_x,
                                         z: *tile_z,
-                                        version: ground_version.clone(),
+                                        files: files.clone(),
                                     },
                                 );
                             }

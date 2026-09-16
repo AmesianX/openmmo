@@ -20,12 +20,12 @@ printf 'dashboard v1\n' > "$work/repo/dashboard/source.txt"
 printf 'game v1\n' > "$work/repo/README.md"
 printf 'node_modules/\ndist/\n.env*\n' > "$work/repo/.gitignore"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$work/repo/tools/fetch-assets.sh"
-cat > "$work/repo/target/release/terrain-snapshots" <<'MOCK'
+cat > "$work/repo/target/release/terrain-manifests" <<'MOCK'
 #!/usr/bin/env bash
-printf 'terrain-snapshots %s\n' "$*" >> "$TEST_DEPLOY_EVENTS"
-[[ ${TEST_FAIL_SNAPSHOTS:-0} != 1 ]]
+printf 'terrain-manifests %s\n' "$*" >> "$TEST_DEPLOY_EVENTS"
+[[ ${TEST_FAIL_MANIFESTS:-0} != 1 ]]
 MOCK
-chmod +x "$work/repo/target/release/terrain-snapshots"
+chmod +x "$work/repo/target/release/terrain-manifests"
 git init --bare --initial-branch=master "$work/remote.git" >/dev/null
 git -C "$work/repo" init --initial-branch=master >/dev/null
 git -C "$work/repo" config user.name 'Deployment Test'
@@ -104,7 +104,7 @@ commit_fixture() {
 
 deploy
 assert_event 'npm dashboard run build'
-assert_event "terrain-snapshots $work/repo/data/terrain"
+assert_event "terrain-manifests $work/repo/data/terrain"
 test -s "$work/dashboard-web/.deploy-fingerprint"
 test "$(cat "$work/dashboard-web/build-inputs")" == $'/dashboard/\ngame-client'
 echo 'PASS first deployment and game login configuration fallback'
@@ -158,10 +158,10 @@ deploy
 assert_event 'npm dashboard run build'
 echo 'PASS failed publication cannot mark the dashboard as deployed'
 
-if TEST_FAIL_SNAPSHOTS=1 deploy; then exit 1; fi
+if TEST_FAIL_MANIFESTS=1 deploy; then exit 1; fi
 assert_no_event 'sudo repo rsync'
 assert_no_event 'systemctl restart'
-echo 'PASS failed terrain snapshot generation does not publish or restart'
+echo 'PASS failed terrain manifest preparation does not publish or restart'
 
 rm "$work/repo/dashboard/.env.production.local" "$work/repo/client/.env.local"
 if deploy; then exit 1; fi

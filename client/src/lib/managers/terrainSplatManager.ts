@@ -1,3 +1,4 @@
+import { loadTerrainFile } from '../network/terrainFileSource'
 import * as THREE from 'three'
 import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
@@ -295,18 +296,15 @@ export class TerrainSplatManager {
     const promise = Promise.resolve().then(
       async (): Promise<THREE.DataTexture> => {
         try {
-          const url = `${this.terrainApiUrl}/api/terrain/splat/${tileX}/${tileZ}`
-          const response = await fetch(url)
-          if (!response.ok) {
-            console.error(
-              `Failed to load splatmap (${tileX}, ${tileZ}): ${response.status}`
-            )
-            return defaultFallback()
-          }
-          const buffer = await response.arrayBuffer()
+          const { bytes } = await loadTerrainFile(
+            this.terrainApiUrl,
+            tileX,
+            tileZ,
+            'splat'
+          )
           if (this.inflightSplatmaps.get(key) !== promise)
             return this.loadSplatmap(tileX, tileZ)
-          const data = new Uint8Array(buffer)
+          const data = bytes!
           const updated = this.textures.get(key)
           if (updated) return updated
           if (!this.splatmaps.has(key)) this.splatmaps.set(key, data)

@@ -57,15 +57,17 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    location ~ "^/api/terrain/snapshot/(full|ground)/(-?[0-9]+)/(-?[0-9]+)/([0-9a-f]{64})$" {
-        alias /terrain/snapshots/$1/$2/$3/$4;
+    location ~ "^/api/terrain/files/((?:height|splat|trees|grass|landscaping)/r[+-][0-9]+_[+-][0-9]+/[hstgl]_[+-][0-9]+_[+-][0-9]+\.bin)$" {
+        alias /terrain/$1;
         default_type application/octet-stream;
         sendfile on;
-        add_header Cache-Control "public, max-age=31536000, immutable";
-        error_page 404 = @terrain_snapshot_missing;
+        etag off;
+        if_modified_since off;
+        open_file_cache off;
+        add_header Cache-Control "no-store" always;
     }
 
-    location @terrain_snapshot_missing {
+    location /api/terrain/files/ {
         add_header Cache-Control "no-store" always;
         return 404;
     }

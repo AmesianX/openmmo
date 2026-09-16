@@ -1,3 +1,4 @@
+import { createHash, webcrypto } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -56,24 +57,32 @@ function networkResponse(body = '0123456789', status = 200) {
   return response
 }
 
-function worker(maxBytes = 500_000_000) {
+function worker(maxBytes = 500_000_000, terrainBytes = 128_000_000) {
   const handlers = new Map<string, (event: WorkerEvent) => void>()
-  runInNewContext(source.replace('500_000_000', String(maxBytes)), {
-    self: {
-      location: { origin },
-      clients: { claim: async () => {} },
-      skipWaiting: async () => {},
-      addEventListener: (name: string, handler: (event: WorkerEvent) => void) =>
-        handlers.set(name, handler),
-    },
-    caches,
-    fetch: network,
-    URL,
-    Request,
-    Response,
-    Headers,
-    Date: { now: () => ++clock },
-  })
+  runInNewContext(
+    source
+      .replace('500_000_000', String(maxBytes))
+      .replace('128_000_000', String(terrainBytes)),
+    {
+      self: {
+        location: { origin },
+        clients: { claim: async () => {} },
+        skipWaiting: async () => {},
+        addEventListener: (
+          name: string,
+          handler: (event: WorkerEvent) => void
+        ) => handlers.set(name, handler),
+      },
+      caches,
+      crypto: webcrypto,
+      fetch: network,
+      URL,
+      Request,
+      Response,
+      Headers,
+      Date: { now: () => ++clock },
+    }
+  )
   function dispatch(name: string, event: Partial<WorkerEvent> = {}) {
     const tasks: Promise<unknown>[] = []
     let response: Promise<Response> | undefined
@@ -462,4 +471,73 @@ describe('cached music seeking', () => {
       expect(network).toHaveBeenCalledTimes(2)
     }
   )
+})
+
+describe('terrain Cache Storage', () => {
+  const terrainCache = 'openmmo-terrain-files-v1'
+  const hash = (body: string) => createHash('sha256').update(body).digest('hex')
+  const url = (body: string, x = '0000') =>
+    `/api/terrain/files/grass/r+00_+00/g_+${x}_+0000.bin?hash=${hash(body)}`
+  const key = (body: string) => `/__openmmo_terrain_file__/${hash(body)}`
+
+  it('reuses verified raw bytes after worker restarts and asset manifest cleanup', async () => {
+    const current = worker()
+    await current.get(url('0123456789'))
+    await current.manifest([model])
+    await current.manifest([music])
+    const restarted = worker()
+    expect(await (await restarted.get(url('0123456789', '0001')))!.text()).toBe(
+      '0123456789'
+    )
+    expect(network).toHaveBeenCalledTimes(1)
+    expect(network.mock.calls[0][0].cache).toBe('no-store')
+    expect(await (await caches.open(terrainCache)).keys()).toHaveLength(1)
+  })
+
+  it('never stores a response with the wrong hash and fetches the latest version', async () => {
+    const current = worker()
+    expect((await current.get(url('old')))?.status).toBe(409)
+    expect(await (await caches.open(terrainCache)).keys()).toHaveLength(0)
+    expect((await current.get(url('0123456789')))?.status).toBe(200)
+    expect(network).toHaveBeenCalledTimes(2)
+  })
+
+  it('redownloads corrupted stored content and works when storage is unavailable', async () => {
+    const cache = await caches.open(terrainCache)
+    await cache.put(key('0123456789'), new Response('corrupt'))
+    expect((await worker().get(url('0123456789')))?.status).toBe(200)
+    expect(await (await cache.match(key('0123456789')))!.text()).toBe(
+      '0123456789'
+    )
+    caches.open.mockRejectedValue(new Error('unavailable'))
+    expect((await worker().get(url('0123456789')))?.status).toBe(200)
+    expect(network).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps terrain capacity separate and persists least recently used eviction', async () => {
+    const current = worker(20, 20)
+    for (const body of ['aaaaaaaaaa', 'bbbbbbbbbb']) {
+      network.mockImplementationOnce(async () => networkResponse(body))
+      await current.get(url(body))
+    }
+    await current.get(url('aaaaaaaaaa'))
+    await current.get(model)
+    network.mockImplementationOnce(async () => networkResponse('cccccccccc'))
+    await worker(20, 20).get(url('cccccccccc'))
+    const cache = await caches.open(terrainCache)
+    expect(await cache.match(key('aaaaaaaaaa'))).toBeDefined()
+    expect(await cache.match(key('bbbbbbbbbb'))).toBeUndefined()
+    expect(await cache.match(key('cccccccccc'))).toBeDefined()
+    expect(await (await caches.open(cacheName)).match(model)).toBeDefined()
+  })
+
+  it('deduplicates simultaneous downloads by content hash across tile paths', async () => {
+    const current = worker()
+    const responses = await Promise.all([
+      current.get(url('0123456789')),
+      current.get(url('0123456789', '0001')),
+    ])
+    expect(responses.map((response) => response?.status)).toEqual([200, 200])
+    expect(network).toHaveBeenCalledTimes(1)
+  })
 })

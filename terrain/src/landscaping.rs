@@ -23,18 +23,7 @@ impl TerrainIO {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
-        if data.len() != 4 + defaults::SPLATMAP_SIZE + CLEARED_BYTES || &data[..4] != MAGIC {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Invalid landscaping tile",
-            ));
-        }
-        Ok(Some(LandscapingTile {
-            tile_x: coords::wrap_tile_x(tx),
-            tile_z: tz,
-            splat: data[4..4 + defaults::SPLATMAP_SIZE].to_vec(),
-            cleared: data[4 + defaults::SPLATMAP_SIZE..].to_vec(),
-        }))
+        decode_landscaping(&data, tx, tz).map(Some)
     }
 
     pub async fn write_landscaping_tile(&self, tile: &LandscapingTile) -> io::Result<()> {
@@ -54,6 +43,21 @@ impl TerrainIO {
         )
         .await
     }
+}
+
+pub fn decode_landscaping(data: &[u8], tx: i32, tz: i32) -> io::Result<LandscapingTile> {
+    if data.len() != 4 + defaults::SPLATMAP_SIZE + CLEARED_BYTES || &data[..4] != MAGIC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid landscaping tile",
+        ));
+    }
+    Ok(LandscapingTile {
+        tile_x: coords::wrap_tile_x(tx),
+        tile_z: tz,
+        splat: data[4..4 + defaults::SPLATMAP_SIZE].to_vec(),
+        cleared: data[4 + defaults::SPLATMAP_SIZE..].to_vec(),
+    })
 }
 
 pub fn filter_vegetation(data: Vec<u8>, cleared: &[u8]) -> io::Result<Vec<u8>> {

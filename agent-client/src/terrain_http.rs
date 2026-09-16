@@ -1,7 +1,4 @@
-//! Terrain tiles over HTTP, for agent-clients that do not sit on the game
-//! server's filesystem. Uses the same public endpoints the web client reads
-//! (`GET /api/terrain/{kind}/{tx}/{tz}`), backed by a disk cache so a restart
-//! does not re-download what it already has.
+//! Hash-verified HTTP terrain with a persistent sampler cache.
 
 use std::path::{Path, PathBuf};
 
@@ -24,15 +21,13 @@ pub(crate) fn http_client() -> reqwest::Client {
     HTTP.get_or_init(reqwest::Client::new).clone()
 }
 
-/// Disk-cached HTTP tile source, shared by the height and splat twins:
-/// size-checked cache reads, temp-file + rename writes, 404 surfaced as
-/// `None` so each kind can decide what a missing tile means.
+/// Hash-verified terrain files with a revision-protected sampler cache.
 pub struct HttpTiles {
     /// Server origin, e.g. `https://openmmo.to.nexus` (no trailing slash).
     base_url: String,
     cache_dir: PathBuf,
     http: reqwest::Client,
-    /// Endpoint segment: `/api/terrain/{kind}/{tx}/{tz}`.
+    files: crate::terrain_snapshots::TerrainSnapshots,
     kind: &'static str,
     /// Cache filename prefix — height tiles predate the prefix and use "".
     prefix: &'static str,
@@ -50,6 +45,10 @@ impl HttpTiles {
     ) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
+            files: crate::terrain_snapshots::TerrainSnapshots::new(
+                base_url,
+                &cache_dir.to_string_lossy(),
+            ),
             cache_dir,
             http: reqwest::Client::new(),
             kind,
@@ -94,26 +93,55 @@ impl HttpTiles {
     }
 
     async fn fetch(&self, tx: i32, tz: i32) -> anyhow::Result<Option<Vec<u8>>> {
-        let url = format!("{}/api/terrain/{}/{tx}/{tz}", self.base_url, self.kind);
-        let response = self.http.get(&url).send().await?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        let response = response.error_for_status()?;
-        let bytes = response.bytes().await?.to_vec();
-        if bytes.len() != self.expected_size {
-            anyhow::bail!(
-                "{url} returned {} bytes, expected {}",
-                bytes.len(),
-                self.expected_size
+        let tx = onlinerpg_terrain::coords::wrap_tile_x(tx);
+        let url = format!("{}/api/terrain/manifest/{tx}/{tz}", self.base_url);
+        for attempt in 0..2 {
+            let files: onlinerpg_shared::terrain_files::TerrainFiles = self
+                .http
+                .get(&url)
+                .header(reqwest::header::CACHE_CONTROL, "no-store")
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            let file = if self.kind == "height" {
+                files.height.as_ref()
+            } else {
+                files.landscape.as_ref().or(files.splat.as_ref())
+            };
+            let Some(file) = file else { return Ok(None) };
+            let bytes = match self.files.load_file(file).await {
+                Ok(bytes) => bytes,
+                Err(error)
+                    if attempt == 0
+                        && (error.is::<crate::terrain_snapshots::TerrainChanged>()
+                            || error
+                                .downcast_ref::<reqwest::Error>()
+                                .and_then(|e| e.status())
+                                == Some(reqwest::StatusCode::NOT_FOUND)) =>
+                {
+                    continue
+                }
+                Err(error) => return Err(error),
+            };
+            let bytes = if self.kind == "splat" && files.landscape.is_some() {
+                onlinerpg_terrain::landscaping::decode_landscaping(&bytes, tx, tz)?.splat
+            } else {
+                bytes
+            };
+            anyhow::ensure!(
+                bytes.len() == self.expected_size,
+                "Invalid {} tile size",
+                self.kind
             );
+            return Ok(Some(bytes));
         }
-        Ok(Some(bytes))
+        unreachable!()
     }
 
-    /// Read-through: disk cache, else fetch and cache. `Ok(None)` is a 404 —
-    /// an answer, not a tile, so nothing is cached for it. A network error is
-    /// surfaced so the caller retries later instead of trusting a stand-in.
+    /// Missing files use defaults; network errors remain retryable.
     pub async fn read(&self, tx: i32, tz: i32) -> std::io::Result<Option<Vec<u8>>> {
         let epoch = world_epoch();
         let path = self.cache_path(tx, tz);
@@ -210,22 +238,27 @@ mod tests {
         use std::sync::Arc;
         let began = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Notify::new());
-        let app = Router::new().route(
-            "/api/terrain/height/{tx}/{tz}",
-            get({
-                let began = began.clone();
-                let release = release.clone();
-                move || {
+        let app = Router::new()
+            .route(
+                "/api/terrain/manifest/{tx}/{tz}",
+                get(|| async { axum::Json(height_manifest(&vec![1; HEIGHTMAP_SIZE])) }),
+            )
+            .route(
+                "/api/terrain/files/{kind}/{region}/{file}",
+                get({
                     let began = began.clone();
                     let release = release.clone();
-                    async move {
-                        began.notify_one();
-                        release.notified().await;
-                        vec![1u8; HEIGHTMAP_SIZE]
+                    move || {
+                        let began = began.clone();
+                        let release = release.clone();
+                        async move {
+                            began.notify_one();
+                            release.notified().await;
+                            vec![1u8; HEIGHTMAP_SIZE]
+                        }
                     }
-                }
-            }),
-        );
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -254,18 +287,39 @@ mod tests {
         std::env::temp_dir().join(format!("onlinerpg_tiles_{}", rand::random::<u64>()))
     }
 
-    /// Serves one tile at (1, 2); everything else 404s, like the real API does
-    /// outside the baked area. Returns the origin and a handle to stop it.
-    async fn serve_one_tile(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
-        let app = Router::new().route(
-            "/api/terrain/height/{tx}/{tz}",
-            get(move |AxumPath((tx, tz)): AxumPath<(i32, i32)>| async move {
-                match (tx, tz) {
-                    (1, 2) => Ok(body),
-                    _ => Err(axum::http::StatusCode::NOT_FOUND),
-                }
+    fn height_manifest(body: &[u8]) -> onlinerpg_shared::terrain_files::TerrainFiles {
+        onlinerpg_shared::terrain_files::TerrainFiles {
+            height: Some(onlinerpg_shared::terrain_files::TerrainFile {
+                path: "height/r+00_+00/h_+0001_+0002.bin".into(),
+                hash: onlinerpg_terrain::manifest::content_hash(body),
             }),
-        );
+            ..Default::default()
+        }
+    }
+
+    async fn serve_one_tile(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+        let files = height_manifest(&body);
+        let app = Router::new()
+            .route(
+                "/api/terrain/manifest/{tx}/{tz}",
+                get(move |AxumPath((tx, tz)): AxumPath<(i32, i32)>| {
+                    let files = files.clone();
+                    async move {
+                        axum::Json(if (tx, tz) == (1, 2) {
+                            files
+                        } else {
+                            Default::default()
+                        })
+                    }
+                }),
+            )
+            .route(
+                "/api/terrain/files/{kind}/{region}/{file}",
+                get(move || {
+                    let body = body.clone();
+                    async move { body }
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
@@ -300,7 +354,7 @@ mod tests {
             tiles.read_heightmap(9, 9).await.unwrap(),
             defaults::default_heightmap()
         );
-        // A 404 is an answer, not a tile: nothing should be cached for it.
+        // Missing files do not populate the sampler cache.
         assert!(!tiles.0.cache_path(9, 9).exists());
 
         server.abort();

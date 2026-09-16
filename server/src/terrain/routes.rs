@@ -65,6 +65,7 @@ pub fn terrain_router(
             game_state,
         });
     Router::new()
+        .route("/api/terrain/manifest/{x}/{z}", get(get_terrain_manifest))
         .route(
             "/api/terrain/height-original/{x}/{z}",
             get(get_original_heightmap).put(put_original_heightmap),
@@ -97,54 +98,56 @@ pub fn terrain_router(
         .route("/api/terrain/river-field/{x}/{z}", get(get_river_field))
         .route("/api/terrain/water-field/{x}/{z}", get(get_water_field))
         .route(
-            "/api/terrain/snapshot/{profile}/{x}/{z}/{version}",
-            get(get_snapshot),
+            "/api/terrain/files/{kind}/{region}/{file}",
+            get(get_terrain_file),
         )
         .with_state(terrain_io)
         .merge(objects_router)
         .merge(ownership_router)
 }
 
-async fn get_snapshot(
-    Path((profile, x, z, version)): Path<(String, i32, i32, String)>,
+async fn get_terrain_manifest(
+    Path((x, z)): Path<(i32, i32)>,
     State(terrain): State<Arc<TerrainIO>>,
-    headers: axum::http::HeaderMap,
 ) -> Response {
-    let path = match terrain.snapshot_path(&profile, x, z, &version) {
+    let headers = [(header::CACHE_CONTROL, "no-store")];
+    match terrain.tile_manifest(x, z).await {
+        Ok(onlinerpg_shared::ServerMessage::TerrainTileVersion { files, .. }) => {
+            (headers, Json(files)).into_response()
+        }
+        Ok(_) => unreachable!(),
+        Err(error) => {
+            warn!(%error, x, z, "Failed to read terrain manifest");
+            (StatusCode::SERVICE_UNAVAILABLE, headers).into_response()
+        }
+    }
+}
+
+async fn get_terrain_file(
+    Path((kind, region, file)): Path<(String, String, String)>,
+    State(terrain): State<Arc<TerrainIO>>,
+) -> Response {
+    let relative = format!("{kind}/{region}/{file}");
+    let headers = [(header::CACHE_CONTROL, "no-store")];
+    let path = match onlinerpg_terrain::manifest::raw_file_path(terrain.base_dir(), &relative) {
         Ok(path) => path,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        Err(_) => return (StatusCode::NOT_FOUND, headers).into_response(),
     };
-    let bytes = match tokio::fs::read(path).await {
-        Ok(bytes) => bytes,
+    match tokio::fs::read(path).await {
+        Ok(bytes) => (
+            headers,
+            [(header::CONTENT_TYPE, "application/octet-stream")],
+            bytes,
+        )
+            .into_response(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return (StatusCode::NOT_FOUND, [(header::CACHE_CONTROL, "no-store")]).into_response();
+            (StatusCode::NOT_FOUND, headers).into_response()
         }
         Err(error) => {
-            warn!(%error, x, z, "Failed to read terrain snapshot file");
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [(header::CACHE_CONTROL, "no-store")],
-            )
-                .into_response();
+            warn!(%error, %relative, "Failed to read terrain file");
+            (StatusCode::SERVICE_UNAVAILABLE, headers).into_response()
         }
-    };
-    let etag = format!("\"{version}\"");
-    let metadata = [
-        (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
-        (
-            header::CACHE_CONTROL,
-            "public, max-age=31536000, immutable".to_owned(),
-        ),
-        (header::ETAG, etag.clone()),
-    ];
-    if headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok())
-        == Some(etag.as_str())
-    {
-        return (StatusCode::NOT_MODIFIED, metadata).into_response();
     }
-    (metadata, bytes).into_response()
 }
 
 async fn get_land_ownership(
@@ -768,120 +771,60 @@ mod tests {
     use axum::http::HeaderMap;
 
     #[tokio::test]
-    async fn snapshot_versions_are_immutable_and_ground_omits_visuals() {
-        use onlinerpg_shared::{deserialize_server_msg, ServerMessage};
-        use onlinerpg_terrain::snapshot::{content_version, encode_snapshot};
-        let terrain = Arc::new(TerrainIO::new(unique_temp_dir("http_snapshot_tiles")));
-        let mut grass_data = onlinerpg_shared::grass_format::empty_grass();
-        grass_data[4] = 64;
-        terrain.write_grass(0, 0, &grass_data).await.unwrap();
-        let ServerMessage::TerrainTileVersion {
-            version,
-            ground_version,
-            ..
-        } = terrain.snapshot_versions(0, 0).await.unwrap()
-        else {
-            panic!()
+    async fn raw_files_follow_atomic_replacements_without_serialization() {
+        let terrain = Arc::new(TerrainIO::new(unique_temp_dir("http_raw_tiles")));
+        let mut data = onlinerpg_shared::grass_format::empty_grass();
+        data[4] = 255;
+        let request = || {
+            Path((
+                "grass".into(),
+                "r+00_+00".into(),
+                "g_+0000_+0000.bin".into(),
+            ))
         };
-        let notice = terrain.snapshot_versions(0, 0).await.unwrap();
-        assert!(encode_snapshot(&notice).unwrap().len() < 256);
-        for (profile, hash) in [("full", &version), ("ground", &ground_version)] {
-            let request = || Path((profile.to_owned(), 0, 0, hash.clone()));
-            let response = get_snapshot(request(), State(terrain.clone()), HeaderMap::new()).await;
+        terrain.write_grass(0, 0, &data).await.unwrap();
+        for value in [255, 128] {
+            data[4] = value;
+            terrain.write_grass(0, 0, &data).await.unwrap();
+            terrain.rebuild_manifest(0, 0).await.unwrap();
+            let manifest = get_terrain_manifest(Path((512, 0)), State(terrain.clone())).await;
+            assert_eq!(manifest.headers()[header::CACHE_CONTROL], "no-store");
+            let manifest = axum::body::to_bytes(manifest.into_body(), 1024)
+                .await
+                .unwrap();
+            let files: onlinerpg_shared::terrain_files::TerrainFiles =
+                serde_json::from_slice(&manifest).unwrap();
+            let grass = files.grass.unwrap();
+            assert_eq!(grass.hash, onlinerpg_terrain::manifest::content_hash(&data));
+            assert_eq!(grass.path, "grass/r+00_+00/g_+0000_+0000.bin");
+            assert!(files.height.is_none());
+            let response = get_terrain_file(request(), State(terrain.clone())).await;
             assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(
-                response.headers()[header::CACHE_CONTROL],
-                "public, max-age=31536000, immutable"
-            );
-            let etag = etag_of(&response);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert!(!response.headers().contains_key(header::ETAG));
             let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap();
-            assert_eq!(content_version(&bytes), *hash);
-            let ServerMessage::TerrainTileSnapshot {
-                height,
-                splat,
-                trees,
-                grass,
-                landscape,
-                ..
-            } = deserialize_server_msg(&bytes).unwrap()
-            else {
-                panic!()
-            };
-            assert_eq!(height.len(), 8450);
-            assert_eq!(splat.len(), 16384);
-            if profile == "ground" {
-                assert!(trees.is_none() && grass.is_none() && landscape.is_none());
-                assert!(bytes.len() < 26000);
-            } else {
-                assert_eq!(grass.unwrap(), grass_data);
-            }
-            let mut headers = HeaderMap::new();
-            headers.insert(header::IF_NONE_MATCH, etag.parse().unwrap());
-            assert_eq!(
-                get_snapshot(request(), State(terrain.clone()), headers)
-                    .await
-                    .status(),
-                StatusCode::NOT_MODIFIED
-            );
+            assert_eq!(bytes.as_ref(), data);
         }
-        let reopened = TerrainIO::new(terrain.base_dir().to_path_buf());
-        assert_eq!(
-            encode_snapshot(&notice).unwrap(),
-            encode_snapshot(&reopened.snapshot_versions(0, 0).await.unwrap()).unwrap()
-        );
-        grass_data[4] = 1;
-        terrain.write_grass(0, 0, &grass_data).await.unwrap();
-        let ServerMessage::TerrainTileVersion {
-            version: next,
-            ground_version: ground_next,
-            ..
-        } = terrain.rebuild_snapshot(0, 0).await.unwrap()
-        else {
-            panic!()
-        };
-        assert_ne!(next, version);
-        assert_eq!(ground_next, ground_version);
-        let old = get_snapshot(
-            Path(("full".into(), 0, 0, version)),
-            State(terrain.clone()),
-            HeaderMap::new(),
-        )
-        .await;
-        assert_eq!(old.status(), StatusCode::OK);
-        let missing = get_snapshot(
-            Path(("ground".into(), 0, 0, "0".repeat(64))),
-            State(terrain.clone()),
-            HeaderMap::new(),
-        )
-        .await;
+        tokio::fs::remove_file(coords::grass_path(terrain.base_dir(), 0, 0))
+            .await
+            .unwrap();
+        let missing = get_terrain_file(request(), State(terrain.clone())).await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
-        let path = onlinerpg_terrain::coords::heightmap_path(terrain.base_dir(), 0, 0);
-        tokio::fs::create_dir_all(path).await.unwrap();
-        let saved = get_snapshot(
-            Path(("full".into(), 0, 0, next.clone())),
-            State(terrain.clone()),
-            HeaderMap::new(),
-        )
-        .await;
-        assert_eq!(
-            saved.status(),
-            StatusCode::OK,
-            "HTTP serves prepared bytes without reading terrain sources"
-        );
-        let artifact = terrain.snapshot_path("full", 0, 0, &next).unwrap();
-        tokio::fs::remove_file(&artifact).await.unwrap();
-        tokio::fs::create_dir(&artifact).await.unwrap();
-        let failure = get_snapshot(
-            Path(("full".into(), 0, 0, next)),
-            State(terrain),
-            HeaderMap::new(),
-        )
-        .await;
-        assert_eq!(failure.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(failure.headers()[header::CACHE_CONTROL], "no-store");
+        for path in [
+            ("height-original", "r+00_+00", "o_+0000_+0000.bin"),
+            ("grass", "..", "Cargo.toml"),
+        ] {
+            let response = get_terrain_file(
+                Path((path.0.into(), path.1.into(), path.2.into())),
+                State(terrain.clone()),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+        tokio::fs::remove_dir_all(terrain.base_dir()).await.unwrap();
     }
 
     fn etag_of(response: &Response) -> String {

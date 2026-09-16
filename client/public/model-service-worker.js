@@ -1,16 +1,25 @@
-// Keep deployed cache names and worker URL to reuse existing model downloads.
 const ASSET_CACHE = 'openmmo-models-v1'
 const MANIFEST_CACHE = 'openmmo-model-manifests-v1'
 const MANIFEST_KEY = '/__openmmo_model_manifest__'
-const CACHE_INDEX_KEY = '/__openmmo_asset_cache_index__'
 const MAX_CACHE_BYTES = 500_000_000
 const MANIFEST_MESSAGE = 'openmmo:asset-manifest'
 const OWNED_CACHE_PREFIX = 'openmmo-model'
 const HASHED_ASSET_URL =
   /^\/(?:(?:models|textures)\/.+\.[0-9a-f]{8}\.glb|bgm\/.+\.[0-9a-f]{8}\.(?:mp3|m4a|ogg))$/i
+const TERRAIN_URL =
+  /^\/api\/terrain\/files\/(height|splat|trees|grass|landscaping)\/r[+-]\d+_[+-]\d+\/[hstgl]_[+-]\d+_[+-]\d+\.bin$/
+const assetStore = {
+  name: ASSET_CACHE,
+  limit: MAX_CACHE_BYTES,
+  indexKey: '/__openmmo_asset_cache_index__',
+}
+const terrainStore = {
+  name: 'openmmo-terrain-files-v1',
+  limit: 128_000_000,
+  indexKey: '/__openmmo_terrain_cache_index__',
+}
 const inFlight = new Map()
 let cacheUpdates = Promise.resolve()
-let cacheIndex
 
 function updateCache(operation) {
   cacheUpdates = cacheUpdates.then(operation).catch(() => {})
@@ -18,7 +27,6 @@ function updateCache(operation) {
 }
 
 self.addEventListener('install', () => self.skipWaiting())
-
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
@@ -37,10 +45,12 @@ self.addEventListener('activate', (event) => {
       )
       .then(() =>
         updateCache(async () => {
-          const cache = await caches.open(ASSET_CACHE)
-          await loadCacheIndex(cache)
-          await trimCache(cache, MAX_CACHE_BYTES)
-          await saveCacheIndex()
+          for (const store of [assetStore, terrainStore]) {
+            const cache = await caches.open(store.name)
+            await loadCacheIndex(cache, store)
+            await trimCache(cache, store.limit, store)
+            await saveCacheIndex(store)
+          }
         })
       )
       .then(() => self.clients.claim())
@@ -50,16 +60,18 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const request = event.request
   const url = new URL(request.url)
-
+  if (request.method !== 'GET') return
+  const terrain =
+    TERRAIN_URL.test(url.pathname) &&
+    /^[0-9a-f]{64}$/.test(url.searchParams.get('hash') ?? '') &&
+    !request.headers.has('range')
   if (
-    request.method !== 'GET' ||
-    url.origin !== self.location.origin ||
-    !HASHED_ASSET_URL.test(url.pathname)
-  ) {
+    !terrain &&
+    (url.origin !== self.location.origin ||
+      !HASHED_ASSET_URL.test(url.pathname))
+  )
     return
-  }
-
-  const operation = resolveAsset(request)
+  const operation = resolveAsset(request, terrain ? terrainStore : assetStore)
   event.respondWith(operation.then(({ response }) => response))
   event.waitUntil(operation.then(({ cacheWrite }) => cacheWrite))
 })
@@ -69,12 +81,43 @@ self.addEventListener('message', (event) => {
   event.waitUntil(updateCache(() => updateManifest(event.data.urls)))
 })
 
-async function resolveAsset(request) {
+function cacheKey(request, store) {
+  if (store !== terrainStore) return request
+  const url = new URL(request.url)
+  return new Request(
+    new URL(
+      `/__openmmo_terrain_file__/${url.searchParams.get('hash')}`,
+      url.origin
+    )
+  )
+}
+
+async function verifyTerrain(response, request) {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    await response.clone().arrayBuffer()
+  )
+  const hash = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('')
+  return hash === new URL(request.url).searchParams.get('hash')
+}
+
+async function resolveAsset(request, store) {
   let cache
   let hasCachedFile = false
+  const key = cacheKey(request, store)
   try {
-    cache = await caches.open(ASSET_CACHE)
-    const cached = await cache.match(request)
+    cache = await caches.open(store.name)
+    let cached = await cache.match(key)
+    if (
+      cached &&
+      store === terrainStore &&
+      !(await verifyTerrain(cached, request))
+    ) {
+      await cache.delete(key)
+      cached = null
+    }
     if (cached) {
       hasCachedFile = true
       const response = request.headers.has('range')
@@ -83,11 +126,11 @@ async function resolveAsset(request) {
       if (response) {
         const usedAt = Date.now()
         const cacheWrite = updateCache(async () => {
-          await loadCacheIndex(cache)
-          const entry = cacheIndex.get(request.url)
+          await loadCacheIndex(cache, store)
+          const entry = store.index.get(key.url)
           if (entry) entry.lastUsed = Math.max(entry.lastUsed, usedAt)
-          await trimCache(cache, MAX_CACHE_BYTES)
-          await saveCacheIndex()
+          await trimCache(cache, store.limit, store)
+          await saveCacheIndex(store)
         })
         return { response, cacheWrite }
       }
@@ -108,32 +151,30 @@ async function resolveAsset(request) {
         'if-modified-since',
         'if-match',
         'if-unmodified-since',
-      ]) {
+      ])
         headers.delete(name)
-      }
       const fullRequest = new Request(request, { headers, signal: null })
-      cacheWrite = downloadAsset(fullRequest, cache)
+      cacheWrite = downloadAsset(fullRequest, cache, store)
         .then(({ cacheWrite }) => cacheWrite)
         .catch(() => {})
     }
     return { response: await streaming, cacheWrite }
   }
-
-  const { response, cacheWrite } = await downloadAsset(request, cache)
+  const { response, cacheWrite } = await downloadAsset(request, cache, store)
   return { response: response.clone(), cacheWrite }
 }
 
-function downloadAsset(request, cache) {
-  let network = inFlight.get(request.url)
+function downloadAsset(request, cache, store) {
+  const key = cacheKey(request, store).url
+  let network = inFlight.get(key)
   if (!network) {
-    network = fetchAndCache(request, cache)
-    inFlight.set(request.url, network)
+    network = fetchAndCache(request, cache, store)
+    inFlight.set(key, network)
     void network
       .then(({ cacheWrite }) => cacheWrite)
       .catch(() => {})
-      .finally(() => inFlight.delete(request.url))
+      .finally(() => inFlight.delete(key))
   }
-
   return network
 }
 
@@ -162,21 +203,48 @@ async function readRange(request, cached) {
   return new Response(blob.slice(start, last + 1), { status: 206, headers })
 }
 
-async function fetchAndCache(request, cache) {
-  const response = await fetch(request)
+async function fetchAndCache(request, cache, store) {
+  const response = await fetch(
+    store === terrainStore
+      ? new Request(request, { cache: 'no-store' })
+      : request
+  )
   let cacheWrite = Promise.resolve()
-  if (cache && response.status === 200 && response.type === 'basic') {
-    cacheWrite = storeAsset(cache, request, response.clone()).catch(() => {})
+  if (
+    store === terrainStore &&
+    response.status === 200 &&
+    !(await verifyTerrain(response, request))
+  ) {
+    return {
+      response: new Response(null, {
+        status: 409,
+        headers: { 'Cache-Control': 'no-store' },
+      }),
+      cacheWrite,
+    }
+  }
+  if (
+    cache &&
+    response.status === 200 &&
+    (response.type === 'basic' ||
+      (store === terrainStore && response.type === 'cors'))
+  ) {
+    cacheWrite = storeAsset(
+      cache,
+      cacheKey(request, store),
+      response.clone(),
+      store
+    ).catch(() => {})
   }
   return { response, cacheWrite }
 }
 
-async function loadCacheIndex(cache) {
-  if (cacheIndex) return
+async function loadCacheIndex(cache, store) {
+  if (store.index) return
   let saved
   try {
     const metadata = await caches.open(MANIFEST_CACHE)
-    saved = new Map(await (await metadata.match(CACHE_INDEX_KEY)).json())
+    saved = new Map(await (await metadata.match(store.indexKey)).json())
   } catch {
     saved = new Map()
   }
@@ -192,68 +260,66 @@ async function loadCacheIndex(cache) {
       entries.set(request.url, entry)
     } else {
       const response = await cache.match(request)
-      if (response) {
+      if (response)
         entries.set(request.url, {
           size: (await response.blob()).size,
           lastUsed: 0,
         })
-      }
     }
   }
-  cacheIndex = entries
+  store.index = entries
 }
 
-async function saveCacheIndex() {
+async function saveCacheIndex(store) {
   const metadata = await caches.open(MANIFEST_CACHE)
   await metadata.put(
-    CACHE_INDEX_KEY,
-    new Response(JSON.stringify([...cacheIndex]))
+    store.indexKey,
+    new Response(JSON.stringify([...store.index]))
   )
 }
 
-async function trimCache(cache, limit) {
-  let total = [...cacheIndex.values()].reduce(
+async function trimCache(cache, limit, store) {
+  let total = [...store.index.values()].reduce(
     (sum, entry) => sum + entry.size,
     0
   )
   if (total <= limit) return
-  const oldest = [...cacheIndex].sort((a, b) => a[1].lastUsed - b[1].lastUsed)
+  const oldest = [...store.index].sort((a, b) => a[1].lastUsed - b[1].lastUsed)
   for (const [url, entry] of oldest) {
     if (total <= limit) break
     await cache.delete(url)
-    cacheIndex.delete(url)
+    store.index.delete(url)
     total -= entry.size
   }
 }
 
-async function storeAsset(cache, request, response) {
+async function storeAsset(cache, request, response, store) {
   const size = (await response.clone().blob()).size
-  if (size > MAX_CACHE_BYTES) return
+  if (size > store.limit) return
   const usedAt = Date.now()
   await updateCache(async () => {
-    await loadCacheIndex(cache)
-    const previous = cacheIndex.get(request.url)
+    await loadCacheIndex(cache, store)
+    const previous = store.index.get(request.url)
     if (previous && (await cache.match(request))) {
       previous.lastUsed = Math.max(previous.lastUsed, usedAt)
     } else {
-      cacheIndex.delete(request.url)
-      await trimCache(cache, MAX_CACHE_BYTES - size)
+      store.index.delete(request.url)
+      await trimCache(cache, store.limit - size, store)
       try {
         await cache.put(request, response)
       } catch (error) {
-        await saveCacheIndex()
+        await saveCacheIndex(store)
         throw error
       }
-      cacheIndex.set(request.url, { size, lastUsed: usedAt })
+      store.index.set(request.url, { size, lastUsed: usedAt })
     }
-    await saveCacheIndex()
+    await saveCacheIndex(store)
   })
 }
 
 async function updateManifest(rawUrls) {
   const urls = normalizeManifest(rawUrls)
   if (urls.length === 0) return
-
   const manifestCache = await caches.open(MANIFEST_CACHE)
   const previousState = await readManifestState(manifestCache)
   const known =
@@ -262,7 +328,6 @@ async function updateManifest(rawUrls) {
   const state = known
     ? previousState
     : { current: urls, previous: previousState.current }
-
   if (!known) {
     await manifestCache.put(
       MANIFEST_KEY,
@@ -271,23 +336,21 @@ async function updateManifest(rawUrls) {
       })
     )
   }
-
   const keep = new Set([...state.current, ...state.previous])
-  const assetCache = await caches.open(ASSET_CACHE)
-  await loadCacheIndex(assetCache)
-  const requests = await assetCache.keys()
+  const cache = await caches.open(ASSET_CACHE)
+  await loadCacheIndex(cache, assetStore)
+  const requests = await cache.keys()
   await Promise.all(
     requests
       .filter((request) => !keep.has(request.url))
       .map(async (request) => {
-        await assetCache.delete(request)
-        cacheIndex.delete(request.url)
+        await cache.delete(request)
+        assetStore.index.delete(request.url)
       })
   )
-  await trimCache(assetCache, MAX_CACHE_BYTES)
-  await saveCacheIndex()
+  await trimCache(cache, assetStore.limit, assetStore)
+  await saveCacheIndex(assetStore)
 }
-
 function normalizeManifest(rawUrls) {
   if (!Array.isArray(rawUrls)) return []
 

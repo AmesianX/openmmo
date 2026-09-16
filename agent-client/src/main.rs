@@ -455,7 +455,6 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::DungeonDoorState { .. } => "DungeonDoorState",
         ServerMessage::DungeonPropState { .. } => "DungeonPropState",
         ServerMessage::TerrainTileVersion { .. } => "TerrainTileVersion",
-        ServerMessage::TerrainTileSnapshot { .. } => "TerrainTileSnapshot",
         ServerMessage::WorldUpdate { .. } => "WorldUpdate",
         ServerMessage::EquipmentEnchantSucceeded { .. } => "EquipmentEnchantSucceeded",
         ServerMessage::AuthSuccess { .. } => "AuthSuccess",

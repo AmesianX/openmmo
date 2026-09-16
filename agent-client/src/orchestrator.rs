@@ -742,12 +742,14 @@ async fn apply_pending_terrain(
             Ok(message) => message,
             Err(error) => {
                 warn!(%error, x = tile.x, z = tile.z, "Terrain snapshot remains pending");
-                if matches!(
-                    error
-                        .downcast_ref::<reqwest::Error>()
-                        .and_then(|error| error.status()),
-                    Some(reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::CONFLICT)
-                ) {
+                if error.is::<crate::terrain_snapshots::TerrainChanged>()
+                    || matches!(
+                        error
+                            .downcast_ref::<reqwest::Error>()
+                            .and_then(|error| error.status()),
+                        Some(reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::CONFLICT)
+                    )
+                {
                     let mut s = state.lock().await;
                     if s.pending_terrain.contains(&tile) {
                         s.world_view.synchronized = false;
@@ -784,14 +786,13 @@ async fn apply_pending_terrain(
             .get(&(tile.x, tile.z))
             .is_some_and(|revision| *revision > tile.revision)
         {
-            if let ServerMessage::TerrainTileSnapshot { height, splat, .. } = message {
-                if let Err(error) = s.height_sampler.update_tile(tile.x, tile.z, &height).await {
-                    warn!(%error, "Could not apply terrain snapshot");
-                    continue;
-                }
-                s.splat_sampler.update_tile(tile.x, tile.z, &splat).await;
-                applied.revisions.insert((tile.x, tile.z), tile.revision);
+            let crate::terrain_snapshots::GroundTerrain { height, splat } = message;
+            if let Err(error) = s.height_sampler.update_tile(tile.x, tile.z, &height).await {
+                warn!(%error, "Could not apply terrain snapshot");
+                continue;
             }
+            s.splat_sampler.update_tile(tile.x, tile.z, &splat).await;
+            applied.revisions.insert((tile.x, tile.z), tile.revision);
         }
         s.pending_terrain.retain(|pending| pending != &tile);
     }
@@ -1204,23 +1205,22 @@ mod tests {
     #[tokio::test]
     async fn terrain_http_does_not_lock_state_and_old_responses_cannot_apply() {
         use crate::terrain_snapshots::{PendingTerrain, TerrainSnapshots};
-        use onlinerpg_terrain::{
-            io::TerrainIO,
-            snapshot::{content_version, encode_snapshot},
-        };
+        use onlinerpg_terrain::io::TerrainIO;
         let dir = std::env::temp_dir().join(format!("terrain_async_{}", rand::random::<u64>()));
-        let message = TerrainIO::new(dir.clone())
-            .read_snapshot(0, 0, false)
-            .await
-            .unwrap();
-        let bytes = encode_snapshot(&message).unwrap();
-        let version = content_version(&bytes);
+        let terrain = TerrainIO::new(dir.clone());
+        let bytes = onlinerpg_terrain::defaults::default_heightmap();
+        terrain.write_heightmap(0, 0, &bytes).await.unwrap();
+        let ServerMessage::TerrainTileVersion { files, .. } =
+            terrain.tile_manifest(0, 0).await.unwrap()
+        else {
+            panic!()
+        };
         let started = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Notify::new());
         let request_started = started.clone();
         let request_release = release.clone();
         let app = axum::Router::new().route(
-            "/api/terrain/snapshot/ground/{x}/{z}/{version}",
+            "/api/terrain/files/{kind}/{region}/{file}",
             axum::routing::get(move || {
                 let bytes = bytes.clone();
                 let started = request_started.clone();
@@ -1247,7 +1247,7 @@ mod tests {
             revision: 1,
             x: 0,
             z: 0,
-            version,
+            files,
         };
         s.pending_terrain.push(tile.clone());
         let state = Arc::new(Mutex::new(s));

@@ -368,12 +368,10 @@ pwsh -NoProfile -Command "cd <repo>; $env:GOOGLE_CLI_CLIENT_SECRET=...; .\tools\
 - **레이트 리밋 값**: 사람의 정상 플레이를 막지 않으면서 폭주를 잡는 지점이 어디인가. 실제 트래픽을 보고 정해야 한다
 - ~~프로드 리버스 프록시가 `/api/terrain`을 외부에 노출하는지~~ — 확인 완료 (2026-07-22): `https://<host>/api/terrain/height/0/0`이 8450바이트를 정상 반환한다. WebSocket은 `/ws` 경로에서만 업그레이드되고 루트는 게임 페이지를 서빙하므로, 원격 config의 `server`에는 반드시 `/ws`가 붙어야 한다
 
-### 지형 HTTP 스냅샷 (프로토콜 81)
+### 지형 원본 파일 캐시 (프로토콜 83)
 
-`TerrainTileVersion`의 `ground_version`으로 `/api/terrain/snapshot/ground/{tile_x}/{tile_z}/{ground_version}`을 요청한다. 응답은 `TerrainTileSnapshot` MessagePack이며 높이와 지표 재질만 포함한다. 시각화용 나무·풀·조경 마스크는 내려받지 않는다.
+`TerrainTileVersion.files`의 경로·SHA-256으로 `/api/terrain/files/{path}`에서 원본 바이너리를 받는다. 높이·스플랫만 필요하며 조경 파일이 있으면 그 안의 수정된 스플랫을 추출한다. 나무·풀 파일은 내려받지 않는다. 구독 전에 필요한 샘플은 `/api/terrain/manifest/{tile_x}/{tile_z}`에서 파일 목록을 조회한 뒤 같은 원본 로더를 사용한다.
 
-`terrain_cache/snapshots/`에 SHA-256으로 검증한 본문을 원자적으로 저장한다. 같은 내용은 서버·에이전트 재시작 후에도 재사용하고, 여러 NPC의 같은 버전 요청은 공유한다. `terrain`이 로컬 경로면 파일에서 같은 본문을 읽어 해시를 확인한다. HTTP 다운로드는 WebSocket 수신 및 AI 상태 잠금과 분리하고, 필요한 타일이 적용될 때까지 이동을 대기한다. 늦은 응답은 현재 구독·세대·revision을 다시 검사한다. `404`와 이전 서버의 `409`는 최신 버전 재동기화, 일시적 오류는 재시도한다.
+`terrain_cache/files/{hash}.bin`에 검증한 원본을 원자적으로 저장한다. 같은 내용은 서버·에이전트 재시작 후에도 재사용하고 동시 다운로드를 공유한다. 로컬 terrain 경로에서도 디스크 원본을 읽고 같은 해시를 검증한다. HTTP는 WebSocket 수신과 AI 상태 잠금 밖에서 실행하며 필요한 타일이 적용될 때까지 이동을 대기한다. 늦은 응답은 현재 구독·세대·revision을 검사한다. 404·해시 불일치는 최신 목록 재동기화, 일시적 오류는 재시도한다.
 
-서버·웹 WASM·agent-client를 프로토콜 81로 함께 배포해야 한다. 자세한 계약은 [WORLD_EVENT_DELIVERY.md §3.6](WORLD_EVENT_DELIVERY.md#36-조경지형-타일)을 따른다.
-
-지형 본문은 준비된 파일을 nginx가 직접 제공한다. 에이전트의 URL과 MessagePack 형식은 동일하며 프로토콜 81을 유지한다. 서버 파일 준비·배포 계약은 [TERRAIN_STATIC_SERVING.md](TERRAIN_STATIC_SERVING.md)를 따른다.
+서버·웹 WASM·agent-client를 프로토콜 83으로 함께 갱신한다. nginx는 원본 파일을 직접 제공하며 별도 묶음 파일을 만들지 않는다. 자세한 계약은 [WORLD_EVENT_DELIVERY.md §3.6](WORLD_EVENT_DELIVERY.md#36-조경지형-타일)과 [TERRAIN_STATIC_SERVING.md](TERRAIN_STATIC_SERVING.md)를 따른다.

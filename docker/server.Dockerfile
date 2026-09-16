@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,id=target-server,target=/build/target \
     cargo build --release --locked -p onlinerpg-server -p terrain-gen -p onlinerpg-terrain \
     && mkdir -p /out \
-    && cp target/release/onlinerpg-server target/release/terrain-gen target/release/terrain-snapshots target/release/terrain-grass-migrate /out/
+    && cp target/release/onlinerpg-server target/release/terrain-gen target/release/terrain-manifests target/release/terrain-grass-migrate /out/
 
 FROM debian:bookworm-slim AS server
 # curl backs the compose healthcheck; gosu drops root once the entrypoint has

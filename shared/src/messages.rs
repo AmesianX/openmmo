@@ -871,17 +871,7 @@ pub enum ServerMessage {
     TerrainTileVersion {
         tile_x: i32,
         tile_z: i32,
-        version: String,
-        ground_version: String,
-    },
-    TerrainTileSnapshot {
-        tile_x: i32,
-        tile_z: i32,
-        height: Vec<u8>,
-        splat: Vec<u8>,
-        trees: Option<Vec<u8>>,
-        grass: Option<Vec<u8>>,
-        landscape: Option<crate::landscaping::LandscapingTile>,
+        files: crate::terrain_files::TerrainFiles,
     },
     WorldUpdate {
         world_epoch: String,
@@ -1943,7 +1933,6 @@ impl ServerMessage {
             | Self::PlayerInstrumentNotes { .. }
             | Self::AbilityUsed { .. } => DeliveryClass::NearbyEffect,
             Self::TerrainTileVersion { .. }
-            | Self::TerrainTileSnapshot { .. }
             | Self::LandscapeChanged { .. }
             | Self::LandscapeInvalidated { .. }
             | Self::HeightTilesInvalidated { .. }
