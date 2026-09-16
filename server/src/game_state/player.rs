@@ -1369,20 +1369,18 @@ impl super::GameState {
                         if time_left <= 1e-7 {
                             break;
                         }
+                        if !intent.turn_only && dist <= ARRIVAL_DISTANCE {
+                            waypoints.pop_front();
+                            continue;
+                        }
                         let desired = if intent.turn_only {
                             intent.rotation
-                        } else if dist > 1e-5 {
+                        } else {
                             dx.atan2(dz)
-                        } else {
-                            player.rotation
                         };
-                        let delta = angle_delta(player.rotation, desired).abs();
-                        let mut step_time = if delta < 1e-4 {
-                            time_left
-                        } else {
-                            time_left.min(STEP_SECONDS)
-                        };
+                        let mut step_time = time_left.min(STEP_SECONDS);
                         if intent.turn_only {
+                            let delta = angle_delta(player.rotation, desired).abs();
                             step_time = step_time.min(turn_duration(delta));
                         }
                         let radius = if intent.turn_only {
@@ -1392,30 +1390,24 @@ impl super::GameState {
                         };
                         let (arc_x, arc_z, rotation) =
                             arc_step(player.rotation, desired, speed, step_time, radius);
-                        let snap = !intent.turn_only
-                            && (dist <= ARRIVAL_DISTANCE
-                                || (delta < 1e-4 && speed * step_time >= dist));
-                        time_left -= if snap && speed > 0.0 {
-                            step_time.min(dist / speed)
+                        time_left -= step_time;
+                        let arrived = if intent.turn_only {
+                            angle_delta(rotation, desired).abs() < 1e-5
                         } else {
-                            step_time
+                            (dx - arc_x).hypot(dz - arc_z) <= ARRIVAL_DISTANCE
                         };
-                        if snap {
-                            (player.position.x + dx, target.y, target.z, rotation, true)
+                        let fraction = if !intent.turn_only {
+                            (arc_x.hypot(arc_z) / dist).min(1.0)
                         } else {
-                            let fraction = if dist > 1e-5 && !intent.turn_only {
-                                (arc_x.hypot(arc_z) / dist).min(1.0)
-                            } else {
-                                0.0
-                            };
-                            (
-                                player.position.x + arc_x,
-                                player.position.y + (target.y - player.position.y) * fraction,
-                                player.position.z + arc_z,
-                                rotation,
-                                intent.turn_only && angle_delta(rotation, desired).abs() < 1e-5,
-                            )
-                        }
+                            0.0
+                        };
+                        (
+                            player.position.x + arc_x,
+                            player.position.y + (target.y - player.position.y) * fraction,
+                            player.position.z + arc_z,
+                            rotation,
+                            arrived,
+                        )
                     } else if dist <= budget {
                         (
                             player.position.x + dx,

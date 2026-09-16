@@ -5,7 +5,7 @@ const REVERSE_RATE: f32 = FRAC_PI_2 / 0.4;
 const MOVE_ANGLE: f32 = PI / 6.0;
 pub const TURN_RADIUS: f32 = 0.65;
 pub const STEP_SECONDS: f32 = 1.0 / 60.0;
-pub const ARRIVAL_DISTANCE: f32 = 0.05;
+pub const ARRIVAL_DISTANCE: f32 = 1.0;
 pub const BACKWARD_SPEED: f32 = 1.5;
 
 pub fn angle_delta(from: f32, to: f32) -> f32 {
@@ -108,6 +108,9 @@ pub fn recovery_target(
             let dx = shortest_world_delta_x(p.x, wp.x);
             let dz = wp.z - p.z;
             let dist = dx.hypot(dz);
+            if dist <= ARRIVAL_DISTANCE {
+                return Some(end);
+            }
             let desired = dx.atan2(dz);
             let (ax, az, next_rotation) = arc_step(
                 facing,
@@ -116,20 +119,10 @@ pub fn recovery_target(
                 STEP_SECONDS,
                 TURN_RADIUS.min(dist / 4.0),
             );
-            let snap = dist <= ARRIVAL_DISTANCE
-                || (angle_delta(facing, desired).abs() < 1e-4 && speed * STEP_SECONDS >= dist);
-            let next = if snap {
-                Position {
-                    x: p.x + dx,
-                    z: wp.z,
-                    y: p.y,
-                }
-            } else {
-                Position {
-                    x: p.x + ax,
-                    z: p.z + az,
-                    y: p.y,
-                }
+            let next = Position {
+                x: p.x + ax,
+                z: p.z + az,
+                y: p.y,
             };
             if pathfinding::is_movement_blocked_for_mover(
                 cache,
@@ -142,7 +135,7 @@ pub fn recovery_target(
             ) {
                 break;
             }
-            if snap
+            if (dx - ax).hypot(dz - az) <= ARRIVAL_DISTANCE
                 || (angle_delta(next_rotation, desired).abs() < 1e-4
                     && !pathfinding::is_movement_blocked_for_mover(
                         cache,

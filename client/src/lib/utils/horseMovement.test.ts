@@ -6,6 +6,7 @@ import {
   horseArcStep,
   moveHorse,
   resolveHorseSteps,
+  HORSE_ARRIVAL_DISTANCE,
 } from './horseMovement'
 import {
   calculateMovementStep,
@@ -59,8 +60,10 @@ describe('mounted steering', () => {
       6
     )
     expect(move.arrived).toBe(true)
-    expect(move.newPos.x).toBeCloseTo(20)
-    expect(move.newPos.z).toBe(0)
+    expect(Math.hypot(20 - move.newPos.x, move.newPos.z)).toBeLessThanOrEqual(
+      HORSE_ARRIVAL_DISTANCE
+    )
+    expect(move.newPos.x).toBeLessThan(20)
   })
 
   it('mirrors the arc and respects slow movement speeds', () => {
@@ -78,15 +81,37 @@ describe('mounted steering', () => {
     }
   })
 
-  it('shrinks the radius for nearby goals instead of orbiting them', () => {
+  it('stays in place for goals within one metre without turning or snapping', () => {
     const origin = { x: 0, y: 0, z: 0 }
     for (const goal of [
       { x: 0, y: 0, z: -0.1 },
       { x: 0.1, y: 0, z: 0 },
+      { x: 1, y: 0, z: 0 },
     ]) {
       const result = moveHorse(origin, 0, 6, 5, goal)
       expect(result.arrived).toBe(true)
-      expect(result.newPos).toEqual(goal)
+      expect(result.newPos).toEqual(origin)
+      expect(result.rotation).toBe(0)
+      expect(result.newSpeed).toBe(0)
+    }
+  })
+
+  it('stops within one metre at sprint speed without overshooting or snapping', () => {
+    for (const origin of [
+      { x: 0, y: 5, z: 0 },
+      { x: -1498, y: 5, z: 4740 },
+    ]) {
+      const goal = { ...origin, z: origin.z + 1.1 }
+      const result = moveHorse(origin, 0.01, 13.5, 0.2, goal)
+      expect(result.arrived).toBe(true)
+      expect(result.newPos.z).toBeGreaterThan(origin.z)
+      expect(result.newPos.z).toBeLessThan(goal.z)
+      expect(
+        Math.hypot(result.newPos.x - goal.x, result.newPos.z - goal.z)
+      ).toBeLessThanOrEqual(HORSE_ARRIVAL_DISTANCE)
+      expect(
+        moveHorse(result.newPos, result.rotation, 13.5, 0.2, goal).newPos
+      ).toEqual(result.newPos)
     }
   })
 

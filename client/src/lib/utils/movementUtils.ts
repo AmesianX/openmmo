@@ -189,8 +189,7 @@ export function calculateMovementStep(
       config.mountRotation,
       config.maxSpeed,
       deltaTimeSeconds,
-      movement.targetPos,
-      config.arrivalThreshold
+      movement.targetPos
     )
   }
   const { targetPos, totalDistance } = movement

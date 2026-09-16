@@ -213,12 +213,11 @@ export function stepMovementSubstrate({
       return { kind: 'blocked' }
     }
 
-    // Re-sampled: a leg's Y was fixed when it started, and a shaft is one
-    // straight leg, so the depth (and the floor's Y) can flip on the way.
+    const stopPos = result.mountSteps ? result.newPos : movementTarget
     const arrivedPos: Position = {
-      x: movementTarget.x,
-      y: sampleHeight(movementTarget.x, movementTarget.z),
-      z: movementTarget.z,
+      x: stopPos.x,
+      y: sampleHeight(stopPos.x, stopPos.z),
+      z: stopPos.z,
     }
     writePlayerPosition(arrivedPos, playerRotation)
 
@@ -234,11 +233,11 @@ export function stepMovementSubstrate({
         z: nextWp.z,
       }
 
-      const ndx = shortestWrappedDeltaX(movementTarget.x, wpPos.x)
-      const ndz = wpPos.z - movementTarget.z
+      const ndx = shortestWrappedDeltaX(arrivedPos.x, wpPos.x)
+      const ndz = wpPos.z - arrivedPos.z
       const nextRotation = Math.atan2(ndx, ndz)
       const nextMovementState = initMovementState(
-        movementTarget,
+        arrivedPos,
         wpPos,
         movementState.currentSpeed
       )
@@ -256,7 +255,9 @@ export function stepMovementSubstrate({
       }
     }
 
-    sendPlayerMove(arrivedPos, playerRotation, currentWaypointFloor, true)
+    if (!result.mountSteps) {
+      sendPlayerMove(arrivedPos, playerRotation, currentWaypointFloor, true)
+    }
     return { kind: 'arrived', currentSpeed, playerRotation }
   }
 

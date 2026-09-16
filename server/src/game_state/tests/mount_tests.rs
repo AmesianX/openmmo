@@ -221,6 +221,91 @@ async fn horse_travel_matches_small_ticks_and_cannot_skip_a_waypoint_turn() {
 }
 
 #[tokio::test]
+async fn horse_sprint_drains_streamed_waypoints_after_a_turn() {
+    let game = make_game_state_with("horse_streamed_waypoints", FlatLand, SeaOnlyWater);
+    let id = rider(&game).await;
+    let start = Position {
+        x: -1497.0764,
+        y: 5.0,
+        z: 4740.4253,
+    };
+    {
+        let mut players = game.players.write().await;
+        let player = players.get_mut(&id).unwrap();
+        player.position = start;
+        player.rotation = -std::f32::consts::FRAC_PI_2;
+    }
+    game.use_item(&id, 1).await;
+    assert!(game.players.read().await[&id].mounted);
+    let mut peak_queue = 0;
+    let mut target = start;
+    for tick in 0..60 {
+        for sample in 0..4 {
+            let index = tick * 4 + sample + 1;
+            target = Position {
+                x: start.x - index as f32 * 0.675,
+                z: start.z + 0.4087,
+                ..start
+            };
+            game.update_player_position(
+                &id,
+                MoveCommand {
+                    position: target,
+                    rotation: -std::f32::consts::FRAC_PI_2,
+                    floor_level: 0,
+                    append: index > 1,
+                    sprinting: true,
+                },
+                false,
+            )
+            .await;
+        }
+        game.tick_player_movement(0.2).await;
+        let queued = game
+            .movement_intents
+            .read()
+            .await
+            .get(&id)
+            .map_or(0, |queue| queue.len());
+        peak_queue = peak_queue.max(queued);
+    }
+    let player = game.players.read().await[&id].clone();
+    let lag = player.position.dist_xz_sq(&target).sqrt();
+    assert!(
+        peak_queue < 10 && lag < 5.0,
+        "peak queue {peak_queue}, lag {lag}"
+    );
+    game.tick_player_movement(1.0).await;
+    assert!(!game.movement_intents.read().await.contains_key(&id));
+    assert!(game.players.read().await[&id].position.dist_xz_sq(&target) <= 1.0);
+}
+
+#[tokio::test]
+async fn horse_stops_within_one_metre_without_snapping_or_correcting() {
+    let game = make_test_game_state("horse_arrival_radius");
+    let id = rider(&game).await;
+    game.players.write().await.get_mut(&id).unwrap().rotation = std::f32::consts::FRAC_PI_2;
+    game.use_item(&id, 1).await;
+    let start = game.players.read().await[&id].position;
+    let mut rx = game.register_direct_channel(&id).await;
+    let target = Position { x: 1.5, ..start };
+    game.update_player_position(&id, move_cmd(target, false), false)
+        .await;
+    game.tick_player_movement(0.2).await;
+    let stopped = game.players.read().await[&id].position;
+    assert!((0.5..0.8).contains(&stopped.x), "{stopped:?}");
+    assert!(stopped.dist_xz_sq(&target) <= 1.0);
+    assert!(!game.movement_intents.read().await.contains_key(&id));
+    game.update_player_position(&id, move_cmd(target, false), false)
+        .await;
+    game.tick_player_movement(0.2).await;
+    assert_eq!(game.players.read().await[&id].position, stopped);
+    assert!(!drain(&mut rx)
+        .iter()
+        .any(|message| matches!(message, ServerMessage::PositionCorrected { .. })));
+}
+
+#[tokio::test]
 async fn horse_turning_does_not_bypass_solid_furniture() {
     let game = make_test_game_state("horse_turn_collision");
     let id = rider(&game).await;
@@ -492,7 +577,7 @@ async fn horse_recovery_backs_up_without_turning_and_repaths_for_four_boundary_p
         }
         let p = game.players.read().await[&id].clone();
         assert!(
-            p.mounted && p.position.dist_xz_sq(&goal) < 0.01,
+            p.mounted && p.position.dist_xz_sq(&goal) <= 1.0,
             "{name}: {:?}",
             p.position
         );

@@ -124,6 +124,45 @@ describe('stepMovementSubstrate', () => {
     expect(input.waypointHeight).toHaveBeenCalledWith(3, 2, 0)
   })
 
+  it('finishes a mounted route at the actual stop position without resending it', () => {
+    const currentPos = { x: 0.4, y: 0.4, z: 0 }
+    const input = {
+      ...makeBaseInput(currentPos, { x: 1, y: 0, z: 0 }),
+      config: { ...DEFAULT_MOVEMENT_CONFIG, maxSpeed: 9, mountRotation: 0 },
+    }
+    expect(stepMovementSubstrate(input).kind).toBe('arrived')
+    expect(input.writePlayerPosition).toHaveBeenCalledExactlyOnceWith(
+      currentPos,
+      0
+    )
+    expect(input.sendPlayerMove).not.toHaveBeenCalled()
+  })
+
+  it('starts the next mounted leg from the actual position without snapping', () => {
+    const currentPos = { x: 0.4, y: 0.4, z: 0 }
+    const input = {
+      ...makeBaseInput(currentPos, { x: 1, y: 0, z: 0 }, [
+        { x: 1, z: 0, floor: 0 },
+        { x: 3, z: 2, floor: 0 },
+      ]),
+      config: { ...DEFAULT_MOVEMENT_CONFIG, maxSpeed: 9, mountRotation: 0 },
+    }
+    const outcome = stepMovementSubstrate(input)
+    expect(outcome.kind).toBe('next_waypoint')
+    if (outcome.kind !== 'next_waypoint') return
+    expect(outcome.movementState.startPos).toEqual(currentPos)
+    expect(input.writePlayerPosition).toHaveBeenCalledExactlyOnceWith(
+      currentPos,
+      0
+    )
+    expect(input.sendPlayerMove).toHaveBeenCalledExactlyOnceWith(
+      { x: 3, y: 5, z: 2 },
+      Math.atan2(2.6, 2),
+      0,
+      true
+    )
+  })
+
   it('sends the stop position as a replace when a step is blocked', () => {
     const currentPos = { x: 0, y: 0, z: 0 }
     const input = makeBaseInput(currentPos, { x: 10, y: 0, z: 0 })

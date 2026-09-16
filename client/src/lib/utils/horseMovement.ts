@@ -5,6 +5,7 @@ const TURN_RATE = Math.PI / 2 / 0.6
 const REVERSE_RATE = Math.PI / 2 / 0.4
 const MOVE_ANGLE = Math.PI / 6
 export const HORSE_TURN_RADIUS = 0.65
+export const HORSE_ARRIVAL_DISTANCE = 1
 const STEP_SECONDS = 1 / 60
 
 export function angleDelta(from: number, to: number): number {
@@ -87,8 +88,7 @@ export function moveHorse(
   rotation: number,
   speed: number,
   dt: number,
-  goal: Position | number,
-  arrivalThreshold = 0.05
+  goal: Position | number
 ): MovementResult {
   let current = { ...position }
   let remaining = Math.max(0, dt)
@@ -100,33 +100,27 @@ export function moveHorse(
       typeof goal === 'number' ? 0 : shortestWrappedDeltaX(current.x, goal.x)
     const dz = typeof goal === 'number' ? 0 : goal.z - current.z
     const distance = Math.hypot(dx, dz)
-    const desired =
-      typeof goal === 'number'
-        ? goal
-        : distance > 1e-5
-          ? Math.atan2(dx, dz)
-          : rotation
-    const delta = Math.abs(angleDelta(rotation, desired))
-    const stepTime =
-      delta < 1e-4 ? remaining : Math.min(remaining, STEP_SECONDS)
+    if (typeof goal !== 'number' && distance <= HORSE_ARRIVAL_DISTANCE) {
+      arrived = true
+      break
+    }
+    const desired = typeof goal === 'number' ? goal : Math.atan2(dx, dz)
+    const stepTime = Math.min(remaining, STEP_SECONDS)
     const radius =
       typeof goal === 'number'
         ? HORSE_TURN_RADIUS
         : Math.min(HORSE_TURN_RADIUS, distance / 4)
     const step = horseArcStep(rotation, desired, speed, stepTime, radius)
-    const snap =
-      typeof goal !== 'number' &&
-      (distance <= arrivalThreshold ||
-        (delta < 1e-4 && speed * stepTime >= distance))
-    const next = snap
-      ? { x: current.x + dx, y: current.y, z: current.z + dz }
-      : { x: current.x + step.x, y: current.y, z: current.z + step.z }
+    const next = { x: current.x + step.x, y: current.y, z: current.z + step.z }
     distanceMoved += Math.hypot(next.x - current.x, next.z - current.z)
     current = next
     rotation = step.rotation
     mountSteps.push({ position: current, rotation })
     remaining -= stepTime
-    if (snap) {
+    if (
+      typeof goal !== 'number' &&
+      Math.hypot(dx - step.x, dz - step.z) <= HORSE_ARRIVAL_DISTANCE
+    ) {
       arrived = true
       break
     }
