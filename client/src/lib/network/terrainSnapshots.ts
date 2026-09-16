@@ -72,7 +72,7 @@ export class TerrainSnapshots<T> {
       if (this.active.get(key) === version) this.apply(result.tile)
     } catch (error) {
       if (this.active.get(key) !== version) return
-      if (error instanceof Error && error.message === '409') {
+      if (error instanceof Error && ['404', '409'].includes(error.message)) {
         this.resync()
         return
       }

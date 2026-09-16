@@ -38,7 +38,7 @@ if [[ ! -f data/banned_names.txt ]]; then
 fi
 
 echo "==> server (release)"
-cargo build --release -p onlinerpg-server
+cargo build --release -p onlinerpg-server -p onlinerpg-terrain
 
 echo "==> agent client (release)"
 cargo build --release -p agent-client
@@ -92,6 +92,9 @@ if [[ "$dashboard_changed" == 1 ]]; then
 else
     echo "==> dashboard unchanged; keeping published bundle"
 fi
+
+echo "==> prepare terrain snapshot files"
+target/release/terrain-snapshots "${TERRAIN_DIR:-$REPO/data/terrain}"
 
 # Publish only after every required build succeeds.
 if [[ "$dashboard_changed" == 1 ]]; then

@@ -713,9 +713,21 @@ impl super::GameState {
     }
 
     pub(crate) async fn publish_terrain_tiles(&self, tiles: &[(i32, i32)]) -> std::io::Result<()> {
+        self.deliver_terrain_tiles(tiles, true).await
+    }
+
+    async fn deliver_terrain_tiles(
+        &self,
+        tiles: &[(i32, i32)],
+        rebuild: bool,
+    ) -> std::io::Result<()> {
         let mut first_error = None;
         for &(x, z) in tiles.iter().collect::<std::collections::BTreeSet<_>>() {
-            let result = self.terrain_io.snapshot_versions(x, z).await;
+            let result = if rebuild {
+                self.terrain_io.rebuild_snapshot(x, z).await
+            } else {
+                self.terrain_io.snapshot_versions(x, z).await
+            };
             let message = match result {
                 Ok(message) => message,
                 Err(error) => {
@@ -831,7 +843,7 @@ impl super::GameState {
             !interest.has_subject(&format!("terrain:{x},{z}"))
                 || interest.pending_tiles.contains(&(*x, *z))
         });
-        self.publish_terrain_tiles(&missing).await
+        self.deliver_terrain_tiles(&missing, false).await
     }
 
     pub(crate) fn publish_house(&self, house: &onlinerpg_shared::housing::HouseData) {

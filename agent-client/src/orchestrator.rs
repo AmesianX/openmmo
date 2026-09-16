@@ -742,11 +742,12 @@ async fn apply_pending_terrain(
             Ok(message) => message,
             Err(error) => {
                 warn!(%error, x = tile.x, z = tile.z, "Terrain snapshot remains pending");
-                if error
-                    .downcast_ref::<reqwest::Error>()
-                    .and_then(|error| error.status())
-                    == Some(reqwest::StatusCode::CONFLICT)
-                {
+                if matches!(
+                    error
+                        .downcast_ref::<reqwest::Error>()
+                        .and_then(|error| error.status()),
+                    Some(reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::CONFLICT)
+                ) {
                     let mut s = state.lock().await;
                     if s.pending_terrain.contains(&tile) {
                         s.world_view.synchronized = false;

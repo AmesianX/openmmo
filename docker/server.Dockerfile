@@ -38,9 +38,9 @@ RUN sh docker/stub-members.sh agent-client
 # must be copied out within the same RUN.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,id=target-server,target=/build/target \
-    cargo build --release --locked -p onlinerpg-server -p terrain-gen \
+    cargo build --release --locked -p onlinerpg-server -p terrain-gen -p onlinerpg-terrain \
     && mkdir -p /out \
-    && cp target/release/onlinerpg-server target/release/terrain-gen /out/
+    && cp target/release/onlinerpg-server target/release/terrain-gen target/release/terrain-snapshots /out/
 
 FROM debian:bookworm-slim AS server
 # curl backs the compose healthcheck; gosu drops root once the entrypoint has

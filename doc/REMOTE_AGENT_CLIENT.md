@@ -372,6 +372,8 @@ pwsh -NoProfile -Command "cd <repo>; $env:GOOGLE_CLI_CLIENT_SECRET=...; .\tools\
 
 `TerrainTileVersion`의 `ground_version`으로 `/api/terrain/snapshot/ground/{tile_x}/{tile_z}/{ground_version}`을 요청한다. 응답은 `TerrainTileSnapshot` MessagePack이며 높이와 지표 재질만 포함한다. 시각화용 나무·풀·조경 마스크는 내려받지 않는다.
 
-`terrain_cache/snapshots/`에 SHA-256으로 검증한 본문을 원자적으로 저장한다. 같은 내용은 서버·에이전트 재시작 후에도 재사용하고, 여러 NPC의 같은 버전 요청은 공유한다. `terrain`이 로컬 경로면 파일에서 같은 본문을 읽어 해시를 확인한다. HTTP 다운로드는 WebSocket 수신 및 AI 상태 잠금과 분리하고, 필요한 타일이 적용될 때까지 이동을 대기한다. 늦은 응답은 현재 구독·세대·revision을 다시 검사한다. `409`는 최신 버전 재동기화, 일시적 오류는 재시도한다.
+`terrain_cache/snapshots/`에 SHA-256으로 검증한 본문을 원자적으로 저장한다. 같은 내용은 서버·에이전트 재시작 후에도 재사용하고, 여러 NPC의 같은 버전 요청은 공유한다. `terrain`이 로컬 경로면 파일에서 같은 본문을 읽어 해시를 확인한다. HTTP 다운로드는 WebSocket 수신 및 AI 상태 잠금과 분리하고, 필요한 타일이 적용될 때까지 이동을 대기한다. 늦은 응답은 현재 구독·세대·revision을 다시 검사한다. `404`와 이전 서버의 `409`는 최신 버전 재동기화, 일시적 오류는 재시도한다.
 
 서버·웹 WASM·agent-client를 프로토콜 81로 함께 배포해야 한다. 자세한 계약은 [WORLD_EVENT_DELIVERY.md §3.6](WORLD_EVENT_DELIVERY.md#36-조경지형-타일)을 따른다.
+
+지형 본문은 준비된 파일을 nginx가 직접 제공한다. 에이전트의 URL과 MessagePack 형식은 동일하며 프로토콜 81을 유지한다. 서버 파일 준비·배포 계약은 [TERRAIN_STATIC_SERVING.md](TERRAIN_STATIC_SERVING.md)를 따른다.

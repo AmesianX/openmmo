@@ -57,8 +57,8 @@ pub fn terrain_router(
         )
         .route("/api/terrain/weather-sectors", get(get_weather_sectors))
         .route(
-            "/api/terrain/snapshot/{profile}/{x}/{z}/{version}",
-            get(get_snapshot),
+            "/api/terrain/region/{rx}/{rz}",
+            delete(delete_region_handler),
         )
         .with_state(ObjectsState {
             terrain: Arc::clone(&terrain_io),
@@ -97,8 +97,8 @@ pub fn terrain_router(
         .route("/api/terrain/river-field/{x}/{z}", get(get_river_field))
         .route("/api/terrain/water-field/{x}/{z}", get(get_water_field))
         .route(
-            "/api/terrain/region/{rx}/{rz}",
-            delete(delete_region_handler),
+            "/api/terrain/snapshot/{profile}/{x}/{z}/{version}",
+            get(get_snapshot),
         )
         .with_state(terrain_io)
         .merge(objects_router)
@@ -107,28 +107,20 @@ pub fn terrain_router(
 
 async fn get_snapshot(
     Path((profile, x, z, version)): Path<(String, i32, i32, String)>,
-    State(state): State<ObjectsState>,
+    State(terrain): State<Arc<TerrainIO>>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    use onlinerpg_terrain::snapshot::{content_version, encode_snapshot};
-    let visuals = match profile.as_str() {
-        "full" => true,
-        "ground" => false,
-        _ => return StatusCode::NOT_FOUND.into_response(),
+    let path = match terrain.snapshot_path(&profile, x, z, &version) {
+        Ok(path) => path,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    if version.len() != 64 || !version.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    let result = async {
-        let _guard = state.game_state.world_edit_guard().await;
-        let message = state.terrain.read_snapshot(x, z, visuals).await?;
-        encode_snapshot(&message)
-    }
-    .await;
-    let bytes = match result {
+    let bytes = match tokio::fs::read(path).await {
         Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return (StatusCode::NOT_FOUND, [(header::CACHE_CONTROL, "no-store")]).into_response();
+        }
         Err(error) => {
-            warn!(%error, x, z, "Failed to read terrain snapshot");
+            warn!(%error, x, z, "Failed to read terrain snapshot file");
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 [(header::CACHE_CONTROL, "no-store")],
@@ -136,9 +128,6 @@ async fn get_snapshot(
                 .into_response();
         }
     };
-    if content_version(&bytes) != version {
-        return (StatusCode::CONFLICT, [(header::CACHE_CONTROL, "no-store")]).into_response();
-    }
     let etag = format!("\"{version}\"");
     let metadata = [
         (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
@@ -744,12 +733,31 @@ async fn get_water_field(
 
 async fn delete_region_handler(
     Path((rx, rz)): Path<(i32, i32)>,
-    State(terrain): State<Arc<TerrainIO>>,
+    State(state): State<ObjectsState>,
 ) -> Result<StatusCode, StatusCode> {
-    terrain.delete_region(rx, rz).await.map_err(|e| {
+    let Some(z0) = rz.checked_mul(16) else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    let Some(z1) = z0.checked_add(15) else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    let rx = coords::wrap_region_x(rx);
+    let _guard = state.game_state.world_edit_guard().await;
+    state.terrain.delete_region(rx, rz).await.map_err(|e| {
         error!("Failed to delete region ({}, {}): {}", rx, rz, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    let tiles: Vec<_> = (rx * 16..rx * 16 + 16)
+        .flat_map(|x| (z0..=z1).map(move |z| (x, z)))
+        .collect();
+    state
+        .game_state
+        .publish_terrain_tiles(&tiles)
+        .await
+        .map_err(|e| {
+            error!(%e, "Failed to publish deleted terrain region");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -763,9 +771,6 @@ mod tests {
     async fn snapshot_versions_are_immutable_and_ground_omits_visuals() {
         use onlinerpg_shared::{deserialize_server_msg, ServerMessage};
         use onlinerpg_terrain::snapshot::{content_version, encode_snapshot};
-        let game = Arc::new(crate::game_state::tests::make_test_game_state(
-            "http_snapshot",
-        ));
         let terrain = Arc::new(TerrainIO::new(unique_temp_dir("http_snapshot_tiles")));
         terrain
             .write_grass(0, 0, &vec![0; 256 * 1024])
@@ -781,13 +786,9 @@ mod tests {
         };
         let notice = terrain.snapshot_versions(0, 0).await.unwrap();
         assert!(encode_snapshot(&notice).unwrap().len() < 256);
-        let state = ObjectsState {
-            terrain: terrain.clone(),
-            game_state: game,
-        };
         for (profile, hash) in [("full", &version), ("ground", &ground_version)] {
             let request = || Path((profile.to_owned(), 0, 0, hash.clone()));
-            let response = get_snapshot(request(), State(state.clone()), HeaderMap::new()).await;
+            let response = get_snapshot(request(), State(terrain.clone()), HeaderMap::new()).await;
             assert_eq!(response.status(), StatusCode::OK);
             assert_eq!(
                 response.headers()[header::CACHE_CONTROL],
@@ -820,7 +821,7 @@ mod tests {
             let mut headers = HeaderMap::new();
             headers.insert(header::IF_NONE_MATCH, etag.parse().unwrap());
             assert_eq!(
-                get_snapshot(request(), State(state.clone()), headers)
+                get_snapshot(request(), State(terrain.clone()), headers)
                     .await
                     .status(),
                 StatusCode::NOT_MODIFIED
@@ -836,35 +837,46 @@ mod tests {
             version: next,
             ground_version: ground_next,
             ..
-        } = terrain.snapshot_versions(0, 0).await.unwrap()
+        } = terrain.rebuild_snapshot(0, 0).await.unwrap()
         else {
             panic!()
         };
         assert_ne!(next, version);
         assert_eq!(ground_next, ground_version);
-        let stale = get_snapshot(
+        let old = get_snapshot(
             Path(("full".into(), 0, 0, version)),
-            State(state.clone()),
+            State(terrain.clone()),
             HeaderMap::new(),
         )
         .await;
-        assert_eq!(stale.status(), StatusCode::CONFLICT);
-        assert_eq!(stale.headers()[header::CACHE_CONTROL], "no-store");
-        let mut splat = terrain.read_splatmap(0, 0).await.unwrap();
-        splat[0] = 5;
-        terrain.write_splatmap(0, 0, &splat).await.unwrap();
-        let stale = get_snapshot(
-            Path(("ground".into(), 0, 0, ground_version)),
-            State(state.clone()),
+        assert_eq!(old.status(), StatusCode::OK);
+        let missing = get_snapshot(
+            Path(("ground".into(), 0, 0, "0".repeat(64))),
+            State(terrain.clone()),
             HeaderMap::new(),
         )
         .await;
-        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
         let path = onlinerpg_terrain::coords::heightmap_path(terrain.base_dir(), 0, 0);
         tokio::fs::create_dir_all(path).await.unwrap();
+        let saved = get_snapshot(
+            Path(("full".into(), 0, 0, next.clone())),
+            State(terrain.clone()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(
+            saved.status(),
+            StatusCode::OK,
+            "HTTP serves prepared bytes without reading terrain sources"
+        );
+        let artifact = terrain.snapshot_path("full", 0, 0, &next).unwrap();
+        tokio::fs::remove_file(&artifact).await.unwrap();
+        tokio::fs::create_dir(&artifact).await.unwrap();
         let failure = get_snapshot(
             Path(("full".into(), 0, 0, next)),
-            State(state),
+            State(terrain),
             HeaderMap::new(),
         )
         .await;

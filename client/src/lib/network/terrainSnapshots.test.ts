@@ -77,13 +77,16 @@ describe('terrain HTTP snapshots', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('requests current versions when the origin no longer has an old version', async () => {
-    tiles.set(version('one'))
-    replies[0](new Response(null, { status: 409 }))
-    await settle()
-    expect(resync).toHaveBeenCalledOnce()
-    expect(apply).not.toHaveBeenCalled()
-  })
+  it.each([404, 409])(
+    'requests current versions when the origin returns %i',
+    async (status) => {
+      tiles.set(version('one'))
+      replies[0](new Response(null, { status }))
+      await settle()
+      expect(resync).toHaveBeenCalledOnce()
+      expect(apply).not.toHaveBeenCalled()
+    }
+  )
 
   it('retries temporary failures and cancels retries on reset', async () => {
     tiles.set(version('one'))

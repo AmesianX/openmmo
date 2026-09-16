@@ -128,11 +128,16 @@ pub struct MinimapCandidate {
 
 pub struct TerrainIO {
     base_dir: PathBuf,
+    pub(crate) snapshots:
+        tokio::sync::Mutex<std::collections::HashMap<(i32, i32), crate::snapshot::SnapshotEntry>>,
 }
 
 impl TerrainIO {
     pub fn new(base_dir: PathBuf) -> Self {
-        Self { base_dir }
+        Self {
+            base_dir,
+            snapshots: Default::default(),
+        }
     }
 
     pub fn base_dir(&self) -> &PathBuf {
