@@ -26,7 +26,9 @@ pub fn filter_grass_in_rects(
     let origin_z = tile_z as f32 * TILE_DIM as f32 - TILE_DIM as f32 * 0.5;
     let mut removed = 0;
     for (index, cell) in output[GRASS_HEADER_BYTES..]
-        .chunks_exact_mut(GRASS_CELL_TYPES)
+        .as_chunks_mut::<GRASS_CELL_TYPES>()
+        .0
+        .iter_mut()
         .enumerate()
     {
         let x = origin_x + (index % TILE_DIM) as f32;

@@ -65,7 +65,7 @@ pub fn filter_vegetation(data: Vec<u8>, cleared: &[u8]) -> io::Result<Vec<u8>> {
         || data.starts_with(&GRASS_V3_MAGIC.to_le_bytes())
     {
         let mut data = into_grass_density(data)?;
-        for (index, cell) in data[4..].chunks_exact_mut(3).enumerate() {
+        for (index, cell) in data[4..].as_chunks_mut::<3>().0.iter_mut().enumerate() {
             if is_cleared(cleared, index) {
                 cell.fill(0);
             }
