@@ -46,7 +46,10 @@ pub fn grass_density(data: &[u8]) -> io::Result<Cow<'_, [u8]>> {
         return Err(invalid());
     }
     let mut output = empty_grass();
-    let mut instances = data[V3_HEADER_BYTES..].chunks_exact(V3_INSTANCE_BYTES);
+    let mut instances = data[V3_HEADER_BYTES..]
+        .as_chunks::<V3_INSTANCE_BYTES>()
+        .0
+        .iter();
     for (kind, count) in counts.into_iter().enumerate() {
         for instance in instances.by_ref().take(count) {
             let cell = |bytes: &[u8]| {

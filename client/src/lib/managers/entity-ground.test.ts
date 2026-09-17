@@ -3,6 +3,7 @@ import { bridgeManager } from './bridgeManager'
 import { TerrainHeightManager } from './terrainHeightManager'
 import { VERTS_PER_SIDE, encodeHeight } from './terrain-height-types'
 import { entityGroundY } from './entity-ground'
+import * as terrainFiles from '../network/terrainFileSource'
 
 function fakeHeightManager(
   loaded: boolean,
@@ -57,6 +58,10 @@ describe('entityGroundY', () => {
     const heightmap = new Uint16Array(VERTS_PER_SIDE ** 2).fill(
       encodeHeight(8.5)
     )
+    vi.spyOn(terrainFiles, 'loadTerrainFile').mockImplementation(async () => ({
+      bytes: new Uint8Array(heightmap.buffer.slice(0)),
+      cleared: new Uint8Array(512),
+    }))
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({

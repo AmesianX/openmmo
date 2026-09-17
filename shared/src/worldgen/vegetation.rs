@@ -380,10 +380,16 @@ mod tests {
         assert_eq!(&bin[0..4], &GRASS_V4_MAGIC.to_le_bytes());
         assert_eq!(bin.len(), GRASS_FILE_BYTES);
         assert!(bin[4..]
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .all(|cell| cell[0] == 64 && cell[1] == 0 && cell[2] <= 1));
         let tall = bake_grass(0, 0, &splat_with_veg(249), &h);
-        assert!(tall[4..].chunks_exact(3).all(|cell| cell == [0, 36, 0]));
+        assert!(tall[4..]
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .all(|cell| *cell == [0, 36, 0]));
     }
 
     #[test]
