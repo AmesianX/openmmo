@@ -1,12 +1,6 @@
-# Serves the built client and proxies the game's two backend ports.
-# Mirrors client/vite.config.ts so dev and container behave the same.
-#
-# Rendered to conf.d/default.conf at startup by the base image's envsubst
-# entrypoint, which substitutes only *defined* env vars — the nginx runtime
-# $vars below pass through untouched.
-#
-# After editing, run tools/check-nginx-conf.sh: a mistake here otherwise
-# survives until a deploy, and a deploy disconnects every player.
+# Serves the client and proxies both backend ports.
+# The entrypoint substitutes defined environment variables only.
+# Validate changes with tools/check-nginx-conf.sh.
 
 # Uploaded cape prints are content-addressed, so a cached copy can never be
 # wrong. Without this every client in a crowd pulls every print off the game
@@ -26,6 +20,13 @@ server {
     listen 80;
     server_name _;
     root /usr/share/nginx/html;
+
+    gzip on;
+    gzip_static on;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_vary on;
+    gzip_types text/css application/javascript text/javascript application/wasm;
 
     # Exported from /etc/resolv.conf by the base image (see
     # NGINX_ENTRYPOINT_LOCAL_RESOLVERS in client.Dockerfile). Hardcoding

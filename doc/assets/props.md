@@ -13,6 +13,7 @@
 - bridge wood https://sketchfab.com/3d-models/bridge-wood-20c090db0a7345898e20e2621fc2ba4c
 - big bridge https://sketchfab.com/3d-models/bridge-9328bbfc04a84202a6a97bd59408473a
 - bridge_wood_long.glb https://sketchfab.com/3d-models/wooden-bridge-deep-27b22af7020c4755b5cb788d75db8ee7
+  - 2026-09-17: `tools/repack-glb-textures.py`로 base color·normal PNG를 JPEG q92 4:4:4로 변환. 1024² 해상도, 메시·UV·재질 설정·투명 충돌면은 유지. 6,519,420 → 3,651,048 bytes (44.0% 감소), 로컬 Nginx gzip level 6 전송 실측 1,795,527 bytes (원본 무압축 대비 72.5% 감소). Three.js 전체·근접 렌더 비교 및 메시 버퍼 일치 확인. 원본은 최적화 전 `assets.lock`의 SHA-256 `9a4f9a3104d22cc1d0b5eb17f4f8ef54f8aef324339577a876bc5505e7eef189`로 식별.
 - signpost.glb https://sketchfab.com/3d-models/road-sign-blacksmiths-workshop-assets-3a230f0520034890931c32539955223a
 - dungeon objects https://sketchfab.com/3d-models/fps-dungeon-extras-87425249dded42aa891516c31a5b94cf
   - `storage_chest.png` — 기존 `chest_animated.glb`의 닫힌 기본 포즈를 투명 배경의 직교 사선 구도로 렌더한 128×128 영지 보관함 아이콘 (2026-09-07). 기존 게임 모델을 그대로 사용했으며 새 외부 자산 없음

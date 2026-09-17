@@ -30,6 +30,44 @@ NGINX_ACCESS_LOG=/var/log/nginx/openmmo-access.log
 
 운영 Nginx는 저장소 밖의 `/etc/nginx/sites-available/openmmo`에서 관리합니다. `nginx -T`로 실제 로그 위치·형식을 확인하고, **게임 사이트 전용 파일**을 연결합니다. 여러 사이트가 함께 쓰는 전역 access log를 연결하면 다른 사이트의 정적 파일도 포함됩니다.
 
+클라이언트 빌드는 해시 파일 생성 후 GLB·JS·CSS·WASM의 `.gz`를 생성합니다.
+1024바이트 이상이며 압축하면 작아지는 파일만 대상으로 하고, 원본과 수정 시각을 맞춥니다.
+이미지·음악은 제외합니다. 빌드에서 생성한 파일은 `dist/`에만 있으므로 에셋 업로드 대상이 아닙니다.
+Docker는 시작 시 로그인 설정을 치환한 JS의 `.gz`도 다시 생성합니다.
+게임 사이트의 `server` 블록에는 다음을 설정합니다. Docker 설정도 동일합니다.
+
+```nginx
+gzip on;
+gzip_static on;
+gzip_comp_level 6;
+gzip_min_length 1024;
+gzip_vary on;
+gzip_types text/css application/javascript text/javascript application/wasm;
+```
+
+`gzip_static on`은 gzip을 허용하는 요청에 이미 생성한 `.gz`를 그대로 보냅니다.
+압축을 허용하지 않으면 원본을 보냅니다. `.gz`가 없는 JS·CSS·WASM에는 기존 동적 압축이
+적용되고, GLB에는 원본이 제공됩니다. GLB용 `gzip_types` 추가는 필요 없습니다.
+[Nginx gzip_static 모듈](https://nginx.org/en/docs/http/ngx_http_gzip_static_module.html)이
+필요하며 `nginx -V`의 `--with-http_gzip_static_module`로 확인합니다.
+
+현재 운영 파일에 사전 압축만 추가할 때는 운영 호스트에서 다음 명령을 실행합니다.
+스크립트는 원본을 변경하지 않으며 `.gz`는 임시 파일을 완성한 뒤 교체합니다.
+다른 정적 파일 배포와 동시에 실행하지 않습니다.
+
+```bash
+sudo node client/scripts/compress-assets.mjs /var/www/openmmo
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+위 Nginx 설정을 적용한 후 reload하면 되며 게임·NPC 서버 재시작이나 클라이언트 재빌드는
+필요 없습니다. 기존 WebSocket 연결은 Nginx의 이전 worker가 계속 처리합니다.
+`tools/deploy-prod.sh`는 게임·NPC를 재시작하므로 이 작업만 할 때는 실행하지 않습니다.
+이미 게시된 해시 파일의 원본 바이트는 그대로 유지합니다. 최적화한 모델의 새 해시와
+manifest 게시 작업은 별도로 진행합니다.
+
+설정 변경 후 `nginx -t`를 통과하면 Nginx를 reload합니다. gzip을 허용하는 실제 GET 응답의 `Content-Encoding: gzip`, `Vary: Accept-Encoding`과 압축 해제한 본문이 원본과 일치하는지 확인합니다. 기존 캐시 정책은 유지하며, 정적 파일 순위에는 압축 후 전송한 본문 바이트가 집계됩니다. 변경 전 전송량은 소급해서 줄어들지 않습니다.
+
 기존 `combined` 또는 저장소의 `combined_cc` 형식은 그대로 읽습니다. 예를 들어 게임 `server` 블록의 로그 설정은 다음과 같습니다.
 
 ```nginx

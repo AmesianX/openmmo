@@ -6,8 +6,9 @@
   "scripts": {
     "build:wasm": "bash scripts/build-wasm.sh",
     "dev": "npm run build:wasm && vite",
-    "build": "npm run build:wasm && vite build && npm run keep:asset-times && npm run hash:assets",
+    "build": "npm run build:wasm && vite build && npm run keep:asset-times && npm run hash:assets && npm run compress:assets",
     "hash:assets": "node scripts/hash-assets.mjs",
+    "compress:assets": "node scripts/compress-assets.mjs",
     "keep:asset-times": "cp -a public/. dist/",
     "preview": "vite preview",
     "check": "npm run generate:csv && svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
