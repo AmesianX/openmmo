@@ -278,3 +278,47 @@ describe('rider motion', () => {
     )
   })
 })
+
+describe('rowing rider motion', () => {
+  it('keeps palms on both grips and feet planted under a rotated world parent', () => {
+    const { root, arms, legs, motion } = rider()
+    const feet = [world(legs[2]), world(legs[5])]
+    const grips = [arms[2], arms[5]].map((hand) => {
+      const grip = new THREE.Object3D()
+      grip.position.copy(hand.localToWorld(new THREE.Vector3(0, 0.075, 0)))
+      grip.position.add(
+        new THREE.Vector3(0, -0.05, 0.03)
+          .transformDirection(root.matrixWorld)
+          .multiplyScalar(0.06)
+      )
+      return grip
+    })
+    motion.applyRowing(grips, 0.15, 1)
+    for (const i of [0, 1]) {
+      const palm = arms[i * 3 + 2].localToWorld(new THREE.Vector3(0, 0.075, 0))
+      expect(palm.distanceTo(grips[i].position)).toBeLessThan(1e-5)
+      expect(world(legs[i * 3 + 2]).distanceTo(feet[i])).toBeLessThan(1e-5)
+    }
+  })
+
+  it('restores the animation pose when rowing stops, without accumulating drift', () => {
+    const { bones, arms, legs, motion } = rider()
+    const all = [...bones, ...arms, ...legs]
+    const before = all.map((bone) => ({
+      position: bone.position.clone(),
+      rotation: bone.quaternion.clone(),
+    }))
+    const grips = [arms[2], arms[5]].map((hand) => {
+      const grip = new THREE.Object3D()
+      grip.position.copy(hand.localToWorld(new THREE.Vector3(0, 0.075, 0)))
+      return grip
+    })
+    for (let i = 0; i < 300; i++)
+      motion.applyRowing(grips, Math.sin(i / 30) * 0.2, 1)
+    motion.applyRowing(grips, 0, 0)
+    all.forEach((bone, i) => {
+      expect(bone.position.distanceTo(before[i].position)).toBeLessThan(1e-8)
+      expect(bone.quaternion.angleTo(before[i].rotation)).toBeLessThan(1e-6)
+    })
+  })
+})

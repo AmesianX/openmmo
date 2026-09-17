@@ -6,25 +6,61 @@ export const ROWBOAT_MODEL_PATH = '/models/mounts/rowboat.glb'
 const BOB_HEIGHT = 0.035
 const BOB_SECONDS = 3.4
 const ROLL_RADIANS = 0.035
-const OAR_SWEEP = 0.5
+const OAR_SWEEP = 0.55
 const OAR_STROKE_SECONDS = 1.9
+// build_rowboat.py bakes the shipped shaft angle into the mesh.
+const SHIPPED_ANGLE = Math.PI / 30
+const SHAFT_AXIS = new THREE.Vector3(1, 0, 0)
 
-/** Rigid hull with procedural swell and oar strokes. */
 export class BoatMount {
   readonly root: THREE.Object3D
   readonly seat: THREE.Object3D
-  private readonly oars: THREE.Object3D[]
-  private readonly oarRest: number[]
+  readonly grips: THREE.Object3D[] = []
+  readonly riderBaseOffsetY = -0.25
+  rowingWeight = 0
+  riderLean = 0
+  private readonly oars: {
+    node: THREE.Object3D
+    side: number
+    restPosition: THREE.Vector3
+    restRotation: THREE.Quaternion
+    alignment: THREE.Quaternion
+  }[] = []
+  private readonly rotation = new THREE.Quaternion()
+  private readonly feather = new THREE.Quaternion()
+  private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ')
+  private readonly point = new THREE.Vector3()
   private elapsed = 0
   private stroke = 0
 
   constructor(gltf: GLTF) {
     this.root = gltf.scene.clone()
     this.seat = this.root.getObjectByName('RideSeat') ?? this.root
-    this.oars = ['OarPort', 'OarStarboard']
-      .map((name) => this.root.getObjectByName(name))
-      .filter((node): node is THREE.Object3D => node !== undefined)
-    this.oarRest = this.oars.map((oar) => oar.rotation.z)
+    for (const [name, side] of [
+      ['OarStarboard', 1],
+      ['OarPort', -1],
+    ] as const) {
+      const node = this.root.getObjectByName(name)
+      if (!node) continue
+      const grip = new THREE.Object3D()
+      grip.position.set(
+        -side * Math.sin(SHIPPED_ANGLE),
+        0,
+        -Math.cos(SHIPPED_ANGLE)
+      )
+      node.add(grip)
+      this.grips.push(grip)
+      this.oars.push({
+        node,
+        side,
+        restPosition: node.position.clone(),
+        restRotation: node.quaternion.clone(),
+        alignment: new THREE.Quaternion().setFromAxisAngle(
+          new THREE.Vector3(0, 1, 0),
+          side * (Math.PI / 2 - SHIPPED_ANGLE)
+        ),
+      })
+    }
     this.root.traverse((node) => {
       if (node instanceof THREE.Mesh) {
         node.castShadow = true
@@ -39,13 +75,39 @@ export class BoatMount {
     this.root.position.y = Math.sin(swell) * BOB_HEIGHT
     this.root.rotation.z = Math.cos(swell * 0.7) * ROLL_RADIANS
 
-    // Oars sweep only while making way; at rest they stay shipped.
-    if (speed > 0.05) {
-      this.stroke += (dt / OAR_STROKE_SECONDS) * Math.PI * 2
+    const moving = Math.abs(speed) > 0.05
+    this.rowingWeight = THREE.MathUtils.damp(
+      this.rowingWeight,
+      moving ? 1 : 0,
+      8,
+      dt
+    )
+    if (moving || this.rowingWeight > 0.001) {
+      const cadence = THREE.MathUtils.clamp(Math.abs(speed) / 3, 0.7, 1.3)
+      this.stroke += (dt / OAR_STROKE_SECONDS) * Math.PI * 2 * cadence
     }
-    const sweep = speed > 0.05 ? Math.sin(this.stroke) * OAR_SWEEP : 0
-    this.oars.forEach((oar, i) => {
-      oar.rotation.z = this.oarRest[i] + (i === 0 ? sweep : -sweep)
-    })
+    const sweep = Math.sin(this.stroke) * OAR_SWEEP
+    const dip = 0.2 + 0.22 * Math.max(0, Math.cos(this.stroke))
+    this.feather.setFromAxisAngle(
+      SHAFT_AXIS,
+      (Math.PI / 2) *
+        THREE.MathUtils.smoothstep(Math.cos(this.stroke), -0.15, 0.15)
+    )
+    this.riderLean = 0.12 + 0.2 * Math.sin(this.stroke)
+    for (const oar of this.oars) {
+      const { node, side } = oar
+      this.rotation.setFromEuler(this.euler.set(0, side * sweep, -side * dip))
+      this.point.set(side * 0.55, 0, 0).applyQuaternion(this.rotation)
+      this.point.x += side * 0.57
+      this.point.y += 0.44
+      this.point.z -= 0.55
+      node.position.lerpVectors(oar.restPosition, this.point, this.rowingWeight)
+      this.rotation.multiply(this.feather).multiply(oar.alignment)
+      node.quaternion.slerpQuaternions(
+        oar.restRotation,
+        this.rotation,
+        this.rowingWeight
+      )
+    }
   }
 }

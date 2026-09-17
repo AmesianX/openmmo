@@ -336,6 +336,7 @@
   let riderGroup = $state<THREE.Group | undefined>()
   let ridingClip: THREE.AnimationClip | null = null
   let riderMotion: RiderMotion | null = null
+  let rowingMotion: RiderMotion | null = null
   let horseReins: HorseReins | null = null
   const seatPosition = new THREE.Vector3()
   // Boats remain visible during combat and interactions.
@@ -346,23 +347,31 @@
       playerState !== 'interact'
   )
   const boating = $derived(mount === 'rowboat' && health > 0)
+  const rowing = $derived(boating && playerState === 'moving')
 
   $effect(() => {
-    if (!boating) return
+    const root = modelRoot
+    if (!boating || !root) return
     let cancelled = false
     // Load the seated pose before choosing the boat's first animation.
     void Promise.all([loadGLB(ROWBOAT_MODEL_PATH), loadSocialAnimations()])
       .then(([gltf]) => {
         if (cancelled) return
         boatMount = new BoatMount(gltf)
+        rowingMotion = new RiderMotion(root)
         lastAnimKey = undefined
         playAnimationForState()
       })
       .catch((error) => console.error('Failed to load rowboat mount', error))
     return () => {
       cancelled = true
+      rowingMotion?.restore()
+      rowingMotion = null
       boatMount = null
-      if (riderGroup) riderGroup.position.set(0, 0, 0)
+      if (riderGroup) {
+        riderGroup.position.set(0, 0, 0)
+        riderGroup.quaternion.identity()
+      }
       lastAnimKey = undefined
     }
   })
@@ -1018,21 +1027,10 @@
     )
       return
 
-    // Hide weapons during interact animations — except fishing, where the
-    // held rod IS the point of the stance.
+    updateHeldPropVisibility()
     const fishingInteraction =
       interactionAnim === FishingAnimationName.CAST ||
       interactionAnim === FishingAnimationName.IDLE
-    if (weaponObject) {
-      weaponObject.visible =
-        !riding && (playerState !== 'interact' || fishingInteraction)
-    }
-    if (offhandObject) {
-      offhandObject.visible = !riding && playerState !== 'interact'
-    }
-    if (torchFireGroup) {
-      torchFireGroup.visible = !riding && playerState !== 'interact'
-    }
 
     if (riding && ridingClip) {
       startAction(ridingClip, false)
@@ -1456,6 +1454,26 @@
     return hoverProxyGroup
   }
 
+  function updateHeldPropVisibility() {
+    const handsOnOars =
+      boating &&
+      playerState !== 'attack' &&
+      playerState !== 'interact' &&
+      (rowing || (boatMount?.rowingWeight ?? 0) >= 0.001)
+    const fishingInteraction =
+      interactionAnim === FishingAnimationName.CAST ||
+      interactionAnim === FishingAnimationName.IDLE
+    if (weaponObject) {
+      weaponObject.visible =
+        !riding &&
+        !handsOnOars &&
+        (playerState !== 'interact' || fishingInteraction)
+    }
+    const offhandVisible = !riding && !handsOnOars && playerState !== 'interact'
+    if (offhandObject) offhandObject.visible = offhandVisible
+    if (torchFireGroup) torchFireGroup.visible = offhandVisible
+  }
+
   // Tag the model group so the click raycast can resolve NPC models
   // back to their player id.
   $effect(() => {
@@ -1474,7 +1492,9 @@
   export function update(deltaTime: number, wind: WindState | null = null) {
     enchantGrip?.update(0)
     riderMotion?.restore()
+    rowingMotion?.restore()
     updatePose(deltaTime)
+    updateHeldPropVisibility()
     if (
       daggerTrail &&
       modelRoot &&
@@ -1495,6 +1515,18 @@
         horseMount.riderFacingYaw
       )
       horseReins?.update()
+    }
+    if (
+      boating &&
+      boatMount &&
+      playerState !== 'attack' &&
+      playerState !== 'interact'
+    ) {
+      rowingMotion?.applyRowing(
+        boatMount.grips,
+        boatMount.riderLean,
+        boatMount.rowingWeight
+      )
     }
     const currentClip = currentAction?.getClip()
     const weaponIdle = weaponClips.get(weaponAnimationProfile?.idle ?? '')
@@ -1581,6 +1613,8 @@
       boatMount.update(deltaTime, playerState === 'moving' ? _speed : 0)
       boatMount.seat.getWorldPosition(seatPosition)
       riderGroup.position.copy(modelGroup.worldToLocal(seatPosition))
+      riderGroup.position.y += boatMount.riderBaseOffsetY
+      riderGroup.quaternion.copy(boatMount.root.quaternion)
     } else if (horseMount && riderGroup && modelGroup) {
       horseMount.update(
         deltaTime,
@@ -1591,8 +1625,10 @@
       horseMount.seat.getWorldPosition(seatPosition)
       riderGroup.position.copy(modelGroup.worldToLocal(seatPosition))
       riderGroup.position.y += horseMount.riderBaseOffsetY
+      riderGroup.quaternion.identity()
     } else if (riderGroup) {
       riderGroup.position.set(0, 0, 0)
+      riderGroup.quaternion.identity()
     }
     if (!mixer) return
 

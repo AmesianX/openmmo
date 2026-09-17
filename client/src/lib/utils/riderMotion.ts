@@ -73,6 +73,40 @@ export class RiderMotion {
     this.applied = false
   }
 
+  applyRowing(grips: readonly THREE.Object3D[], lean: number, weight: number) {
+    this.restore()
+    if (
+      !this.torso ||
+      this.arms.length !== 2 ||
+      grips.length !== 2 ||
+      weight < 0.001
+    )
+      return
+    for (const saved of this.saved) {
+      saved.position.copy(saved.bone.position)
+      saved.rotation.copy(saved.bone.quaternion)
+    }
+    this.applied = true
+    this.root.updateWorldMatrix(true, true)
+    for (const arm of this.arms) this.capture(arm)
+    this.direction.set(1, 0, 0).transformDirection(this.root.matrixWorld)
+    this.rotation.setFromAxisAngle(this.direction, lean * weight)
+    this.torso.joint.getWorldQuaternion(this.parentRotation)
+    this.rotation.multiply(this.parentRotation)
+    this.orient(this.torso.joint, this.rotation)
+    for (let i = 0; i < this.arms.length; i++) {
+      const arm = this.arms[i]
+      grips[i].getWorldPosition(this.to)
+      this.from.set(0, 0.075, 0).applyQuaternion(arm.rotation)
+      this.to.sub(this.from)
+      arm.target.lerp(this.to, weight)
+      arm.pole
+        .set(i === 0 ? 0.35 : -0.35, -1, -0.2)
+        .transformDirection(this.root.matrixWorld)
+      this.solve(arm)
+    }
+  }
+
   apply(hipLift: number, handLift = 0, idleWeight = 0, facingYaw?: number) {
     this.restore()
     const { torso } = this
