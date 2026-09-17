@@ -940,3 +940,54 @@ async fn boarding_lifts_the_rider_to_the_surface() {
     let ashore = game.players.read().await[&id].position.y;
     assert!((ashore - bed).abs() < 1e-3, "leaving sets them back down");
 }
+
+#[tokio::test]
+async fn boarding_and_leaving_reground_all_queued_waypoints() {
+    for boarding in [true, false] {
+        let name = if boarding {
+            "board_queued"
+        } else {
+            "leave_queued"
+        };
+        let game = make_test_game_state(name);
+        let id = boater(&game).await;
+        let (bed, depth) = game.ground_and_depth_at(-50.0, 0.0).await.unwrap();
+        game.players.write().await.get_mut(&id).unwrap().position.y = bed;
+        if !boarding {
+            game.use_item(&id, 1).await;
+        }
+        for (z, append) in [(10.0, false), (20.0, true)] {
+            game.update_player_position(
+                &id,
+                move_cmd(
+                    Position {
+                        x: -50.0,
+                        y: bed,
+                        z,
+                    },
+                    append,
+                ),
+                false,
+            )
+            .await;
+        }
+
+        game.use_item(&id, 1).await;
+        let expected_y = if boarding { bed + depth } else { bed };
+        assert_eq!(game.movement_intents.read().await[&id].len(), 2);
+        game.tick_player_movement(1.0).await;
+        assert!(game.players.read().await[&id].position.z > 1.0);
+        for _ in 0..10 {
+            let player = game.players.read().await[&id].clone();
+            assert_eq!(player.is_mounted(), boarding);
+            assert!(
+                (player.position.y - expected_y).abs() < 1e-3,
+                "{name}: {:?}, expected y {expected_y}",
+                player.position
+            );
+            game.tick_player_movement(1.0).await;
+        }
+        assert!(!game.movement_intents.read().await.contains_key(&id));
+        assert!(game.players.read().await[&id].position.z >= 19.0);
+    }
+}

@@ -4,32 +4,18 @@ use super::GameState;
 use crate::types::{Player, PlayerId, ServerMessage};
 
 impl GameState {
-    /// Whether the player can still work the mount under them: aboard, alive,
-    /// and not in a fight that throws them. Combat throws a horse's rider but
-    /// not a boat's, which has nowhere to put them.
-    ///
-    /// The state half of `can_ride_here`'s question, kept apart from it
-    /// because this one is called from the movement tick, where the water
-    /// sample that decides the *place* must never run. A bad place ends the
-    /// ride on the next `validate_mounts`; a bad state only drops the input.
+    /// State-only steering check; terrain validation runs outside the movement tick.
     pub(super) fn can_steer_mount(player: &Player) -> bool {
         let Some(kind) = player.mount else {
             return false;
         };
-        if player.health == 0 {
-            return false;
-        }
-        if kind.dismounts_in_combat() && Self::in_combat(player) {
-            return false;
-        }
-        true
+        player.health > 0 && (!kind.dismounts_in_combat() || !Self::in_combat(player))
     }
 
     pub(super) async fn can_ride_here(&self, player: &Player, kind: MountKind) -> bool {
         if player.health == 0
             || player.floor_level != 0
             || player.object_type.is_some()
-            // The rider is not on it yet, so ask the kind being boarded.
             || (kind.dismounts_in_combat() && Self::in_combat(player))
         {
             return false;
@@ -69,6 +55,7 @@ impl GameState {
     }
 
     pub(super) async fn set_mount(&self, player_id: &PlayerId, mount: Option<MountKind>) {
+        let mut queues = self.movement_intents.write().await;
         let Some((was, at, floor)) = self
             .players
             .read()
@@ -81,39 +68,44 @@ impl GameState {
         if was == mount {
             return;
         }
-        // A boat lifts its rider to the surface the moment they board, and
-        // sets them back on the bed when they leave — not on the next step.
-        // Only outdoors: a rider whose dungeon floor ended the ride is below
-        // the surface this would compute, and must not be dragged up to it.
-        let lifted = if floor == 0 {
-            Some(self.surface_ground_y(0, &at, at.y, mount).await)
+        // Boarding changes height immediately, but never lifts a dungeon player.
+        let ground_y = if floor == 0 {
+            self.surface_ground_y(0, &at, at.y, mount).await
         } else {
-            None
+            at.y
         };
-        let (position, rotation, moved) = {
+        let (position, rotation) = {
             let mut players = self.players.write().await;
             let Some(player) = players.get_mut(player_id) else {
                 return;
             };
-            // Re-check under the write lock: two `use_item` calls racing here
-            // would otherwise both pass the read above and toggle twice.
-            if player.mount != was {
+            if player.mount != was || player.position != at || player.floor_level != floor {
                 return;
             }
             player.mount = mount;
-            // The read above was dropped across an await, so the lift only
-            // applies if the mover has not stepped since.
-            let moved = match lifted {
-                Some(y) if player.position.x == at.x && player.position.z == at.z => {
-                    let changed = (y - player.position.y).abs() > 1e-3;
-                    player.position.y = y;
-                    changed
-                }
-                _ => false,
-            };
-            (player.position, player.rotation, moved)
+            player.position.y = ground_y;
+            (player.position, player.rotation)
         };
-        if moved {
+        if was.is_some_and(MountKind::floats) != mount.is_some_and(MountKind::floats) {
+            if let Some(queue) = queues.get_mut(player_id) {
+                let mut ref_y = position.y;
+                for intent in queue {
+                    if intent.floor_level >= 0 {
+                        intent.target.y = self
+                            .surface_ground_y(
+                                intent.floor_level as u8,
+                                &intent.target,
+                                ref_y,
+                                mount,
+                            )
+                            .await;
+                    }
+                    ref_y = intent.target.y;
+                }
+            }
+        }
+        drop(queues);
+        if (position.y - at.y).abs() > 1e-3 {
             self.publish_nearby(
                 &position,
                 floor,

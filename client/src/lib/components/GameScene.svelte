@@ -222,12 +222,14 @@
     terrainHeightManager
   )
   const waterFieldManager = new WaterFieldManager()
+  const waterSurfaceAt = (x: number, z: number) =>
+    waterFieldManager.surfaceAt(x, z)
+  const hasWaterSurfaceData = (x: number, z: number) =>
+    waterFieldManager.hasSurfaceData(x, z)
   monsterManager.heightManager = terrainHeightManager
   remotePlayerManager.heightManager = terrainHeightManager
-  remotePlayerManager.waterSurfaceAt = (x, z) =>
-    waterFieldManager.surfaceAt(x, z)
-  remotePlayerManager.hasWaterSurfaceData = (x, z) =>
-    waterFieldManager.hasSurfaceData(x, z)
+  remotePlayerManager.waterSurfaceAt = waterSurfaceAt
+  remotePlayerManager.hasWaterSurfaceData = hasWaterSurfaceData
   editorHeightManager.set(terrainHeightManager)
   editorSplatManager.set(terrainSplatManager)
   editorZoneManager.set(new ZoneManager())
@@ -246,10 +248,6 @@
   let waterLayerRef = $state<GameSceneWaterFieldLayer | undefined>(undefined)
   let riverRocksRef = $state<GameSceneRiverRocksLayer | undefined>(undefined)
   let shoreSprayRef = $state<GameSceneShoreSprayLayer | undefined>(undefined)
-  const waterSurfaceAt = (x: number, z: number) =>
-    waterFieldManager.surfaceAt(x, z)
-  const hasWaterSurfaceData = (x: number, z: number) =>
-    waterFieldManager.hasSurfaceData(x, z)
   let footprintsRef = $state<GameSceneFootprintsLayer | undefined>(undefined)
   let grassLayerRef = $state<GameSceneGrassLayer | undefined>(undefined)
   let treeLayerRef = $state<GameSceneTreeLayer | undefined>(undefined)
@@ -1221,6 +1219,8 @@
       networkManager.disconnect()
       monsterManager.reset()
       remotePlayerManager.reset()
+      remotePlayerManager.waterSurfaceAt = null
+      remotePlayerManager.hasWaterSurfaceData = null
       playerDebugInfo.set(null)
       terrainHeightManager.destroy()
       terrainSplatManager.destroy()

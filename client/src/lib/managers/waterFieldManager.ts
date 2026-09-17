@@ -60,10 +60,7 @@ export class WaterFieldManager {
     return promise
   }
 
-  /** Whether this tile's water field is in hand. `surfaceAt` answers sea
-   *  level for a tile still in flight, which a caller that must not guess —
-   *  a boat's float height over an inland river — has to tell apart from a
-   *  genuine sea-level answer. */
+  /** Distinguish unloaded tiles from the sea-level fallback in `surfaceAt`. */
   hasSurfaceData(worldX: number, worldZ: number): boolean {
     return this.cache.has(
       tileKey(worldToTileCoord(worldX), worldToTileCoord(worldZ))

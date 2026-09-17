@@ -1,8 +1,7 @@
 import * as THREE from 'three'
+import { holdFirstKeyframe } from './animationTracks'
 
-/** Bones the seated pose keeps while the upper body fishes. `Spine` is the
- *  boundary and stays with the legs: handing it to the cast would swing the
- *  waist out over hips that are still sitting down. */
+// Keep the lower spine with the seated hips to avoid bending the waist.
 const SEATED_BONES = new Set([
   'Hips',
   'Spine',
@@ -18,8 +17,7 @@ const SEATED_BONES = new Set([
   'RightToe_End',
 ])
 
-/** Retargeted clips name tracks `.bones[Name].prop`; raw GLB clips use
- *  `Name.prop`. Both reach here, so read the bone out of either. */
+// Tracks use either `.bones[Name].prop` or `Name.prop`.
 const RETARGETED = /^\.bones\[(.+?)\]\.(.+)$/
 
 function boneOf(trackName: string): string {
@@ -29,29 +27,12 @@ function boneOf(trackName: string): string {
   return dot === -1 ? trackName : trackName.slice(0, dot)
 }
 
-/** The track's first keyframe, held for the whole clip. */
-function frozen(track: THREE.KeyframeTrack): THREE.KeyframeTrack {
-  const held = track.clone()
-  held.times = new Float32Array([0])
-  held.values = track.values.slice(0, track.getValueSize())
-  return held
-}
-
 const merged = new WeakMap<
   THREE.AnimationClip,
   WeakMap<THREE.AnimationClip, THREE.AnimationClip>
 >()
 
-/**
- * Fish from a chair: the legs hold the seated pose while the spine and arms
- * play the fishing clip. Cheaper and steadier than authoring a second set of
- * clips — there is nothing to retarget, and any future fishing clip gets a
- * seated variant for free.
- *
- * The seated half is frozen at its first frame rather than played: a sitting
- * angler's legs do not need their own loop, and holding them keeps the two
- * clips from drifting out of phase over a long fight.
- */
+/** Hold the seated lower body while playing the fishing clip. */
 export function seatedFishingClip(
   fishing: THREE.AnimationClip,
   seated: THREE.AnimationClip
@@ -68,7 +49,8 @@ export function seatedFishingClip(
     (track) => !SEATED_BONES.has(boneOf(track.name))
   )
   for (const track of seated.tracks) {
-    if (SEATED_BONES.has(boneOf(track.name))) tracks.push(frozen(track))
+    if (SEATED_BONES.has(boneOf(track.name)))
+      tracks.push(holdFirstKeyframe(track))
   }
 
   const clip = new THREE.AnimationClip(

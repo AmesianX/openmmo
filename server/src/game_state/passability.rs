@@ -309,15 +309,8 @@ impl super::GameState {
         current_floor
     }
 
-    /// The Y to store for a mover on surface floor `floor` at `to`: the
-    /// dungeon entrance ramp, house storey or stairwell, bridge deck or
-    /// terrain — all server-derived, so the reported Y only ever breaks ties.
-    /// `ref_y` is the mover's current server-side height: under a bridge it
-    /// decides deck versus river bed. Keeps the reported Y where
-    /// nothing can be derived (a sampler error, or an upper storey whose
-    /// room no longer exists).
-    /// Ground a player at `to` rests on. A floating mount rides the water
-    /// surface; everyone else stands on the bed, deck or storey below them.
+    /// Authoritative ground or floating surface Y. `ref_y` selects stacked
+    /// bridge decks; unknown terrain or storeys retain the reported Y.
     pub async fn surface_ground_y(
         &self,
         floor: u8,

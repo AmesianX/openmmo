@@ -93,6 +93,7 @@
     mountTurnRadius,
   } from '../utils/mounts'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
+  import { floatingSurfaceY } from '../utils/floatingSurface'
   import {
     playerFloorOffset,
     playerInsideHouseId,
@@ -289,20 +290,16 @@
     getFloatSurfaceY: (x, z) => floatSurfaceY(x, z),
   })
 
-  /** Water surface under a floating mount, else null. Mirrors the server's
-   *  `surface_ground_y`: disagreeing here would fight its snap-backs. */
   function floatSurfaceY(x: number, z: number): number | null {
     if (!mountFloats(currentPlayer?.mount)) return null
-    // Unloaded tiles report height 0, which would read as sea-level water;
-    // the remote path guards the same way.
-    if (!heightManager?.hasHeightData(x, z)) return null
-    // A water tile still in flight reads as sea level, which would sink the
-    // boat on a river whose baked surface sits well above it.
-    if (hasWaterSurfaceData?.(x, z) === false) return null
-    const surface = waterSurfaceAt?.(x, z)
-    if (surface === undefined) return null
-    const bed = heightManager.getHeightAtWorldPosition(x, z)
-    return surface - bed > 0 ? surface : null
+    return floatingSurfaceY({
+      x,
+      z,
+      fallbackY: currentPlayer?.position.y ?? 0,
+      heightManager,
+      waterSurfaceAt,
+      hasWaterSurfaceData,
+    })
   }
   const { sampleHeight, waypointHeight, isMovementBlocked, isUphillTooSteep } =
     physics

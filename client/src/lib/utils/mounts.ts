@@ -5,27 +5,43 @@ import {
   mount_turn_radius,
 } from '../wasm/onlinerpg_shared'
 
-/** The TS half of `Player::is_mounted()` — one place that knows the field
- *  is `MountKind | null | undefined`, so call sites ask a yes/no question.
- *  A type guard, so a passing check also narrows the player to non-null and
- *  its mount to a kind, the way `?.mount == null` used to narrow the player. */
+/** Narrow the player and its mount together. */
 export function isMounted<P extends { mount?: MountKind | null }>(
   player: P | null | undefined
 ): player is P & { mount: MountKind } {
   return player?.mount != null
 }
 
-// The numbers live in shared/src/mount.rs and arrive through wasm, so the
-// prediction here cannot drift from what the server simulates.
+interface MountSettings {
+  speedMult: number
+  turnRadius: number
+  floats: boolean
+}
+
+const settingsByKind = new Map<MountKind, MountSettings>()
+
+function mountSettings(mount: MountKind): MountSettings {
+  let settings = settingsByKind.get(mount)
+  if (!settings) {
+    // Read shared constants lazily, after WASM initialization.
+    settings = {
+      speedMult: mount_speed_mult(mount),
+      turnRadius: mount_turn_radius(mount),
+      floats: mount_floats(mount),
+    }
+    settingsByKind.set(mount, settings)
+  }
+  return settings
+}
 
 export function mountSpeedMult(mount?: MountKind | null): number {
-  return mount ? mount_speed_mult(mount) : 1
+  return mount ? mountSettings(mount).speedMult : 1
 }
 
 export function mountTurnRadius(mount: MountKind): number {
-  return mount_turn_radius(mount)
+  return mountSettings(mount).turnRadius
 }
 
 export function mountFloats(mount?: MountKind | null): boolean {
-  return mount ? mount_floats(mount) : false
+  return mount ? mountSettings(mount).floats : false
 }

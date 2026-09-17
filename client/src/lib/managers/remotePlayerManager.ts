@@ -18,11 +18,11 @@ import {
 } from '../utils/movementUtils'
 import { entityGroundY } from './entity-ground'
 import { FishingAnimationName, SitAnimationName } from '../types/animations'
-import { shortestWrappedDeltaX, wrapWorldX } from '../terrain/world-wrap'
+import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import type { TerrainHeightManager } from './terrainHeightManager'
 import { mountFloats, mountSpeedMult } from '../utils/mounts'
-import { isMounted } from '../utils/mounts'
 import type { MountKind } from '../network/networkTypes'
+import { floatingSurfaceY } from '../utils/floatingSurface'
 
 // Use the same movement config as local player
 const MOVEMENT_CONFIG: MovementConfig = {
@@ -72,25 +72,24 @@ class PlayerStateManager {
     return !!position && !!target && movedFar(position, target)
   }
 
-  /** Baked water surface, injected alongside heightManager. Floating mounts
-   *  ride it instead of the bed below. */
   waterSurfaceAt: ((x: number, z: number) => number) | null = null
-
-  /** Guards `waterSurfaceAt`: a tile still loading answers sea level. */
   hasWaterSurfaceData: ((x: number, z: number) => boolean) | null = null
 
-  /** Water surface under a floating mount, else null — the remote-player
-   *  mirror of PlayerControl's own float sampling. */
-  floatSurfaceY(mount: MountKind | null, x: number, z: number): number | null {
-    if (!mountFloats(mount) || !this.waterSurfaceAt || !this.heightManager) {
-      return null
-    }
-    const wx = wrapWorldX(x)
-    if (!this.heightManager.hasHeightData(wx, z)) return null
-    if (this.hasWaterSurfaceData?.(wx, z) === false) return null
-    const surface = this.waterSurfaceAt(wx, z)
-    const bed = this.heightManager.getHeightAtWorldPosition(wx, z)
-    return surface - bed > 0 ? surface : null
+  floatSurfaceY(
+    mount: MountKind | null,
+    x: number,
+    z: number,
+    fallbackY: number
+  ): number | null {
+    if (!mountFloats(mount)) return null
+    return floatingSurfaceY({
+      x,
+      z,
+      fallbackY,
+      heightManager: this.heightManager,
+      waterSurfaceAt: this.waterSurfaceAt,
+      hasWaterSurfaceData: this.hasWaterSurfaceData,
+    })
   }
 
   // Attack animation duration in seconds (updated from actual animation data)
@@ -200,7 +199,7 @@ class PlayerStateManager {
       // Calculate movement step
       const sprinting = this.targetSprinting.get(playerId) ?? false
       const mount = otherPlayers.get(playerId)?.mount ?? null
-      const mounted = isMounted({ mount })
+      const mounted = mount !== null
       const movementConfig = movementConfigFor(mount, sprinting)
       const result = calculateMovementStep(
         currentPos,
@@ -221,11 +220,19 @@ class PlayerStateManager {
       // move protocol has no per-waypoint Y, so the ground has to be
       // resampled here. Without it a remote keeps the Y it entered the floor
       // with, which reads as sinking through dungeon and house stairs.
+      const floor = otherPlayers.get(playerId)?.floorLevel ?? 0
       result.newPos.y =
-        this.floatSurfaceY(mount, result.newPos.x, result.newPos.z) ??
+        (floor === 0
+          ? this.floatSurfaceY(
+              mount,
+              result.newPos.x,
+              result.newPos.z,
+              currentPos.y
+            )
+          : null) ??
         entityGroundY(
           this.heightManager,
-          otherPlayers.get(playerId)?.floorLevel ?? 0,
+          floor,
           result.newPos.x,
           result.newPos.z,
           currentPos.y

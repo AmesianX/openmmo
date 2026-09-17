@@ -6,6 +6,7 @@ import {
   retargetAnimationsForCharacterModel,
 } from './characterAnimationUtils'
 import { getWeaponEffectAxis } from './weaponEffectAxis'
+import { holdFirstKeyframe } from './animationTracks'
 
 export const ENCHANT_WEAPON_ANIMATION = 'enchant_weapon'
 export const ENCHANT_LEFT_WEAPON_ANIMATION = 'enchant_weapon_left'
@@ -20,12 +21,7 @@ const armorHolds = new WeakMap<THREE.AnimationClip, THREE.AnimationClip>()
 export function getArmorEnchantHold(idle: THREE.AnimationClip) {
   let hold = armorHolds.get(idle)
   if (!hold) {
-    const tracks = idle.tracks.map((track) => {
-      const held = track.clone()
-      held.times = new Float32Array([0])
-      held.values = track.values.slice(0, track.getValueSize())
-      return held
-    })
+    const tracks = idle.tracks.map(holdFirstKeyframe)
     hold = new THREE.AnimationClip(`enchant_armor:${idle.name}`, 1, tracks)
     armorHolds.set(idle, hold)
   }

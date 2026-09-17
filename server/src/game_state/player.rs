@@ -1063,6 +1063,25 @@ impl super::GameState {
             self.clear_pose_on_move(player_id, "move").await;
         }
         let mut queues = self.movement_intents.write().await;
+        let Some((current_mount, current_y)) = self
+            .players
+            .read()
+            .await
+            .get(player_id)
+            .map(|p| (p.mount, p.position.y))
+        else {
+            return;
+        };
+        if floor_level >= 0 && current_mount != mount {
+            let ref_y = queues
+                .get(player_id)
+                .filter(|_| append)
+                .and_then(|q| q.back())
+                .map_or(current_y, |intent| intent.target.y);
+            new_position.y = self
+                .surface_ground_y(floor_level as u8, &new_position, ref_y, current_mount)
+                .await;
+        }
         let queue = queues.entry(*player_id).or_default();
         let queue_before = queue.len();
         let replaced = !append

@@ -338,8 +338,7 @@
   let riderMotion: RiderMotion | null = null
   let horseReins: HorseReins | null = null
   const seatPosition = new THREE.Vector3()
-  /// The horse pose fights the attack and interact clips; the boat is just
-  /// furniture the rider sits on, so it stays put through both.
+  // Boats remain visible during combat and interactions.
   const riding = $derived(
     mount === 'horse' &&
       health > 0 &&
@@ -351,22 +350,17 @@
   $effect(() => {
     if (!boating) return
     let cancelled = false
-    let boat: BoatMount | null = null
-    // Wait for the chair clips too: played before they land, the seated
-    // branch finds nothing and the rider stands in the hull until the next
-    // state change, which while idle never comes.
+    // Load the seated pose before choosing the boat's first animation.
     void Promise.all([loadGLB(ROWBOAT_MODEL_PATH), loadSocialAnimations()])
       .then(([gltf]) => {
         if (cancelled) return
-        boat = new BoatMount(gltf)
-        boatMount = boat
+        boatMount = new BoatMount(gltf)
         lastAnimKey = undefined
         playAnimationForState()
       })
       .catch((error) => console.error('Failed to load rowboat mount', error))
     return () => {
       cancelled = true
-      boat?.dispose()
       boatMount = null
       if (riderGroup) riderGroup.position.set(0, 0, 0)
       lastAnimKey = undefined
@@ -1045,10 +1039,7 @@
       return
     }
 
-    // Seated in the boat. The chair's enter clip is skipped — stepping into
-    // a hull is not lowering yourself onto a stool — so the loop is entered
-    // directly and the cross-fade covers it. Interact states win: casting
-    // from the boat is the whole point, and the seated loop would swallow it.
+    // Skip chair entry; attacks and interactions keep their animations.
     if (boating && playerState !== 'attack' && playerState !== 'interact') {
       const seated = socialClipsByName.get(SitAnimationName.IDLE)
       if (seated) {
@@ -1122,8 +1113,7 @@
           ? SitAnimationName.STAND_TO_SIT
           : interactionAnim
       clip = clipName ? resolveSocialClip(clipName) : undefined
-      // Aboard, the legs stay in the boat: the cast plays on the spine and
-      // arms over a held seated pose.
+      // Hold the seated lower body while casting.
       if (clip && boating && fishingInteraction) {
         const seated = socialClipsByName.get(SitAnimationName.IDLE)
         if (seated) clip = seatedFishingClip(clip, seated)
