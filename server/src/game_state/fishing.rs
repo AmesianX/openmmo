@@ -17,6 +17,7 @@ use onlinerpg_shared::fishing::{
     TROPHY_TENSION_RATE, WAIT_MAX_MS, WAIT_MIN_MS, WATERLINE_MARGIN_M,
 };
 use onlinerpg_shared::inventory::EquipSlot;
+use onlinerpg_shared::mount::MountKind;
 use onlinerpg_shared::skills::SkillId;
 use onlinerpg_shared::Position;
 use rand::Rng;
@@ -412,12 +413,12 @@ impl GameState {
             return;
         }
 
-        let (player_pos, player_rotation, player_floor, alive) = {
+        let (player_pos, player_rotation, player_floor, alive, mount) = {
             let players = self.players.read().await;
             let Some(p) = players.get(player_id) else {
                 return;
             };
-            (p.position, p.rotation, p.floor_level, p.health > 0)
+            (p.position, p.rotation, p.floor_level, p.health > 0, p.mount)
         };
         if !alive {
             self.send_fishing_error(player_id, "You cannot fish while defeated.")
@@ -438,6 +439,19 @@ impl GameState {
 
         if player_pos.dist_xz_sq(&target) > MAX_CAST_DISTANCE_METERS * MAX_CAST_DISTANCE_METERS {
             self.send_fishing_error(player_id, "That water is out of casting range.")
+                .await;
+            return;
+        }
+
+        let boating = mount == Some(MountKind::Rowboat);
+        if boating
+            && !onlinerpg_shared::fishing::is_stern_cast(
+                onlinerpg_shared::shortest_world_delta_x(player_pos.x, target.x),
+                target.z - player_pos.z,
+                player_rotation,
+            )
+        {
+            self.send_fishing_error(player_id, "Cast into the water behind the boat.")
                 .await;
             return;
         }
@@ -500,8 +514,11 @@ impl GameState {
         }
         self.fishing_active
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // Face the cast point here; see FishingCasted's rotation doc.
-        let rotation = player_pos.bearing_xz_to(&bobber).unwrap_or(player_rotation);
+        let rotation = if boating {
+            player_rotation
+        } else {
+            player_pos.bearing_xz_to(&bobber).unwrap_or(player_rotation)
+        };
         self.broadcast_fishing(
             &bobber,
             ServerMessage::FishingCasted {

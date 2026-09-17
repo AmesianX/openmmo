@@ -42,6 +42,8 @@ endgame combat loot (`server/src/item_defs.rs::equipment_ids_with_min_price`).
   water surface collapses below the terrain, so `depth ≤ 0` and the cast is
   refused with a direct `FishingError`. Sea-only tiles have no baked water
   file; they sample as flat sea level, matching the client's synthesis.
+  On a rowboat, the target must also lie within 45° of the stern; casting
+  preserves the boat's heading and the seated angler's stern-facing pose.
 - **Wait**: uniform 4–12 s, shortened 2% per fishing level (floored at half
   the minimum). The fish — species, size, trophy — is rolled *at the bite*,
   not at resolution. Trophy status is revealed at the hook; species and
@@ -147,6 +149,8 @@ tension and `1%` faster reeling per level, pull relief capped at 30%).
   sits >0.1 m above the clicked terrain, so both ocean and rivers cast while
   dry ground still walks) → stop, face the water, send (`PlayerControl.svelte`).
   The server re-validates, so the client check only decides cast-vs-walk.
+  Rowboat casts keep the heading and reject clicks outside the stern cone
+  before changing the player's state. The direction check is shared via WASM.
 - `components/FishingBobber.svelte`: every nearby angler's bobber (broadcasts
   are radius-gated), gentle idle bob, hard dip on bite. The float stays
   hidden through the cast swing + flight and splashes down on the same

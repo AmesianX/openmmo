@@ -118,6 +118,11 @@ pub fn fishing_cast_ms() -> u32 {
     crate::fishing::CAST_MS
 }
 
+#[wasm_bindgen]
+pub fn fishing_is_stern_cast(dx: f32, dz: f32, boat_rotation: f32) -> bool {
+    crate::fishing::is_stern_cast(dx, dz, boat_rotation)
+}
+
 /// Minimum running tension that tires a trophy fish.
 #[wasm_bindgen]
 pub fn fishing_trophy_min_tension() -> f32 {

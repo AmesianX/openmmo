@@ -183,6 +183,55 @@ async fn cast_broadcast_faces_the_water() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn rowboat_casts_only_astern_without_turning() {
+    let game_state = make_test_game_state("fishing_rowboat_facing");
+    let (id, mut rx) = make_angler(&game_state, "angler_rowboat").await;
+    {
+        let mut players = game_state.players.write().await;
+        let player = players.get_mut(&id).unwrap();
+        player.mount = Some(onlinerpg_shared::mount::MountKind::Rowboat);
+        player.rotation = 0.0;
+    }
+
+    for (x, z) in [
+        (-100.0, 54.0),
+        (-104.0, 50.0),
+        (-104.0, 49.0),
+        (-100.0, 50.0),
+    ] {
+        game_state
+            .start_fishing(&id, Position { x, y: 0.0, z })
+            .await;
+        assert!(drain(&mut rx).iter().any(|message| matches!(
+            message,
+            ServerMessage::FishingError { message }
+                if message == "Cast into the water behind the boat."
+        )));
+        assert!(!game_state.fishing_sessions.read().await.contains_key(&id));
+    }
+
+    let target = Position {
+        x: -98.0,
+        y: 0.0,
+        z: 46.0,
+    };
+    game_state.start_fishing(&id, target).await;
+    let (position, rotation) = drain(&mut rx)
+        .into_iter()
+        .find_map(|message| match message {
+            ServerMessage::FishingCasted {
+                position, rotation, ..
+            } => Some((position, rotation)),
+            _ => None,
+        })
+        .expect("stern cast should be accepted");
+    assert_eq!(position.x, target.x);
+    assert_eq!(position.z, target.z);
+    assert_eq!(rotation, 0.0, "bystanders must keep the boat's heading");
+    assert_eq!(game_state.players.read().await[&id].rotation, 0.0);
+}
+
 // The regression this PR fixes: a river's bed sits ABOVE sea level (its
 // carved channel bottoms out at sea level and climbs into the hills), so
 // the old `terrain height < 0` water test rejected every inland river.

@@ -59,6 +59,13 @@ pub enum FishingOutcome {
 /// How far from the player a cast may land (XZ meters).
 pub const MAX_CAST_DISTANCE_METERS: f32 = 8.0;
 
+/// Within 45 degrees of the stern; `dx` uses the shortest world-wrapped delta.
+pub fn is_stern_cast(dx: f32, dz: f32, boat_rotation: f32) -> bool {
+    let distance = dx.hypot(dz);
+    let astern = -dx * boat_rotation.sin() - dz * boat_rotation.cos();
+    distance.is_finite() && distance > 0.0 && astern >= distance * std::f32::consts::FRAC_1_SQRT_2
+}
+
 /// Minimum surface−bed depth (meters) for a cast target — skips the paper-thin
 /// shoreline fringe. Shared so the client's cast-vs-walk click test cannot
 /// drift from the server's water test.
@@ -267,6 +274,27 @@ pub fn auto_stance(state: FishState, tension_pct: u32, trophy: bool) -> FishingA
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rowboat_casts_stay_in_the_stern_cone() {
+        for heading in [0.0, 0.7, -1.9, std::f32::consts::PI] {
+            for offset in [-44.0_f32, 0.0, 44.0] {
+                let angle = heading + std::f32::consts::PI + offset.to_radians();
+                assert!(is_stern_cast(angle.sin() * 4.0, angle.cos() * 4.0, heading));
+            }
+            for offset in [-135.0_f32, -90.0, -46.0, 46.0, 90.0, 135.0, 180.0] {
+                let angle = heading + std::f32::consts::PI + offset.to_radians();
+                assert!(!is_stern_cast(
+                    angle.sin() * 4.0,
+                    angle.cos() * 4.0,
+                    heading
+                ));
+            }
+        }
+        assert!(!is_stern_cast(0.0, 0.0, 0.0));
+        assert!(!is_stern_cast(f32::NAN, -4.0, 0.0));
+        assert!(!is_stern_cast(0.0, f32::NEG_INFINITY, 0.0));
+    }
 
     #[test]
     fn giving_line_always_beats_the_strongest_pull() {

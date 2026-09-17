@@ -359,6 +359,11 @@
     playerState !== 'attack' && playerState !== 'interact'
   )
   const rowing = $derived(boating && playerState === 'moving')
+  const fishingInteraction = $derived(
+    playerState === 'interact' &&
+      (interactionAnim === FishingAnimationName.CAST ||
+        interactionAnim === FishingAnimationName.IDLE)
+  )
 
   $effect(() => {
     if (!boatMount || !waterFoamMap || !waterSurfaceAt) return
@@ -1054,10 +1059,6 @@
       return
 
     updateHeldPropVisibility()
-    const fishingInteraction =
-      interactionAnim === FishingAnimationName.CAST ||
-      interactionAnim === FishingAnimationName.IDLE
-
     if (riding && ridingClip) {
       startAction(ridingClip, false)
       return
@@ -1483,9 +1484,6 @@
   function updateHeldPropVisibility() {
     const handsOnOars =
       boating && canRow && (rowing || (boatMount?.rowingWeight ?? 0) >= 0.001)
-    const fishingInteraction =
-      interactionAnim === FishingAnimationName.CAST ||
-      interactionAnim === FishingAnimationName.IDLE
     if (weaponObject) {
       weaponObject.visible =
         !riding &&
@@ -1636,7 +1634,7 @@
       riderGroup.position.copy(modelGroup.worldToLocal(seatPosition))
       riderGroup.position.y += boatMount.riderBaseOffsetY
       riderGroup.quaternion.copy(boatMount.root.quaternion)
-      if (canRow) {
+      if (canRow || fishingInteraction) {
         riderGroup.quaternion.multiply(boatMount.seat.quaternion)
       }
     } else if (horseMount && riderGroup && modelGroup) {

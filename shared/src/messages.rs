@@ -1292,8 +1292,8 @@ pub enum ServerMessage {
     },
     /// A player's cast landed: render their bobber at `position`. Broadcast
     /// nearby (the caster included) so fishing is visible to passers-by.
-    /// `rotation` is the caster facing the water — carried here because the
-    /// caster's own face-turn packet ticks out later and would lose the race.
+    /// `rotation` preserves the rowboat heading; on foot it faces the cast.
+    /// Carried here so bystanders need not wait for a face-turn packet.
     FishingCasted {
         player_id: PlayerId,
         position: Position,

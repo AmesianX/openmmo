@@ -119,7 +119,10 @@
     STALL_TRADE_APPROACH,
     TIP_HAT_APPROACH,
   } from '../data/approachRanges'
-  import { passability_get_floor_at } from '../wasm/onlinerpg_shared'
+  import {
+    fishing_is_stern_cast,
+    passability_get_floor_at,
+  } from '../wasm/onlinerpg_shared'
   import { get } from 'svelte/store'
   import { sprintRequested } from '../stores/movementSettings'
   import { createPlayerPhysics } from './player-control/player-physics'
@@ -2349,17 +2352,27 @@
       },
       castFishing: (intent) => {
         if (!currentPlayer || currentPlayer.health <= 0) return
-        // Stop and face the water before the cast — the server aborts a
-        // session on any movement, so a cast while pathing would cancel
-        // itself on the next waypoint send.
+        const boating = currentPlayer.mount === 'rowboat'
+        if (
+          boating &&
+          !fishing_is_stern_cast(
+            shortestWrappedDeltaX(currentPlayer.position.x, intent.position.x),
+            intent.position.z - currentPlayer.position.z,
+            playerRotation
+          )
+        ) {
+          addChatMessage({
+            text: 'Cast into the water behind the boat.',
+            sender: 'system',
+          })
+          return
+        }
+        // Movement would cancel the cast on the next waypoint send.
         combatController.cancelCombat()
         stopMovement()
-        faceTowards(intent.position.x, intent.position.z)
-        // Commit the facing to the rendered state too, or the model keeps its
-        // old rotation and casts over its shoulder.
+        if (!boating) faceTowards(intent.position.x, intent.position.z)
         setPlayerState({ ...playerState, rotation: playerRotation })
-        // Updates the server-stored rotation (late joiners); live bystanders
-        // get the facing from FishingCasted itself.
+        // Sync heading before the server validates the cast direction.
         sendPlayerMove(currentPlayer.position, playerRotation)
         networkManager.sendFishingCast(intent.position)
       },
