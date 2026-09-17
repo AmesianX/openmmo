@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import bpy
+from mathutils import Quaternion, Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from icon_render import add_light, principled, render_icon
@@ -286,6 +287,15 @@ def main():
         obj.select_set(True)
     bpy.context.view_layer.objects.active = hull
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    for oar, side in zip(oars, (-1, 1)):
+        angle = side * math.radians(6.0)
+        handle = Vector((-math.sin(angle), math.cos(angle), 0.0))
+        rotation = Quaternion(
+            (-math.cos(angle), -math.sin(angle), 0.0), math.radians(9.0),
+        )
+        oar.location += handle - rotation @ handle
+        oar.rotation_mode = 'QUATERNION'
+        oar.rotation_quaternion = rotation
     seat.select_set(True)
 
     source.mkdir(parents=True, exist_ok=True)

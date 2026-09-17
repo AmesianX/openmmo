@@ -1610,12 +1610,13 @@
     }
 
     if (boatMount && riderGroup && modelGroup) {
-      boatMount.update(deltaTime, playerState === 'moving' ? _speed : 0)
+      const canRow = playerState !== 'attack' && playerState !== 'interact'
+      boatMount.update(deltaTime, playerState === 'moving' ? _speed : 0, canRow)
       boatMount.seat.getWorldPosition(seatPosition)
       riderGroup.position.copy(modelGroup.worldToLocal(seatPosition))
       riderGroup.position.y += boatMount.riderBaseOffsetY
       riderGroup.quaternion.copy(boatMount.root.quaternion)
-      if (playerState !== 'attack' && playerState !== 'interact') {
+      if (canRow) {
         riderGroup.quaternion.multiply(boatMount.seat.quaternion)
       }
     } else if (horseMount && riderGroup && modelGroup) {

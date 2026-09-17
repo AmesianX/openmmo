@@ -128,7 +128,7 @@ describe('rowboat strokes', () => {
     expect(Math.max(...normalHeights)).toBeGreaterThan(0.95)
   })
 
-  it('eases back to the shipped pose without changing the cached model or other boats', () => {
+  it('holds the oars still and spread before stowing without changing other boats', () => {
     const boat = new BoatMount(gltf)
     const other = new BoatMount(gltf)
     const source = gltf.scene.getObjectByName('OarPort')!
@@ -140,6 +140,15 @@ describe('rowboat strokes', () => {
     expect(oar.position.distanceTo(before)).toBeLessThan(0.15)
     expect(boat.rowingWeight).toBeGreaterThan(0.8)
     advance(boat, 2, 0)
+    const heldPosition = oar.position.clone()
+    const heldRotation = oar.quaternion.clone()
+    advance(boat, 2, 0)
+    expect(boat.rowingWeight).toBeGreaterThan(0.99)
+    expect(Math.abs(boat.riderLean)).toBeLessThan(1e-6)
+    expect(oar.position.distanceTo(rest)).toBeGreaterThan(0.5)
+    expect(oar.position.distanceTo(heldPosition)).toBeLessThan(1e-6)
+    expect(oar.quaternion.angleTo(heldRotation)).toBeLessThan(1e-6)
+    advance(boat, 5, 0)
     expect(boat.rowingWeight).toBeLessThan(0.001)
     expect(oar.position.distanceTo(rest)).toBeLessThan(1e-6)
     expect(oar.quaternion.angleTo(source.quaternion)).toBeLessThan(1e-6)
@@ -148,6 +157,40 @@ describe('rowboat strokes', () => {
       true
     )
     expect(source.children).toHaveLength(0)
+  })
+
+  it('leaves the oars stowed until the boat first moves', () => {
+    const boat = new BoatMount(gltf)
+    const oar = boat.root.getObjectByName('OarPort')!
+    const rest = oar.position.clone()
+    advance(boat, 10, 0)
+    expect(boat.rowingWeight).toBe(0)
+    expect(oar.position.equals(rest)).toBe(true)
+  })
+
+  it('resumes from the spread pose and renews the hold after another stop', () => {
+    const boat = new BoatMount(gltf)
+    advance(boat, 2, 3)
+    advance(boat, 4, 0)
+    const oar = boat.root.getObjectByName('OarPort')!
+    const held = oar.position.clone()
+    boat.update(1 / 60, 3)
+    expect(boat.rowingWeight).toBeGreaterThan(0.99)
+    expect(oar.position.distanceTo(held)).toBeLessThan(0.05)
+    advance(boat, 0.5, 3)
+    expect(oar.position.distanceTo(held)).toBeGreaterThan(0.1)
+    advance(boat, 4, 0)
+    expect(boat.rowingWeight).toBeGreaterThan(0.99)
+    advance(boat, 2, 0)
+    expect(boat.rowingWeight).toBeLessThan(0.03)
+  })
+
+  it('cancels the hold when another action needs the hands', () => {
+    const boat = new BoatMount(gltf)
+    advance(boat, 2, 3)
+    boat.update(1 / 60, 0, false)
+    advance(boat, 2, 0)
+    expect(boat.rowingWeight).toBeLessThan(0.001)
   })
 
   it('keeps timing consistent across frame rates, reverse speed and paused frames', () => {
@@ -160,6 +203,14 @@ describe('rowboat strokes', () => {
     expect(slow.riderLean).toBeCloseTo(fast.riderLean, 8)
     const a = slow.root.getObjectByName('OarPort')!
     const b = fast.root.getObjectByName('OarPort')!
+    expect(a.position.distanceTo(b.position)).toBeLessThan(1e-8)
+    expect(a.quaternion.angleTo(b.quaternion)).toBeLessThan(1e-6)
+    advance(slow, 6, 0, 30)
+    advance(fast, 6, 0, 120)
+    const held = slow.rowingWeight
+    slow.update(0, 0)
+    expect(slow.rowingWeight).toBe(held)
+    expect(slow.rowingWeight).toBeCloseTo(fast.rowingWeight, 8)
     expect(a.position.distanceTo(b.position)).toBeLessThan(1e-8)
     expect(a.quaternion.angleTo(b.quaternion)).toBeLessThan(1e-6)
   })

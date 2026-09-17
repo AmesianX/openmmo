@@ -8,6 +8,7 @@ const BOB_SECONDS = 3.4
 const ROLL_RADIANS = 0.035
 const OAR_SWEEP = 0.55
 const OAR_STROKE_SECONDS = 1.9
+const OAR_HOLD_SECONDS = 5
 // build_rowboat.py bakes the shipped shaft angle into the mesh.
 const SHIPPED_ANGLE = Math.PI / 30
 const SHAFT_AXIS = new THREE.Vector3(1, 0, 0)
@@ -32,6 +33,8 @@ export class BoatMount {
   private readonly point = new THREE.Vector3()
   private elapsed = 0
   private stroke = 0
+  private strokeWeight = 0
+  private holdRemaining = 0
 
   constructor(gltf: GLTF) {
     this.root = gltf.scene.clone()
@@ -69,31 +72,44 @@ export class BoatMount {
     })
   }
 
-  update(dt: number, speed: number) {
+  update(dt: number, speed: number, canRow = true) {
     this.elapsed += dt
     const swell = (this.elapsed / BOB_SECONDS) * Math.PI * 2
     this.root.position.y = Math.sin(swell) * BOB_HEIGHT
     this.root.rotation.z = Math.cos(swell * 0.7) * ROLL_RADIANS
 
-    const moving = Math.abs(speed) > 0.05
+    const moving = canRow && Math.abs(speed) > 0.05
+    if (moving) this.holdRemaining = OAR_HOLD_SECONDS
+    else if (!canRow) this.holdRemaining = 0
+    const holdDt = moving ? dt : Math.min(dt, this.holdRemaining)
+    if (!moving) this.holdRemaining = Math.max(0, this.holdRemaining - dt)
+    this.rowingWeight = THREE.MathUtils.damp(this.rowingWeight, 1, 8, holdDt)
     this.rowingWeight = THREE.MathUtils.damp(
       this.rowingWeight,
+      0,
+      4,
+      dt - holdDt
+    )
+    this.strokeWeight = THREE.MathUtils.damp(
+      this.strokeWeight,
       moving ? 1 : 0,
       8,
       dt
     )
-    if (moving || this.rowingWeight > 0.001) {
+    if (moving) {
       const cadence = THREE.MathUtils.clamp(Math.abs(speed) / 3, 0.7, 1.3)
       this.stroke += (dt / OAR_STROKE_SECONDS) * Math.PI * 2 * cadence
     }
-    const sweep = Math.sin(this.stroke) * OAR_SWEEP
-    const dip = 0.2 + 0.22 * Math.max(0, Math.cos(this.stroke))
+    const sweep = Math.sin(this.stroke) * OAR_SWEEP * this.strokeWeight
+    const dip =
+      0.2 + 0.22 * Math.max(0, Math.cos(this.stroke)) * this.strokeWeight
     this.feather.setFromAxisAngle(
       SHAFT_AXIS,
       (Math.PI / 2) *
-        THREE.MathUtils.smoothstep(Math.cos(this.stroke), -0.15, 0.15)
+        THREE.MathUtils.smoothstep(Math.cos(this.stroke), -0.15, 0.15) *
+        this.strokeWeight
     )
-    this.riderLean = 0.12 - 0.2 * Math.sin(this.stroke)
+    this.riderLean = (0.12 - 0.2 * Math.sin(this.stroke)) * this.strokeWeight
     for (const oar of this.oars) {
       const { node, side } = oar
       this.rotation.setFromEuler(this.euler.set(0, side * sweep, -side * dip))
