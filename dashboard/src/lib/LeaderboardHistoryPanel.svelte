@@ -25,15 +25,25 @@
   let period = $derived(leaderboardPeriods.find((option) => option.hours === hours)!)
   let series = $derived(leaderboard?.series ?? [])
   let focused = $derived(series.some((entry) => entry.name === selectedCharacter) ? selectedCharacter : null)
+  let markerSeries = $derived(focused ? series.filter((entry) => entry.name === focused) : series)
+  let tooltipSeries = $derived(focused || series.length <= 10 ? markerSeries : [])
   let left = $derived(metric === 'gold' ? 64 : 42)
   const right = 12
   const top = 20
   const bottom = 38
   let plotWidth = $derived(Math.max(1, width - left - right))
   let plotHeight = $derived(height - top - bottom)
-  let values = $derived(series.flatMap((entry) => entry.samples.map((sample) => sample[metric])))
-  let minimum = $derived(values.length ? Math.min(...values) : 1)
-  let maximum = $derived(values.length ? Math.max(...values) : 1)
+  let { minimum, maximum } = $derived.by(() => {
+    let minimum = Infinity
+    let maximum = -Infinity
+    for (const entry of series) {
+      for (const sample of entry.samples) {
+        minimum = Math.min(minimum, sample[metric])
+        maximum = Math.max(maximum, sample[metric])
+      }
+    }
+    return minimum === Infinity ? { minimum: 1, maximum: 1 } : { minimum, maximum }
+  })
   let padding = $derived(metric === 'gold' ? Math.max(1, maximum * .05) : 1)
   let { floor, ceiling, ticks } = $derived(axisRange(minimum, maximum, padding, maximum - minimum + (metric === 'gold' ? padding * 2 : 0)))
   const x = (timestamp: number) => left + (timestamp - (leaderboard?.from ?? 0)) / (hours * 3600) * plotWidth
@@ -53,6 +63,7 @@
     <div>
       <h2 id={titleId}>{label} 변화</h2>
       {#if metric === 'land_plots'}<p>현재 상위 10명의 보유량 · 시간별 관측값</p>{/if}
+      {#if metric === 'weapon_enchant'}<p>현재 +7 이상 무기 보유 캐릭터 전체 · 시간별 관측값</p>{/if}
     </div>
     <PeriodFilter bind:hours options={leaderboardPeriods} label={`${label} 변화 조회 기간`} />
   </div>
@@ -61,7 +72,7 @@
   {#if leaderboard && series.length > 0}
     <div class="chart-canvas" style:min-height={width < 450 ? '280px' : '360px'} bind:this={container}
       bind:contentRect={null, (rect: DOMRectReadOnly | null | undefined) => { if (rect) { width = rect.width; height = rect.height } }}>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`최근 ${period.label} 상위 ${series.length}명 ${label} 변화. 캐릭터별 색상은 순위 표와 같습니다.`}
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`최근 ${period.label} ${metric === 'weapon_enchant' ? '+7 이상 무기 보유' : '상위'} ${series.length}명 ${label} 변화. 캐릭터별 색상은 표와 같습니다.`}
         onpointermove={selectAtPointer} onpointerleave={() => { selectedTime = null }}>
         {#each ticks as tick (tick)}
           <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} class="grid-line" />
@@ -81,9 +92,9 @@
         {/each}
         {#if selected !== null}
           <line x1={x(selected)} x2={x(selected)} y1={top} y2={height - bottom} stroke="#83b7ac" stroke-dasharray="4 4" />
-          {#each series as entry (entry.name)}
+          {#each markerSeries as entry (entry.name)}
             {@const sample = sampleAt(entry.samples, selected)}
-            {#if sample && (!focused || focused === entry.name)}
+            {#if sample}
               <circle cx={x(selected)} cy={y(sample[metric])} r="4" fill={colors[entry.name]} stroke="white" stroke-width="2" />
             {/if}
           {/each}
@@ -92,14 +103,15 @@
       {#if selected !== null}
         <div class="chart-tooltip" style:left={`${tooltipLeft}px`}>
           <span>{formatDateTime(selected)} KST</span>
-          {#each series.filter((entry) => !focused || focused === entry.name) as entry (entry.name)}
+          {#if tooltipSeries.length === 0}<span>표나 범례에서 캐릭터를 선택하면 상세 기록을 볼 수 있어요.</span>{/if}
+          {#each tooltipSeries as entry (entry.name)}
             {@const sample = sampleAt(entry.samples, selected)}
             <div class="tooltip-entry"><span><i style:background={colors[entry.name]}></i>{entry.name}</span><b>{#if !sample}기록 없음{:else if metric === 'gold'}<GoldAmount copper={sample[metric]} />{:else if metric === 'land_plots'}{sample[metric].toLocaleString('ko-KR')} 필지{:else}{enchantPrefix || 'Lv. '}{sample[metric]}{/if}</b></div>
           {/each}
         </div>
       {/if}
     </div>
-    <div class="character-legend" aria-label="캐릭터 선택">
+    <div class="character-legend" class:scrollable={metric === 'weapon_enchant'} aria-label="캐릭터 선택">
       {#each series as entry (entry.name)}
         <button class:muted={focused !== null && focused !== entry.name} class:active={focused === entry.name} aria-pressed={focused === entry.name}
           onclick={() => { selectedCharacter = focused === entry.name ? null : entry.name }}>
@@ -110,7 +122,7 @@
   {:else}
     <div class="chart-empty" role="status">
       <strong>{loading ? `${label} 기록을 불러오고 있어요` : error ? '기록에 연결할 수 없어요' : `아직 ${label} 기록이 없어요`}</strong>
-      <p>{loading ? '잠시만 기다려 주세요.' : error ? '연결이 복구되면 그래프가 자동으로 갱신됩니다.' : metric === 'land_plots' ? '영지를 보유한 캐릭터가 생기면 보유량 변화가 표시됩니다.' : `캐릭터가 생성되면 ${label} 변화가 기록됩니다.`}</p>
+      <p>{loading ? '잠시만 기다려 주세요.' : error ? '연결이 복구되면 그래프가 자동으로 갱신됩니다.' : metric === 'weapon_enchant' ? '+7 이상 무기를 보유하면 변화 기록이 표시됩니다.' : metric === 'land_plots' ? '영지를 보유한 캐릭터가 생기면 보유량 변화가 표시됩니다.' : `캐릭터가 생성되면 ${label} 변화가 기록됩니다.`}</p>
     </div>
   {/if}
 </section>
@@ -120,6 +132,7 @@
   .chart-canvas { flex: 1; }
   .chart-canvas > svg { position: absolute; inset: 0; height: 100%; }
   .character-legend { display: flex; flex-wrap: wrap; gap: 5px; margin: 10px 0; }
+  .character-legend.scrollable { max-height: 130px; overflow: auto; }
   .character-legend button { display: flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 6px; padding: 5px 7px; background: #f6f8f7; font-size: 10px; overflow-wrap: anywhere; text-align: left; }
   .character-legend .active { border-color: #bfd6c9; background: #edf5f0; }
   .character-legend .muted { opacity: .5; }

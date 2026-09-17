@@ -505,17 +505,17 @@ impl AuthService {
             LeaderboardMetric::Land => ("land_plots", "land_plots DESC, id ASC"),
         };
         let source = character_metric_source(metric);
-        let filter = if metric == "land_plots" {
-            "AND land_plots > 0"
-        } else {
-            ""
+        let (filter, limit) = match metric {
+            "weapon_enchant" => ("AND weapon_enchant >= 7", ""),
+            "land_plots" => ("AND land_plots > 0", "LIMIT 10"),
+            _ => ("", "LIMIT 10"),
         };
         let mut conn = self.open_connection()?;
         let transaction = conn.transaction()?;
         let mut statement = transaction.prepare(&format!(
             "SELECT character_name, {metric}, account_name, id FROM {source}
              WHERE account_name NOT GLOB ?1 {filter}
-             ORDER BY {order_by} LIMIT 10",
+             ORDER BY {order_by} {limit}",
         ))?;
         let rows = statement
             .query_map([format!("{NPC_ACCOUNT_PREFIX}*")], |row| {
@@ -1393,9 +1393,8 @@ mod tests {
         let before = unix_now();
         AuthService::ensure_weapon_enchant_history_schema(&conn).unwrap();
         let initial = auth.weapon_enchant_leaderboard(168, 3600).unwrap();
-        assert_eq!(initial.entries.len(), 2);
+        assert_eq!(initial.entries.len(), 1);
         assert_eq!(initial.entries[0].weapon_enchant, 7);
-        assert_eq!(initial.entries[1].weapon_enchant, 0);
         assert!((before..=unix_now()).contains(&initial.series[0].started_at));
         conn.execute(
             "UPDATE character_weapon_enchant_history SET timestamp = timestamp - 86400",
@@ -1451,15 +1450,21 @@ mod tests {
             9
         );
         save(&[inventory_item("worn_iron_sword", 3, None)]);
+        let below_threshold = auth.weapon_enchant_leaderboard(168, 3600).unwrap();
+        assert!(below_threshold.entries.is_empty());
+        assert!(below_threshold.series.is_empty());
         save(&[]);
         assert_eq!(
-            auth.weapon_enchant_leaderboard(168, 3600).unwrap().series[0]
-                .samples
-                .last()
-                .unwrap()
-                .weapon_enchant,
+            conn.query_row(
+                "SELECT weapon_enchant FROM character_weapon_enchant_history
+                 WHERE character_id = 1 ORDER BY timestamp DESC LIMIT 1",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
             0
         );
+        save(&items);
         let recorded_count = count();
         conn.execute(
             "UPDATE characters SET character_name = 'Renamed' WHERE id = 1",
@@ -1922,7 +1927,7 @@ mod tests {
         conn.execute_batch(
             "INSERT INTO accounts (player_name) VALUES ('player');
              INSERT INTO characters (id, account_name, character_name, weapon_enchant)
-             VALUES (1, 'player', 'Hero', 10), (2, 'player', 'NewHero', 0);
+             VALUES (1, 'player', 'Hero', 10), (2, 'player', 'NewHero', 7);
              DELETE FROM character_weapon_enchant_history WHERE character_id = 1;",
         )
         .unwrap();

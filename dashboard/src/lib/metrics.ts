@@ -87,10 +87,11 @@ function parseLeaderboard<M extends LeaderboardMetric>(value: unknown, hours: Le
   if (!Number.isSafeInteger(data.timestamp) || data.timestamp < 0 ||
     !Number.isSafeInteger(data.from) || data.timestamp - data.from !== hours * 3600 ||
     data.sample_interval_seconds !== interval ||
-    !Array.isArray(data.entries) || data.entries.length > 10 ||
+    !Array.isArray(data.entries) || (metric !== 'weapon_enchant' && data.entries.length > 10) ||
     !data.entries.every((entry, index) => entry && typeof entry.name === 'string' && entry.name.trim().length > 0 &&
       Number.isSafeInteger(entry[metric]) && entry[metric] >= minimum &&
       (metric !== 'land_plots' || entry[metric] > 0) &&
+      (metric !== 'weapon_enchant' || entry[metric] >= 7) &&
       Number.isSafeInteger(entry.account_first_rank) && entry.account_first_rank >= 1 && entry.account_first_rank <= index + 1 &&
       data.entries[entry.account_first_rank - 1]?.account_first_rank === entry.account_first_rank &&
       (index === 0 || entry[metric] <= data.entries[index - 1][metric])) ||

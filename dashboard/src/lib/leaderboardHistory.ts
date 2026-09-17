@@ -4,11 +4,12 @@ const palette = ['#167b6c', '#5276d1', '#c66a2b', '#9a59bb', '#c34f74', '#708c2f
 
 export function createCharacterColors() {
   let previous: Record<string, string> = Object.create(null)
+  let nextColor = 0
   return (names: string[]) => {
     const used = new Set(names.map((name) => previous[name]).filter(Boolean))
     const colors: Record<string, string> = Object.create(null)
     for (const name of names) {
-      colors[name] = previous[name] ?? palette.find((color) => !used.has(color))!
+      colors[name] = previous[name] ?? palette.find((color) => !used.has(color)) ?? `hsl(${(nextColor++ * 137.508) % 360} 55% 40%)`
       used.add(colors[name])
     }
     previous = colors

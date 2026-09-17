@@ -1009,7 +1009,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn weapon_enchant_leaderboard_ranks_inventory_maxima_and_returns_history() {
+    async fn weapon_enchant_leaderboard_returns_every_inventory_maximum_at_least_seven() {
         let path = crate::test_util::unique_temp_dir("weapon_enchant_leaderboard").join("game.db");
         let auth = Arc::new(AuthService::new(path.clone()).unwrap());
         let game = Arc::new(make_test_game_state("weapon_enchant_leaderboard"));
@@ -1061,7 +1061,7 @@ mod tests {
             cape_texture: None,
             locked: false,
         };
-        for id in 1..=14 {
+        for id in 1..=20 {
             let account = match id {
                 13 => "npc_test",
                 14 => "npcxplayer",
@@ -1097,16 +1097,18 @@ mod tests {
                 .map(|entry| entry.name.as_str())
                 .collect::<Vec<_>>(),
             [
-                "Hero14", "Hero12", "Hero10", "Hero11", "Hero9", "Hero8", "Hero7", "Hero6",
-                "Hero5", "Hero4"
+                "Hero20", "Hero19", "Hero18", "Hero17", "Hero16", "Hero15", "Hero14", "Hero12",
+                "Hero10", "Hero11", "Hero9", "Hero8", "Hero7"
             ]
         );
-        assert_eq!(leaderboard.entries[0].weapon_enchant, 14);
-        assert_eq!(leaderboard.entries[0].account_first_rank, 1);
-        assert!(leaderboard.entries[1..]
-            .iter()
-            .all(|entry| entry.account_first_rank == 2));
-        assert_eq!(leaderboard.series.len(), 10);
+        assert_eq!(leaderboard.entries[0].weapon_enchant, 20);
+        for entry in &leaderboard.entries {
+            assert_eq!(
+                entry.account_first_rank,
+                if entry.name == "Hero14" { 7 } else { 1 }
+            );
+        }
+        assert_eq!(leaderboard.series.len(), 13);
         for (entry, series) in leaderboard.entries.iter().zip(&leaderboard.series) {
             assert_eq!(entry.name, series.name);
             assert_eq!(
@@ -1120,12 +1122,13 @@ mod tests {
             [previous],
         )
         .unwrap();
-        auth.save_batch(&[], &[(1, vec![sword(15)])], &[], &[], None)
+        auth.save_batch(&[], &[(1, vec![sword(21)])], &[], &[], None)
             .unwrap();
         let updated: WeaponEnchantLeaderboard =
             client.get(&url).send().await.unwrap().json().await.unwrap();
         assert_eq!(updated.entries[0].name, "Hero1");
-        assert_eq!(updated.entries[0].weapon_enchant, 15);
+        assert_eq!(updated.entries[0].weapon_enchant, 21);
+        assert_eq!(updated.entries.len(), 14);
         assert_eq!(updated.entries[2].account_first_rank, 1);
         assert_eq!(
             updated.series[0].samples[0],
@@ -1136,6 +1139,15 @@ mod tests {
         );
         assert_eq!(updated.series[0].samples.last().unwrap().weapon_enchant, 1);
         assert!(!auth.record_hourly_character_metrics(unix_now()).unwrap());
+        auth.save_batch(&[], &[(1, vec![sword(6)])], &[], &[], None)
+            .unwrap();
+        let below_threshold: WeaponEnchantLeaderboard =
+            client.get(&url).send().await.unwrap().json().await.unwrap();
+        assert_eq!(below_threshold.entries, leaderboard.entries);
+        assert!(!below_threshold
+            .series
+            .iter()
+            .any(|series| series.name == "Hero1"));
         conn.execute("DROP TABLE character_weapon_enchant_history", [])
             .unwrap();
         let response = client.get(&url).send().await.unwrap();

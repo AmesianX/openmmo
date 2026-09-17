@@ -80,6 +80,18 @@ describe('character level history', () => {
     expect(new Set(Object.values(replacement)).size).toBe(10)
     expect(assign(['__proto__', 'constructor', 'toString'])).toHaveProperty('__proto__')
   })
+
+  it('assigns stable colors to every character beyond the first ten', () => {
+    const assign = createCharacterColors()
+    const names = Array.from({ length: 50 }, (_, index) => `Hero${index}`)
+    const colors = assign(names)
+    expect(Object.values(colors).every((color) => typeof color === 'string' && color.length > 0)).toBe(true)
+    expect(new Set(Object.values(colors)).size).toBe(names.length)
+    expect(assign([...names].reverse())).toEqual(colors)
+    const replacements = assign([...names.slice(5), 'NewHero', 'AnotherHero'])
+    for (const name of names.slice(5)) expect(replacements[name]).toBe(colors[name])
+    expect(new Set(Object.values(replacements)).size).toBe(names.length - 3)
+  })
 })
 
 describe('character gold history', () => {
@@ -123,8 +135,10 @@ describe('character gold history', () => {
 
 describe('character weapon enchant history', () => {
   const timestamp = 1800000000
-  const entries = [{ name: 'Hero', weapon_enchant: 7, account_first_rank: 1 }, { name: 'NewHero', weapon_enchant: 0, account_first_rank: 1 }]
-  const series = entries.map((entry) => ({ name: entry.name, started_at: timestamp, samples: [{ timestamp, weapon_enchant: entry.weapon_enchant }] }))
+  const entries = [{ name: 'Hero', weapon_enchant: 8, account_first_rank: 1 }, { name: 'NewHero', weapon_enchant: 7, account_first_rank: 1 }]
+  const series = entries.map((entry) => ({ name: entry.name, started_at: timestamp - 100, samples: [
+    { timestamp: timestamp - 100, weapon_enchant: 0 }, { timestamp, weapon_enchant: entry.weapon_enchant },
+  ] }))
   const data = { timestamp, from: timestamp - 168 * 3600, sample_interval_seconds: 3600, entries, series }
 
   it.each(leaderboardPeriods)('accepts $label weapon enchant histories including zero', ({ hours, interval }) => {
@@ -135,10 +149,23 @@ describe('character weapon enchant history', () => {
     expect(() => parseGoldLeaderboard(history, hours)).toThrow()
   })
 
+  it('accepts more than ten qualifying characters, including account references beyond tenth place', () => {
+    const entries = Array.from({ length: 15 }, (_, index) => ({ name: `Hero${index}`, weapon_enchant: index < 3 ? 8 : 7, account_first_rank: index < 11 ? 1 : 12 }))
+    const series = entries.map((entry) => ({ name: entry.name, started_at: timestamp, samples: [{ timestamp, weapon_enchant: entry.weapon_enchant }] }))
+    const history = { ...data, entries, series }
+    expect(parseWeaponEnchantLeaderboard(history, 168)).toEqual(history)
+  })
+
+  it('excludes current values below +7 even when earlier history was higher', () => {
+    for (const weapon_enchant of [0, 6]) {
+      expect(() => parseWeaponEnchantLeaderboard({ ...data, entries: [entries[0], { ...entries[1], weapon_enchant }] }, 168)).toThrow()
+    }
+  })
+
   it('rejects invalid enchant values, mismatched histories and ranking order', () => {
     for (const weapon_enchant of [-1, 0.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
       expect(() => parseWeaponEnchantLeaderboard({ ...data, entries: [{ ...entries[0], weapon_enchant }, entries[1]] }, 168)).toThrow()
-      expect(() => parseWeaponEnchantLeaderboard({ ...data, series: [{ ...series[0], samples: [{ timestamp, weapon_enchant }] }, series[1]] }, 168)).toThrow()
+      expect(() => parseWeaponEnchantLeaderboard({ ...data, series: [{ ...series[0], samples: [{ timestamp: timestamp - 100, weapon_enchant }] }, series[1]] }, 168)).toThrow()
     }
     expect(() => parseWeaponEnchantLeaderboard({ ...data, entries: [...entries].reverse() }, 168)).toThrow()
     expect(() => parseWeaponEnchantLeaderboard({ ...data, series: [...series].reverse() }, 168)).toThrow()
