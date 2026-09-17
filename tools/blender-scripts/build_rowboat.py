@@ -1,10 +1,6 @@
-"""Build the rowboat mount and its inventory icon in Blender.
+"""Build the rowboat and icon: blender -b -P tools/blender-scripts/build_rowboat.py.
 
-    /Applications/Blender.app/Contents/MacOS/Blender -b \
-        -P tools/blender-scripts/build_rowboat.py
-
-The origin sits at the waterline, not the keel, so the client can place the
-boat straight onto the sampled water surface. Bow points -Y (Blender forward).
+Origin is the waterline; bow points -Y (glTF +Z).
 """
 import math
 import sys
@@ -24,8 +20,7 @@ DRAFT = 0.15
 PLANK = 0.05
 STATIONS = 37
 RIB_POINTS = 19
-# Floorboards, just clear of the waterline. Without them the game's water
-# plane cuts through the hull and pools inside the boat.
+# Hide the water plane inside the hull.
 SOLE_Z = 0.06
 
 
@@ -35,8 +30,7 @@ def smoothstep(t):
 
 
 def half_beam(t):
-    """Stem, widest amidships, flat transom. Full in the ends or it reads
-    as a canoe rather than a dinghy."""
+    """Narrow stem, widest amidships, flat transom."""
     if t < 0.5:
         return HALF_BEAM * (0.10 + 0.90 * smoothstep(t / 0.5) ** 0.6)
     return HALF_BEAM * (1.0 - 0.38 * smoothstep((t - 0.5) / 0.5) ** 1.4)
@@ -51,8 +45,7 @@ def rim_z(t):
 
 
 def interior_half_width(t, z):
-    """Half the inner hull width at height `z`, or None if the sole would
-    sit below the keel here (the rockered ends)."""
+    """Inner half-width at `z`, or None outside the hull."""
     hb = max(half_beam(t) - PLANK, 0.004)
     bottom = keel_z(t) + PLANK
     top = rim_z(t)
@@ -81,7 +74,16 @@ def build_hull(material):
     verts = []
     for inset in (0.0, PLANK):
         for i in range(STATIONS):
-            verts.extend(rib(i / (STATIONS - 1), inset))
+            t = i / (STATIONS - 1)
+            if inset:
+                if i == 0:
+                    t += PLANK / LENGTH
+                elif i == STATIONS - 1:
+                    t -= PLANK / LENGTH
+            points = rib(t, inset)
+            if i == 0:
+                points = [(0.0, y, z) for _, y, z in points]
+            verts.extend(points)
     shell = STATIONS * RIB_POINTS
 
     def outer(i, j):
@@ -97,13 +99,20 @@ def build_hull(material):
             faces.append((inner(i, j), inner(i, j + 1), inner(i + 1, j + 1), inner(i + 1, j)))
         for j in (0, RIB_POINTS - 1):
             faces.append((outer(i, j), outer(i + 1, j), inner(i + 1, j), inner(i, j)))
-    for i in (0, STATIONS - 1):
-        for j in range(RIB_POINTS - 1):
-            faces.append((outer(i, j), inner(i, j), inner(i, j + 1), outer(i, j + 1)))
+    stern = STATIONS - 1
+    transom_faces = len(faces)
+    faces.append(tuple(outer(stern, j) for j in reversed(range(RIB_POINTS))))
+    faces.append(tuple(inner(stern, j) for j in range(RIB_POINTS)))
+    faces.append((
+        outer(stern, 0), inner(stern, 0),
+        inner(stern, RIB_POINTS - 1), outer(stern, RIB_POINTS - 1),
+    ))
 
     mesh = bpy.data.meshes.new('Hull')
     mesh.from_pydata(verts, [], faces)
     mesh.materials.append(material)
+    for face in mesh.polygons:
+        face.use_smooth = face.index < transom_faces
     obj = bpy.data.objects.new('Hull', mesh)
     bpy.context.collection.objects.link(obj)
 
@@ -111,9 +120,9 @@ def build_hull(material):
     obj.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.remove_doubles(threshold=1e-6)
     bpy.ops.mesh.normals_make_consistent(inside=False)
     bpy.ops.object.mode_set(mode='OBJECT')
-    bpy.ops.object.shade_smooth()
     obj.select_set(False)
     return obj
 
@@ -168,8 +177,7 @@ def add_thwart(name, t, material):
 
 
 def add_oar(name, side, material):
-    """Shipped along the gunwale — the client rows it from its own node.
-    Built along +Z (the cylinder's own axis), then laid down onto -Y."""
+    """Build along +Z, then lay along -Y for client-side rowing."""
     oar_len = 2.2
     bpy.ops.mesh.primitive_cylinder_add(radius=0.026, depth=oar_len, location=(0, 0, 0))
     shaft = bpy.context.object
