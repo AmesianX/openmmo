@@ -1615,6 +1615,9 @@
       riderGroup.position.copy(modelGroup.worldToLocal(seatPosition))
       riderGroup.position.y += boatMount.riderBaseOffsetY
       riderGroup.quaternion.copy(boatMount.root.quaternion)
+      if (playerState !== 'attack' && playerState !== 'interact') {
+        riderGroup.quaternion.multiply(boatMount.seat.quaternion)
+      }
     } else if (horseMount && riderGroup && modelGroup) {
       horseMount.update(
         deltaTime,

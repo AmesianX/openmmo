@@ -37,8 +37,8 @@ export class BoatMount {
     this.root = gltf.scene.clone()
     this.seat = this.root.getObjectByName('RideSeat') ?? this.root
     for (const [name, side] of [
-      ['OarStarboard', 1],
       ['OarPort', -1],
+      ['OarStarboard', 1],
     ] as const) {
       const node = this.root.getObjectByName(name)
       if (!node) continue
@@ -93,14 +93,14 @@ export class BoatMount {
       (Math.PI / 2) *
         THREE.MathUtils.smoothstep(Math.cos(this.stroke), -0.15, 0.15)
     )
-    this.riderLean = 0.12 + 0.2 * Math.sin(this.stroke)
+    this.riderLean = 0.12 - 0.2 * Math.sin(this.stroke)
     for (const oar of this.oars) {
       const { node, side } = oar
       this.rotation.setFromEuler(this.euler.set(0, side * sweep, -side * dip))
       this.point.set(side * 0.55, 0, 0).applyQuaternion(this.rotation)
       this.point.x += side * 0.57
       this.point.y += 0.44
-      this.point.z -= 0.55
+      this.point.z -= 0.2
       node.position.lerpVectors(oar.restPosition, this.point, this.rowingWeight)
       this.rotation.multiply(this.feather).multiply(oar.alignment)
       node.quaternion.slerpQuaternions(

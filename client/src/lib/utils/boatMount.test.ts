@@ -25,6 +25,60 @@ function advance(boat: BoatMount, seconds: number, speed: number, fps = 60) {
 }
 
 describe('rowboat strokes', () => {
+  it('seats the rower over the middle thwart facing the stern', () => {
+    const boat = new BoatMount(gltf)
+    const middle = boat.root.getObjectByName('ThwartMid')!
+    expect(boat.seat.position.x).toBeCloseTo(middle.position.x)
+    expect(boat.seat.position.z).toBeCloseTo(middle.position.z)
+    expect(boat.seat.position.y - middle.position.y).toBeCloseTo(0.02)
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(
+      boat.seat.quaternion
+    )
+    expect(forward.distanceTo(new THREE.Vector3(0, 0, -1))).toBeLessThan(1e-6)
+    expect(boat.grips.map((grip) => grip.parent?.name)).toEqual([
+      'OarPort',
+      'OarStarboard',
+    ])
+  })
+
+  it('pulls the handles toward the rower while submerged blades push water astern', () => {
+    const boat = new BoatMount(gltf)
+    advance(boat, 3, 3)
+    const oar = boat.root.getObjectByName('OarPort')!
+    const blade = () =>
+      boat.root.worldToLocal(
+        oar.localToWorld(
+          new THREE.Vector3(
+            -Math.sin(Math.PI / 30),
+            0,
+            Math.cos(Math.PI / 30)
+          ).multiplyScalar(0.924)
+        )
+      )
+    const grip = () =>
+      boat.root.worldToLocal(
+        boat.grips[0].getWorldPosition(new THREE.Vector3())
+      )
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(
+      boat.seat.quaternion
+    )
+    let pullingFrames = 0
+    for (let i = 0; i < 114; i++) {
+      const previousBlade = blade()
+      const previousGrip = grip()
+      const previousLean = boat.riderLean
+      boat.update(1 / 60, 3)
+      const currentBlade = blade()
+      if (previousBlade.y < -0.01 && currentBlade.y < -0.01) {
+        expect(currentBlade.z).toBeLessThan(previousBlade.z)
+        expect(grip().sub(previousGrip).dot(forward)).toBeLessThan(0)
+        expect(boat.riderLean).toBeLessThan(previousLean)
+        pullingFrames++
+      }
+    }
+    expect(pullingFrames).toBeGreaterThan(20)
+  })
+
   it('pivots both real oars at the gunwales and lifts the blades during recovery', () => {
     const boat = new BoatMount(gltf)
     advance(boat, 3, 3)
@@ -50,7 +104,7 @@ describe('rowboat strokes', () => {
           oar.localToWorld(axis.clone().multiplyScalar(-0.55))
         )
         expect(
-          pivot.distanceTo(new THREE.Vector3(side * 0.57, 0.44, -0.55))
+          pivot.distanceTo(new THREE.Vector3(side * 0.57, 0.44, -0.2))
         ).toBeLessThan(1e-6)
         const blade = boat.root.worldToLocal(
           oar.localToWorld(axis.multiplyScalar(0.924))

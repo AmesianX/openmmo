@@ -47,7 +47,8 @@
   크기 1.37×3.40m(폭×길이), 용골 -0.15m ~ 뱃전 0.53m.
   **원점은 용골이 아니라 흘수선**(draft 0.15m)이라 샘플링한 수면 높이에 그대로 올리면 된다.
   뱃머리는 Blender -Y = **glTF +Z**. 탑승점은 말과 같은 이름의 빈 오브젝트 `RideSeat`
-  (고물 가로보 위, glTF 기준 `[0, 0.196, -0.748]`). 아이콘 `client/public/items/objects/rowboat.png`는
+  (가운데 가로보 위, glTF 기준 `[0, 0.17, 0]`, 선미인 -Z를 향하도록 180° 회전, 2026-09-17).
+  아이콘 `client/public/items/objects/rowboat.png`는
   같은 스크립트가 `icon_render` 공용 레시피로 렌더한다.
   말 출처는 [animals.md](animals.md), 게임 규칙은 [MOUNTS.md](../MOUNTS.md).
 - `assets/rowboat/wood_albedo.png` — 나룻배용 따뜻한 갈색 오크 판재 텍스처 원본, 1254² PNG.

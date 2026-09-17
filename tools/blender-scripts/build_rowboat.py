@@ -276,16 +276,17 @@ def main():
 
     seat = bpy.data.objects.new('RideSeat', None)
     seat.empty_display_size = 0.15
-    seat.location = (0.0, LENGTH * (0.72 - 0.5), keel_z(0.72) + 0.32)
+    seat.location = (0.0, 0.0, keel_z(0.5) + 0.32)
+    seat.rotation_euler.z = math.pi
     bpy.context.collection.objects.link(seat)
 
     exported = parts + oars
     bpy.ops.object.select_all(action='DESELECT')
     for obj in exported:
         obj.select_set(True)
-    seat.select_set(True)
     bpy.context.view_layer.objects.active = hull
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    seat.select_set(True)
 
     source.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(source / 'rowboat.blend'))
