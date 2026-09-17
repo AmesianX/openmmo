@@ -1599,7 +1599,7 @@ impl super::GameState {
                 position.x, position.z
             );
         }
-        self.movement_intents.write().await.remove(player_id);
+        self.clear_player_movement(player_id, "death").await;
         self.cancel_concentration_if_active(player_id).await;
         self.cancel_food_regeneration(player_id).await;
         self.clear_debuffs(player_id).await;

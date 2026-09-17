@@ -64,6 +64,26 @@ struct Correction {
     floor: i8,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+pub(super) struct RecoveryRequest {
+    pub id: u64,
+    pub request_id: u32,
+    received_ms: u64,
+    received_pose: Pose,
+    goal: Position,
+    corrections_issued_before_request: u64,
+    #[serde(skip)]
+    log_detail: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RecoveryEvent {
+    at_ms: u64,
+    request: RecoveryRequest,
+    status: &'static str,
+    detail: serde_json::Value,
+}
+
 #[derive(Default)]
 struct History {
     requests: VecDeque<Request>,
@@ -75,6 +95,11 @@ struct History {
     last_correction: Option<Correction>,
     last_detail: Option<Instant>,
     last_overflow_detail: Option<Instant>,
+    recovery_requests: u64,
+    recovery_traces_suppressed: u64,
+    recovery_events: VecDeque<RecoveryEvent>,
+    recovery_events_evicted: u64,
+    last_recovery_detail: Option<Instant>,
 }
 
 impl History {
@@ -91,6 +116,10 @@ impl History {
             corrections: self.corrections,
             overflows: self.overflows,
             last_correction: self.last_correction,
+            recovery_requests: self.recovery_requests,
+            recovery_traces_suppressed: self.recovery_traces_suppressed,
+            recovery_events: self.recovery_events.iter().cloned().collect(),
+            recovery_events_evicted: self.recovery_events_evicted,
         }
     }
 }
@@ -104,6 +133,10 @@ pub(super) struct Snapshot {
     corrections: u64,
     overflows: u64,
     last_correction: Option<Correction>,
+    recovery_requests: u64,
+    recovery_traces_suppressed: u64,
+    recovery_events: Vec<RecoveryEvent>,
+    recovery_events_evicted: u64,
 }
 
 #[derive(Default)]
@@ -159,6 +192,75 @@ impl MovementAudit {
         });
     }
 
+    pub fn recovery_request(
+        &self,
+        player: &Player,
+        request_id: u32,
+        goal: Position,
+        now: Instant,
+    ) -> RecoveryRequest {
+        let mut request = RecoveryRequest {
+            id: next_request_id(),
+            request_id,
+            received_ms: super::GameState::now_ms(),
+            received_pose: Pose::from(player),
+            goal,
+            corrections_issued_before_request: 0,
+            log_detail: false,
+        };
+        {
+            let mut histories = self.histories.lock().expect("movement audit");
+            if let Some(history) = histories.get_mut(&player.id) {
+                history.recovery_requests += 1;
+                request.corrections_issued_before_request = history.corrections;
+                request.log_detail = History::due(history.last_recovery_detail, now);
+                if request.log_detail {
+                    history.last_recovery_detail = Some(now);
+                } else {
+                    history.recovery_traces_suppressed += 1;
+                }
+            }
+        }
+        self.recovery_event(player.id, request, "received", serde_json::json!({}));
+        request
+    }
+
+    pub fn recovery_event(
+        &self,
+        id: PlayerId,
+        request: RecoveryRequest,
+        status: &'static str,
+        detail: serde_json::Value,
+    ) {
+        let event = RecoveryEvent {
+            at_ms: super::GameState::now_ms(),
+            request,
+            status,
+            detail,
+        };
+        let logged_event = request.log_detail.then(|| event.clone());
+        let mut histories = self.histories.lock().expect("movement audit");
+        let Some(history) = histories.get_mut(&id) else {
+            return;
+        };
+        if history.recovery_events.len() == HISTORY_LIMIT {
+            history.recovery_events.pop_front();
+            history.recovery_events_evicted += 1;
+        }
+        history.recovery_events.push_back(event);
+        let recovery_requests = history.recovery_requests;
+        let recovery_traces_suppressed = history.recovery_traces_suppressed;
+        drop(histories);
+        if let Some(event) = logged_event {
+            let detail = serde_json::json!({
+                "schema": 1, "player_id": id, "event": event,
+                "recovery_requests": recovery_requests,
+                "recovery_traces_suppressed": recovery_traces_suppressed,
+            });
+            tracing::info!(target: "movement_audit", detail = %detail, "Mount recovery trace");
+        }
+    }
+
     pub fn detail_due(&self, id: PlayerId, now: Instant) -> bool {
         self.histories
             .lock()
@@ -171,8 +273,7 @@ impl MovementAudit {
         self.due_snapshot(id, now, |h| &mut h.last_detail)
     }
 
-    /// Count a dropped waypoint; a snapshot comes back once per
-    /// `DETAIL_INTERVAL`, on a budget separate from collision traces.
+    /// Overflow and collision traces have separate budgets.
     pub fn overflow(&self, id: PlayerId, now: Instant) -> Option<Snapshot> {
         self.histories
             .lock()

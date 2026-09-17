@@ -345,3 +345,72 @@ async fn movement_audit_traces_waypoint_overflow_once_per_interval() {
     assert_eq!(tick["hunger_mult"], 1.0);
     assert_eq!(tick["sprint_allowed"], true);
 }
+
+#[tokio::test]
+async fn recovery_audit_throttles_traces_but_keeps_receipt_counts_and_rejections() {
+    let (game, id) = orc_player("recovery_trace").await;
+    let player = game.players.read().await[&id].clone();
+    game.movement_audit
+        .correction(id, player.position, player.floor_level);
+    let subscriber = trace_capture();
+    let buffer = subscriber.0.clone();
+    async {
+        for _ in 0..40 {
+            game.recover_horse(&id, 7, player.position).await;
+        }
+    }
+    .with_subscriber(subscriber.clone())
+    .await;
+    let traces: Vec<_> = buffer
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|trace| trace["player_id"] == serde_json::json!(id))
+        .cloned()
+        .collect();
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0]["event"]["status"], "received");
+    assert_eq!(traces[1]["event"]["status"], "rejected");
+    assert_eq!(traces[1]["event"]["detail"]["reason"], "not_mounted");
+    assert_eq!(traces[0]["event"]["request"], traces[1]["event"]["request"]);
+    assert_eq!(traces[0]["event"]["request"]["request_id"], 7);
+    assert_eq!(
+        traces[0]["event"]["request"]["corrections_issued_before_request"],
+        1
+    );
+
+    let now = Instant::now();
+    let history = serde_json::to_value(game.movement_audit.snapshot(id, now).unwrap()).unwrap();
+    assert_eq!(history["recovery_requests"], 40);
+    assert_eq!(history["recovery_traces_suppressed"], 39);
+    assert_eq!(history["recovery_events_evicted"], 64);
+    let events = history["recovery_events"].as_array().unwrap();
+    assert_eq!(events.len(), 16);
+    assert_eq!(events.last().unwrap()["status"], "rejected");
+    assert_ne!(events[0]["request"]["id"], events[2]["request"]["id"]);
+
+    tracing::subscriber::with_default(subscriber, || {
+        let later = game.movement_audit.recovery_request(
+            &player,
+            8,
+            player.position,
+            now + std::time::Duration::from_secs(30),
+        );
+        game.movement_audit.recovery_event(
+            id,
+            later,
+            "rejected",
+            serde_json::json!({"reason": "not_mounted"}),
+        );
+    });
+    let traces: Vec<_> = buffer
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|trace| trace["player_id"] == serde_json::json!(id))
+        .cloned()
+        .collect();
+    assert_eq!(traces.len(), 4);
+    assert_eq!(traces[2]["recovery_requests"], 41);
+    assert_eq!(traces[2]["recovery_traces_suppressed"], 39);
+}

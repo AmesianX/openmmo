@@ -526,6 +526,28 @@ async fn horse_recovery_backs_up_without_turning_and_repaths_for_four_boundary_p
     }
     for (id, name, start, rotation, goal, mut rx) in actors {
         let p = game.players.read().await[&id].clone();
+        let history = serde_json::to_value(
+            game.movement_audit
+                .snapshot(id, Instant::now() + std::time::Duration::from_secs(31))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(history["recovery_requests"], 1, "{name}");
+        let events = history["recovery_events"].as_array().unwrap();
+        assert_eq!(
+            events.len(),
+            3,
+            "{name}: only receipt, acceptance and completion"
+        );
+        assert_eq!(events[0]["status"], "received");
+        assert_eq!(events[1]["status"], "accepted");
+        assert_eq!(events[2]["status"], "completed");
+        assert_eq!(events[0]["request"]["request_id"], 7);
+        assert_eq!(events[0]["request"], events[2]["request"]);
+        assert_eq!(
+            events[2]["detail"]["pose"]["position"],
+            serde_json::json!(p.position)
+        );
         let distance = start.dist_xz_sq(&p.position).sqrt();
         assert!(p.mounted, "{name}");
         assert_eq!(p.rotation, rotation, "{name}");
@@ -621,6 +643,29 @@ async fn horse_recovery_refuses_a_blocked_rear_and_stops_for_new_obstacles_or_ca
         game.tick_player_movement(1.0).await;
         assert_eq!(game.players.read().await[&id].position, start, "{mode}");
         assert!(!game.movement_intents.read().await.contains_key(&id));
+        let history =
+            serde_json::to_value(game.movement_audit.snapshot(id, Instant::now()).unwrap())
+                .unwrap();
+        let event = history["recovery_events"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap();
+        let (status, reason) = match mode {
+            "blocked" => ("rejected", "no_recovery_path"),
+            "new_obstacle" => ("failed", "blocked"),
+            "cancel" => ("cancelled", "stop"),
+            "dismount" => ("failed", "not_mounted"),
+            _ => unreachable!(),
+        };
+        assert_eq!(event["status"], status, "{mode}");
+        assert_eq!(event["detail"]["reason"], reason, "{mode}");
+        if mode == "new_obstacle" {
+            assert!(event["detail"]["block_key"]
+                .as_str()
+                .unwrap()
+                .contains("rear"));
+        }
         if mode != "cancel" {
             assert!(
                 drain(&mut rx).iter().any(|m| matches!(
@@ -632,6 +677,51 @@ async fn horse_recovery_refuses_a_blocked_rear_and_stops_for_new_obstacles_or_ca
                     }
                 )),
                 "{mode}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn horse_recovery_audit_identifies_commands_that_replace_recovery() {
+    for reason in ["new_move", "turn", "new_recovery"] {
+        let game = make_game_state_with(reason, FlatLand, SeaOnlyWater);
+        let id = rider(&game).await;
+        game.use_item(&id, 1).await;
+        let goal = Position {
+            x: 4.0,
+            y: 5.0,
+            z: 0.0,
+        };
+        game.recover_horse(&id, 7, goal).await;
+        match reason {
+            "new_move" => {
+                game.update_player_position(&id, move_cmd(goal, true), false)
+                    .await
+            }
+            "turn" => game.turn_horse(&id, 1.0, false).await,
+            "new_recovery" => game.recover_horse(&id, 7, goal).await,
+            _ => unreachable!(),
+        }
+        let history =
+            serde_json::to_value(game.movement_audit.snapshot(id, Instant::now()).unwrap())
+                .unwrap();
+        let events = history["recovery_events"].as_array().unwrap();
+        assert_eq!(events[1]["status"], "accepted", "{reason}");
+        let cancelled: Vec<_> = events
+            .iter()
+            .filter(|e| e["status"] == "cancelled")
+            .collect();
+        assert_eq!(cancelled.len(), 1, "{reason}");
+        assert_eq!(cancelled[0]["detail"]["reason"], reason);
+        assert_eq!(cancelled[0]["request"], events[0]["request"]);
+        if reason == "new_recovery" {
+            let latest = events.last().unwrap();
+            assert_eq!(latest["status"], "accepted");
+            assert_ne!(latest["request"]["id"], cancelled[0]["request"]["id"]);
+            assert_eq!(
+                latest["request"]["request_id"],
+                cancelled[0]["request"]["request_id"]
             );
         }
     }

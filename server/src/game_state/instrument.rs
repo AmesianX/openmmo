@@ -45,7 +45,7 @@ impl super::GameState {
         self.cancel_fishing_if_active(player_id).await;
         self.cancel_grill_if_active(player_id).await;
         // A queued walk would cancel the session on the next movement tick.
-        self.movement_intents.write().await.remove(player_id);
+        self.clear_player_movement(player_id, "instrument").await;
         // Release the guard before calling out: `set_player_interaction` takes
         // the same lock and tokio's RwLock is not reentrant.
         {

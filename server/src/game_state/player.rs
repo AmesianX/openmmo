@@ -164,7 +164,7 @@ impl LayoutGrind {
 pub(super) struct MoveIntent {
     request: Option<movement_audit::Request>,
     turn_only: bool,
-    recovery: Option<u32>,
+    recovery: Option<movement_audit::RecoveryRequest>,
     pub(super) target: Position,
     rotation: f32,
     pub(super) floor_level: i8,
@@ -843,7 +843,7 @@ impl super::GameState {
     }
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
-        self.movement_intents.write().await.remove(player_id);
+        self.clear_player_movement(player_id, "disconnect").await;
         self.player_movement_versions
             .write()
             .await
@@ -1070,6 +1070,7 @@ impl super::GameState {
                 .is_some_and(|intent| intent.recovery.is_some());
         let mut dropped = None;
         if replaced {
+            self.record_recovery_cancel(*player_id, queue, "new_move");
             queue.clear();
         } else if queue.len() >= MAX_QUEUED_WAYPOINTS {
             // The tick collision-checks the new head after overflow.
@@ -1143,16 +1144,48 @@ impl super::GameState {
         }
     }
 
+    fn record_recovery_cancel(&self, id: PlayerId, queue: &MoveQueue, reason: &'static str) {
+        if let Some(request) = queue.front().and_then(|intent| intent.recovery) {
+            self.movement_audit.recovery_event(
+                id,
+                request,
+                "cancelled",
+                serde_json::json!({"reason": reason}),
+            );
+        }
+    }
+
+    pub(super) async fn clear_player_movement(&self, id: &PlayerId, reason: &'static str) {
+        let mut queues = self.movement_intents.write().await;
+        if let Some(queue) = queues.remove(id) {
+            self.record_recovery_cancel(*id, &queue, reason);
+        }
+    }
+
     pub async fn recover_horse(&self, player_id: &PlayerId, request_id: u32, goal: Position) {
         let Some(player) = self.players.read().await.get(player_id).cloned() else {
             return;
         };
-        let eligible = player.mounted
-            && player.health > 0
-            && player.floor_level == 0
-            && !Self::in_combat(&player)
-            && goal.is_finite();
-        let mut target = if eligible {
+        let request = self.movement_audit.recovery_request(
+            &player,
+            request_id,
+            goal,
+            std::time::Instant::now(),
+        );
+        let mut rejection = if !player.mounted {
+            Some("not_mounted")
+        } else if player.health == 0 {
+            Some("dead")
+        } else if player.floor_level != 0 {
+            Some("wrong_floor")
+        } else if Self::in_combat(&player) {
+            Some("in_combat")
+        } else if !goal.is_finite() {
+            Some("invalid_goal")
+        } else {
+            None
+        };
+        let mut target = if rejection.is_none() {
             let hunger = self.hunger_movement_profiles_for(&[*player_id]).await;
             let speed = PLAYER_MOVE_SPEED
                 * onlinerpg_shared::world::HORSE_MOVE_MULT
@@ -1167,6 +1200,9 @@ impl super::GameState {
         } else {
             None
         };
+        if target.is_none() && rejection.is_none() {
+            rejection = Some("no_recovery_path");
+        }
         if let Some(end) = target.as_mut() {
             let distance = player.position.dist_xz_sq(end).sqrt();
             let count = (distance / 0.1).ceil() as usize;
@@ -1184,8 +1220,13 @@ impl super::GameState {
                     z: player.position.z + (end.z - player.position.z) * t,
                 };
                 probe.position.y = self.surface_ground_y(0, &probe.position, previous_y).await;
-                if (probe.position.y - previous_y).abs() > 0.15 || !self.can_ride_here(&probe).await
-                {
+                if (probe.position.y - previous_y).abs() > 0.15 {
+                    rejection = Some("height_step");
+                    target = None;
+                    break;
+                }
+                if !self.can_ride_here(&probe).await {
+                    rejection = Some("unrideable_terrain");
                     target = None;
                     break;
                 }
@@ -1195,6 +1236,12 @@ impl super::GameState {
         }
         let mut queues = self.movement_intents.write().await;
         let Some(current) = self.players.read().await.get(player_id).cloned() else {
+            self.movement_audit.recovery_event(
+                *player_id,
+                request,
+                "rejected",
+                serde_json::json!({"reason": "player_missing"}),
+            );
             return;
         };
         if !current.mounted
@@ -1205,14 +1252,17 @@ impl super::GameState {
             || current.position != player.position
             || current.rotation != player.rotation
         {
+            rejection.get_or_insert("player_state_changed");
             target = None;
         }
-        queues.remove(player_id);
+        if let Some(queue) = queues.remove(player_id) {
+            self.record_recovery_cancel(*player_id, &queue, "new_recovery");
+        }
         if let Some(target) = target {
             queues.entry(*player_id).or_default().push_back(MoveIntent {
                 request: None,
                 turn_only: false,
-                recovery: Some(request_id),
+                recovery: Some(request),
                 target,
                 rotation: player.rotation,
                 floor_level: player.floor_level,
@@ -1220,6 +1270,20 @@ impl super::GameState {
                 sprinting: false,
             });
         }
+        self.movement_audit.recovery_event(
+            *player_id,
+            request,
+            if target.is_some() {
+                "accepted"
+            } else {
+                "rejected"
+            },
+            serde_json::json!({
+                "reason": rejection, "target": target, "pose": Pose::from(&current),
+                "health": current.health, "in_combat": Self::in_combat(&current),
+                "object_type": current.object_type,
+            }),
+        );
         self.send_direct_message(
             player_id,
             Self::mount_recovery_update(&current, request_id, target.is_none(), target.is_some()),
@@ -1236,7 +1300,9 @@ impl super::GameState {
             .get(player_id)
             .is_some_and(|p| p.mounted)
         {
-            queues.remove(player_id);
+            if let Some(queue) = queues.remove(player_id) {
+                self.record_recovery_cancel(*player_id, &queue, "stop");
+            }
         }
     }
 
@@ -1253,6 +1319,7 @@ impl super::GameState {
             return;
         }
         let queue = queues.entry(*player_id).or_default();
+        self.record_recovery_cancel(*player_id, queue, "turn");
         queue.clear();
         queue.push_back(MoveIntent {
             request: None,
@@ -1292,14 +1359,19 @@ impl super::GameState {
             let cache = self.passability_read();
             queues.retain(|player_id, waypoints| {
                 let Some(player) = players.get_mut(player_id) else {
+                    self.record_recovery_cancel(*player_id, waypoints, "player_missing");
                     return false;
                 };
                 let recovery = waypoints.front().and_then(|i| i.recovery);
-                if let Some(request_id) = recovery {
+                if let Some(request) = recovery {
                     if !player.mounted || player.health == 0 || Self::in_combat(player) {
+                        let reason = if !player.mounted { "not_mounted" }
+                            else if player.health == 0 { "dead" } else { "in_combat" };
+                        self.movement_audit.recovery_event(*player_id, request, "failed",
+                            serde_json::json!({"reason": reason, "pose": Pose::from(&*player)}));
                         recovery_updates.push((
                             *player_id,
-                            Self::mount_recovery_update(player, request_id, true, false),
+                            Self::mount_recovery_update(player, request.request_id, true, false),
                         ));
                         return false;
                     }
@@ -1473,7 +1545,11 @@ impl super::GameState {
                             super::passability::StepOutcome::Blocked(info) => {
                                 tick_outcome = "blocked";
                                 // Corrections use the last safe pose.
-                                if recovery.is_some() {
+                                if let Some(request) = recovery {
+                                    self.movement_audit.recovery_event(*player_id, request, "failed",
+                                        serde_json::json!({"reason": "blocked", "block_key": info.key,
+                                            "pose": Pose::from(&*player), "target": intent.target,
+                                            "attempted": {"x": wrap_world_x(step_x), "y": step_y, "z": step_z}}));
                                     blocked = true;
                                     break;
                                 }
@@ -1565,12 +1641,16 @@ impl super::GameState {
                         sprinting,
                     ));
                 }
-                if let Some(request_id) = recovery {
+                if let Some(request) = recovery {
+                    if !blocked && waypoints.is_empty() {
+                        self.movement_audit.recovery_event(*player_id, request, "completed",
+                            serde_json::json!({"pose": Pose::from(&*player)}));
+                    }
                     recovery_updates.push((
                         *player_id,
                         Self::mount_recovery_update(
                             player,
-                            request_id,
+                            request.request_id,
                             blocked || waypoints.is_empty(),
                             !blocked,
                         ),
@@ -1845,7 +1925,7 @@ impl super::GameState {
         floor_level: i8,
         update_msg: ServerMessage,
     ) {
-        self.movement_intents.write().await.remove(player_id);
+        self.clear_player_movement(player_id, "teleport").await;
         self.clear_pose_on_move(player_id, "teleport").await;
         let (old_position, old_floor, moved_player) = {
             let mut players = self.players.write().await;
@@ -2083,7 +2163,7 @@ impl super::GameState {
     /// Wake the dead in the inn's sick room: lying in the first free bed, or
     /// standing beside them when every bed is taken.
     pub async fn respawn_player(&self, player_id: &PlayerId) {
-        self.movement_intents.write().await.remove(player_id);
+        self.clear_player_movement(player_id, "respawn").await;
         let respawn = &world_config().respawn;
         let (old_floor, old_position, player) = {
             let mut players = self.players.write().await;
