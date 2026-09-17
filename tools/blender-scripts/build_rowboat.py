@@ -22,6 +22,35 @@ STATIONS = 37
 RIB_POINTS = 19
 # Hide the water plane inside the hull.
 SOLE_Z = 0.06
+WOOD_LENGTH = 2.0
+WOOD_WIDTH = 0.8
+
+
+def wood_material(name, image, roughness):
+    material = principled(name, (1, 1, 1, 1), roughness)
+    texture = material.node_tree.nodes.new('ShaderNodeTexImage')
+    texture.image = image
+    texture.extension = 'REPEAT'
+    material.node_tree.links.new(
+        texture.outputs['Color'],
+        material.node_tree.nodes['Principled BSDF'].inputs['Base Color'],
+    )
+    return material
+
+
+def map_box_wood(obj, grain_axis):
+    mesh = obj.data
+    uv = mesh.uv_layers.active or mesh.uv_layers.new(name='WoodUV')
+    for face in mesh.polygons:
+        axes = [axis for axis in range(3) if abs(face.normal[axis]) < 0.5]
+        along = grain_axis if grain_axis in axes else axes[0]
+        across = next(axis for axis in axes if axis != along)
+        for loop in face.loop_indices:
+            point = mesh.vertices[mesh.loops[loop].vertex_index].co
+            uv.data[loop].uv = (
+                point[along] * obj.scale[along] / WOOD_LENGTH + 0.5,
+                point[across] * obj.scale[across] / WOOD_WIDTH + 0.3,
+            )
 
 
 def smoothstep(t):
@@ -93,11 +122,13 @@ def build_hull(material):
         return shell + i * RIB_POINTS + j
 
     faces = []
+    rim_faces = set()
     for i in range(STATIONS - 1):
         for j in range(RIB_POINTS - 1):
             faces.append((outer(i, j), outer(i, j + 1), outer(i + 1, j + 1), outer(i + 1, j)))
             faces.append((inner(i, j), inner(i, j + 1), inner(i + 1, j + 1), inner(i + 1, j)))
         for j in (0, RIB_POINTS - 1):
+            rim_faces.add(len(faces))
             faces.append((outer(i, j), outer(i + 1, j), inner(i + 1, j), inner(i, j)))
     stern = STATIONS - 1
     transom_faces = len(faces)
@@ -111,8 +142,25 @@ def build_hull(material):
     mesh = bpy.data.meshes.new('Hull')
     mesh.from_pydata(verts, [], faces)
     mesh.materials.append(material)
+    uv = mesh.uv_layers.new(name='WoodUV')
     for face in mesh.polygons:
         face.use_smooth = face.index < transom_faces
+        for loop in face.loop_indices:
+            vertex = mesh.loops[loop].vertex_index
+            x, y, z = verts[vertex]
+            if face.index == transom_faces + 2:
+                coords = (x / WOOD_LENGTH + 0.5, y / WOOD_WIDTH + 0.3)
+            elif face.index >= transom_faces:
+                coords = (x / WOOD_LENGTH + 0.5, z / WOOD_WIDTH)
+            elif face.index in rim_faces:
+                coords = ((y + LENGTH / 2) / WOOD_LENGTH, x / WOOD_WIDTH + 0.3)
+            else:
+                j = vertex % RIB_POINTS
+                coords = (
+                    (y + LENGTH / 2) / WOOD_LENGTH,
+                    abs(2 * j / (RIB_POINTS - 1) - 1),
+                )
+            uv.data[loop].uv = coords
     obj = bpy.data.objects.new('Hull', mesh)
     bpy.context.collection.objects.link(obj)
 
@@ -151,18 +199,23 @@ def build_sole(material):
     mesh = bpy.data.meshes.new('Sole')
     mesh.from_pydata(verts, [], faces)
     mesh.materials.append(material)
+    uv = mesh.uv_layers.new(name='WoodUV')
+    for loop in mesh.loops:
+        x, y, _ = verts[loop.vertex_index]
+        uv.data[loop.index].uv = ((y + LENGTH / 2) / WOOD_LENGTH, x / WOOD_WIDTH + 0.5)
     obj = bpy.data.objects.new('Sole', mesh)
     bpy.context.collection.objects.link(obj)
     return obj
 
 
-def add_box(name, location, scale, material):
+def add_box(name, location, scale, material, grain_axis=0):
     bpy.ops.mesh.primitive_cube_add(size=2.0, location=location)
     obj = bpy.context.object
     obj.name = name
     obj.data.name = name
     obj.scale = scale
     obj.data.materials.append(material)
+    map_box_wood(obj, grain_axis)
     return obj
 
 
@@ -182,7 +235,16 @@ def add_oar(name, side, material):
     bpy.ops.mesh.primitive_cylinder_add(radius=0.026, depth=oar_len, location=(0, 0, 0))
     shaft = bpy.context.object
     shaft.data.materials.append(material)
-    blade = add_box('OarBlade', (0.0, 0.0, oar_len * 0.42), (0.075, 0.012, 0.30), material)
+    uv = shaft.data.uv_layers.active
+    for face in shaft.data.polygons:
+        for loop in face.loop_indices:
+            x, y, z = shaft.data.vertices[shaft.data.loops[loop].vertex_index].co
+            if abs(face.normal.z) > 0.5:
+                coords = (x / WOOD_LENGTH + 0.5, y / WOOD_WIDTH + 0.3)
+            else:
+                coords = (z / WOOD_LENGTH + 0.5, math.atan2(y, x) / (2 * math.pi) * 0.15 + 0.3)
+            uv.data[loop].uv = coords
+    blade = add_box('OarBlade', (0.0, 0.0, oar_len * 0.42), (0.075, 0.012, 0.30), material, grain_axis=2)
     bpy.ops.object.select_all(action='DESELECT')
     shaft.select_set(True)
     blade.select_set(True)
@@ -197,8 +259,12 @@ def add_oar(name, side, material):
 
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    oak = principled('BoatOak', (0.16, 0.086, 0.043, 1), 0.78)
-    trim = principled('BoatTrim', (0.28, 0.17, 0.09, 1), 0.62)
+    source = ROOT / 'assets/rowboat'
+    texture = bpy.data.images.load(str(source / 'wood_albedo.png'))
+    texture.scale(1024, 1024)
+    texture.pack()
+    oak = wood_material('BoatOak', texture, 0.82)
+    trim = wood_material('BoatTrim', texture, 0.7)
 
     hull = build_hull(oak)
     parts = [hull]
@@ -221,7 +287,6 @@ def main():
     bpy.context.view_layer.objects.active = hull
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
 
-    source = ROOT / 'assets/rowboat'
     source.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(source / 'rowboat.blend'))
     bpy.ops.export_scene.gltf(
@@ -229,6 +294,8 @@ def main():
         export_format='GLB',
         use_selection=True,
         export_animations=False,
+        export_image_format='WEBP',
+        export_image_quality=90,
     )
 
     world = bpy.data.worlds.new('World')

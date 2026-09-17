@@ -9,10 +9,15 @@ beforeAll(async () => {
   const file = readFileSync(
     new URL('../../../public/models/mounts/rowboat.glb', import.meta.url)
   )
-  gltf = await new GLTFLoader().parseAsync(
-    file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength),
-    ''
-  )
+  gltf = await new GLTFLoader()
+    .register(() => ({
+      name: 'headless-materials',
+      loadMaterial: async () => new THREE.MeshBasicMaterial(),
+    }))
+    .parseAsync(
+      file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength),
+      ''
+    )
 })
 
 function advance(boat: BoatMount, seconds: number, speed: number, fps = 60) {

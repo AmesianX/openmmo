@@ -34,20 +34,29 @@
 ## Mounts
 
 - rowboat.glb — `tools/blender-scripts/build_rowboat.py`가 절차적으로 생성하는 노 젓는 배 (2026-09-14,
-  Blender 5.2.1 LTS). 외부 모델·텍스처·AI 생성물 없음, 저장소 라이선스를 따른다.
-  스크립트가 원본이며 재실행하면 같은 결과가 나온다 (`blender -b -P tools/blender-scripts/build_rowboat.py`).
+  Blender 5.2.1 LTS). 메시의 라이선스는 저장소를 따르며, 나무 텍스처 출처와 이용 조건은 아래에 기록한다.
+  스크립트와 `assets/rowboat/wood_albedo.png`로 재생성한다 (`blender -b -P tools/blender-scripts/build_rowboat.py`).
   선체는 단면 19점 × 길이 37 스테이션을 5cm 판재 두께로 안팎 두 겹 로프팅한 닫힌 셸이다.
   선미는 선체와 이어진 5cm 두께의 평판으로 막고, 안쪽 끝단을 그만큼 앞당겼다.
   선수 끝은 양쪽 꼭짓점을 중심선에서 용접해 틈 없이 만나며, 안쪽 선수는 5cm 뒤에서 닫힌다
   (2026-09-17, Blender 5.2.0 LTS로 모델·원본·아이콘 재생성).
   가로보 3개(`ThwartBow`/`ThwartMid`/`ThwartStern`)와 노 2개(`OarPort`/`OarStarboard`)는 클라이언트가
-  따로 돌릴 수 있게 별도 노드다. 삼각형 3,140개, 텍스처 없이 단색 머티리얼 2개(`BoatOak`, `BoatTrim`).
+  따로 돌릴 수 있게 별도 노드다. 삼각형 3,140개, 머티리얼 2개(`BoatOak`, `BoatTrim`)가
+  1024² WebP q90 나무 텍스처 하나를 공유한다. 선체·바닥은 길이 방향, 가로보는 폭 방향,
+  노는 자루·날의 길이 방향으로 UV를 배치했다 (2026-09-17). 거칠기는 선체 0.82, 나머지 0.7.
   크기 1.37×3.40m(폭×길이), 용골 -0.15m ~ 뱃전 0.53m.
   **원점은 용골이 아니라 흘수선**(draft 0.15m)이라 샘플링한 수면 높이에 그대로 올리면 된다.
   뱃머리는 Blender -Y = **glTF +Z**. 탑승점은 말과 같은 이름의 빈 오브젝트 `RideSeat`
   (고물 가로보 위, glTF 기준 `[0, 0.196, -0.748]`). 아이콘 `client/public/items/objects/rowboat.png`는
   같은 스크립트가 `icon_render` 공용 레시피로 렌더한다.
   말 출처는 [animals.md](animals.md), 게임 규칙은 [MOUNTS.md](../MOUNTS.md).
+- `assets/rowboat/wood_albedo.png` — 나룻배용 따뜻한 갈색 오크 판재 텍스처 원본, 1254² PNG.
+  - 출처: OpenAI 내장 `image_gen`으로 생성, 2026-09-17 (KST).
+  - 생성 도구/티어: Codex 내장 이미지 생성; 계정 요금제와 서비스 티어는 도구에서 미노출.
+  - 라이선스: OpenAI 생성 출력물에 적용되는 서비스 약관. 별도 제3자 stock/CC 에셋을 사용하지 않음.
+  - 프롬프트: [rowboat-wood-prompt.txt](rowboat-wood-prompt.txt). 수평 나뭇결·판재 5줄, 균일한 조명,
+    무광의 가벼운 풍화, 좁은 이음새를 요청했다. 생성 원본은 보존하고 빌드에서 1024²로 축소해
+    GLB에 내장하며, `assets/rowboat/rowboat.blend`에도 텍스처를 포함한다.
 
 ## House
 
