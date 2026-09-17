@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Mesh, Vector3, type Group } from 'three'
+import { Mesh, Raycaster, Vector3, type Group } from 'three'
 import type { DungeonRoom } from '../managers/dungeonManager'
 import { buildDungeonFloorGroup, type WallRun } from './dungeon-geo-floor'
 import { isoCameraOccludesPlayer } from './iso-occlusion'
+import { dungeonCaveTheme } from './dungeon-cave-themes'
+import {
+  DUNGEON_FLOOR_TEXTURE_IDX,
+  DUNGEON_WALL_TEXTURE_IDX,
+} from './dungeon-geo-constants'
 
 vi.mock('./dungeon-geo-doors', () => ({ buildInteriorDoor: vi.fn() }))
 
@@ -49,6 +54,32 @@ function wallAt(runs: WallRun[], x: number, z: number) {
 }
 
 describe('dungeon wall fade groups', () => {
+  it('textures corridor ground separately and keeps cave walls out of ground picking', () => {
+    const runs = buildWalls(
+      [{ x: 4, z: 6, w: 2, d: 4 }],
+      [{ x: 2, z: 2, w: 6, d: 4 }]
+    )
+    const cave = dungeonCaveTheme('', 1)
+    const groundAt = (x: number, z: number) =>
+      new Raycaster(
+        new Vector3(x, 5, z),
+        new Vector3(0, -1, 0)
+      ).intersectObject(group)[0]
+    expect(groundAt(4.02, 8).point.y).toBe(0)
+    expect(groundAt(4.02, 8).object.userData.textureIndex).toBe(
+      cave.floorTexture
+    )
+    expect(groundAt(4, 4).object.userData.textureIndex).toBe(
+      DUNGEON_FLOOR_TEXTURE_IDX
+    )
+    expect(wallAt(runs, 3.95, 8).mesh.userData.textureIndex).toBe(
+      cave.wallTexture
+    )
+    expect(wallAt(runs, 1.95, 4).mesh.userData.textureIndex).toBe(
+      DUNGEON_WALL_TEXTURE_IDX
+    )
+  })
+
   it('pairs an L-shaped corridor corner when only its south wall occludes', () => {
     const runs = buildWalls([
       { x: 2, z: 2, w: 2, d: 8 },

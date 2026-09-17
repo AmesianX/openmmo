@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { InstancedMesh } from 'three'
+import { Matrix4, Vector3, type InstancedMesh } from 'three'
 import { DungeonPuddles } from './dungeon-puddles'
 import type { DungeonDrip, DungeonPuddle } from '../utils/dungeon-puddles'
 
@@ -31,6 +31,29 @@ function advance(seconds: number, animate = true) {
 }
 
 describe('dungeon drip timing', () => {
+  it('clips the mesh at a wall without stretching the outline or moving ripples', () => {
+    effect = new DungeonPuddles(
+      [{ ...puddle, clip: { minX: 19.8, minZ: 9.5, maxX: 21, maxZ: 10.2 } }],
+      3
+    )
+    const surface = effect.group.children[1] as InstancedMesh
+    const matrix = new Matrix4()
+    surface.getMatrixAt(0, matrix)
+    const low = new Vector3(-0.5, 0, -0.5).applyMatrix4(matrix)
+    const high = new Vector3(0.5, 0, 0.5).applyMatrix4(matrix)
+    expect(low.x).toBeCloseTo(19.8)
+    expect(low.z).toBeCloseTo(9.5)
+    expect(high.x).toBeCloseTo(21)
+    expect(high.z).toBeCloseTo(10.2)
+    const transform = surface.geometry.getAttribute('aPuddleUv')
+    const dripUV = (drip.x - low.x) / (high.x - low.x)
+    const remappedU = dripUV * transform.getZ(0) + transform.getX(0)
+    expect(puddle.x + (remappedU - 0.5) * puddle.width).toBeCloseTo(drip.x)
+    const dripV = (high.z - drip.z) / (high.z - low.z)
+    const remappedV = dripV * transform.getW(0) + transform.getY(0)
+    expect(puddle.z - (remappedV - 0.5) * puddle.depth).toBeCloseTo(drip.z)
+  })
+
   it('varies each interval up to six times the original without speeding up', () => {
     effect = new DungeonPuddles([puddle], 3)
     const impacts = advance(180)

@@ -25,7 +25,11 @@ import {
   vec4,
 } from 'three/tsl'
 import { valueNoise } from '../shaders/tsl-noise'
-import type { DungeonDrip, DungeonPuddle } from '../utils/dungeon-puddles'
+import {
+  dungeonPuddleBounds,
+  type DungeonDrip,
+  type DungeonPuddle,
+} from '../utils/dungeon-puddles'
 
 const SURFACE_Y = 0.012
 const MAX_INTERVAL_MULTIPLIER = 6
@@ -88,6 +92,24 @@ export class DungeonPuddles {
       2
     )
     geometry.setAttribute('aPuddleSize', size)
+    const bounds = puddles.map(dungeonPuddleBounds)
+    geometry.setAttribute(
+      'aPuddleUv',
+      new THREE.InstancedBufferAttribute(
+        new Float32Array(
+          puddles.flatMap((p, i) => {
+            const b = bounds[i]
+            return [
+              0.5 + (b.minX - p.x) / p.width,
+              0.5 - (b.maxZ - p.z) / p.depth,
+              (b.maxX - b.minX) / p.width,
+              (b.maxZ - b.minZ) / p.depth,
+            ]
+          })
+        ),
+        4
+      )
+    )
     geometry.setAttribute(
       'aPuddleSeed',
       new THREE.InstancedBufferAttribute(
@@ -111,7 +133,9 @@ export class DungeonPuddles {
     )
     const seed = attribute<'float'>('aPuddleSeed', 'float')
     const shape = attribute<'vec4'>('aPuddleShape', 'vec4')
-    const local = uv().sub(0.5).mul(2)
+    const uvTransform = attribute<'vec4'>('aPuddleUv', 'vec4')
+    const puddleUv = uv().mul(uvTransform.zw).add(uvTransform.xy)
+    const local = puddleUv.sub(0.5).mul(2)
     const angle = atan(local.y.negate(), local.x)
     const boundary = float(0.68)
       .add(sin(angle.mul(shape.x).add(shape.z)).mul(shape.y))
@@ -121,7 +145,9 @@ export class DungeonPuddles {
     const edge = length(local).sub(boundary).add(noise.sub(0.5).mul(0.025))
     const damp = float(1).sub(smoothstep(-0.015, 0.025, edge))
     const water = float(1).sub(smoothstep(-0.045, -0.01, edge))
-    const point = uv().sub(0.5).mul(attribute<'vec2'>('aPuddleSize', 'vec2'))
+    const point = puddleUv
+      .sub(0.5)
+      .mul(attribute<'vec2'>('aPuddleSize', 'vec2'))
     let ripple: Node<'float'> = float(0)
     let slope: Node<'vec2'> = vec2(0)
     for (let index = 0; index < 2; index++) {
@@ -228,10 +254,14 @@ export class DungeonPuddles {
     this.drops.renderOrder = 3
     this.drops.visible = this.drips.length > 0
     const matrix = new THREE.Matrix4()
-    puddles.forEach((p, i) => {
-      matrix.makeScale(p.width, 1, p.depth).setPosition(p.x, SURFACE_Y, p.z)
+    bounds.forEach((b, i) => {
+      const x = (b.minX + b.maxX) / 2
+      const z = (b.minZ + b.maxZ) / 2
+      matrix
+        .makeScale(b.maxX - b.minX, 1, b.maxZ - b.minZ)
+        .setPosition(x, SURFACE_Y, z)
       dampMesh.setMatrixAt(i, matrix)
-      matrix.setPosition(p.x, SURFACE_Y + 0.002, p.z)
+      matrix.setPosition(x, SURFACE_Y + 0.002, z)
       surfaceMesh.setMatrixAt(i, matrix)
     })
     this.drips.forEach(({ source }, i) => {

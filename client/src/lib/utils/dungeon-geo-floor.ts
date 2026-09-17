@@ -1,10 +1,3 @@
-/**
- * dungeon-geo-floor.ts — the renderable group for one underground dungeon floor:
- * the floor slab (minus the down-shaft hole), the up/down stair shafts, the
- * per-run fade walls, and the interior room doors. Follows the
- * housing pattern: collect GeoEntry quads per texture, merge into one mesh per
- * texture, reuse the shared housing materials.
- */
 import * as THREE from 'three'
 import { addMergedMeshes, type GeoEntry } from './house-geo-utils'
 import { getHousingMaterial } from './housing-textures'
@@ -13,6 +6,11 @@ import type {
   InteriorDoorSpec,
 } from '../managers/dungeonManager'
 import { addBox, quadMeshBuilder } from './dungeon-geo-primitives'
+import { buildCaveWall } from './dungeon-geo-cave'
+import { buildMasonryWall, masonryFloorBuilder } from './dungeon-geo-masonry'
+import { dungeonFloorClearance } from './dungeon-floor-clearance'
+import { buildDungeonFloorRubble } from './dungeon-geo-rubble'
+import { dungeonCaveSeed, dungeonCaveTheme } from './dungeon-cave-themes'
 import {
   shaftRect,
   rectContains,
@@ -24,7 +22,6 @@ import { buildInteriorDoor, type InteriorDoor } from './dungeon-geo-doors'
 import {
   DUNGEON_FLOOR_TEXTURE_IDX,
   DUNGEON_WALL_TEXTURE_IDX,
-  DUNGEON_CORRIDOR_WALL_TEXTURE_IDX,
   SLAB_THICKNESS,
   DUNGEON_FLOOR_UV_SCALE,
   SHADOW_CONTACT_LIFT,
@@ -34,9 +31,6 @@ import {
   type DungeonGeoCtx,
 } from './dungeon-geo-constants'
 
-/** Scene-graph name of the wall-run sub-group (all four sides), for debugging.
- *  Unlike the up-shaft group it is never looked up by name — the layer caches
- *  the runs from the returned WallRun[] — so it stays module-private. */
 const WALL_RUN_GROUP_NAME = 'wallRuns'
 
 /** One straight wall run, built as its own mesh so the dungeon layer can fade
@@ -60,17 +54,18 @@ export interface DungeonFloorGroup {
   doors: InteriorDoor[]
 }
 
-/**
- * Build the renderable group for one dungeon floor. The caller positions
- * it at (originX, floorY(depth), originZ) in world space. `doorSpecs` is the
- * floor's interior-door placement list from `dungeonManager.interiorDoorsAt`.
- */
 export function buildDungeonFloorGroup(
   layout: DungeonFloorLayout,
   ctx: DungeonGeoCtx,
-  doorSpecs: InteriorDoorSpec[]
+  doorSpecs: InteriorDoorSpec[],
+  dungeonId = ''
 ): DungeonFloorGroup {
   const grid = ctx.grid
+  const cave = dungeonCaveTheme(dungeonId, layout.depth)
+  const caveSeed = dungeonCaveSeed(dungeonId, layout.depth)
+  const roomIndexAt = (x: number, z: number) =>
+    layout.rooms.findIndex((r) => rectContains(r, x, z))
+  const roomAt = (x: number, z: number) => roomIndexAt(x, z) >= 0
   const carvedAt = (x: number, z: number) =>
     x >= 0 && x < grid && z >= 0 && z < grid && layout.carved[x + z * grid]
 
@@ -89,25 +84,42 @@ export function buildDungeonFloorGroup(
     shaftContains(layout.upShaft, ctx, x, z) ||
     (down != null && shaftContains(down, ctx, x, z))
 
-  // --- Floor slab: seamless top/bottom run quads with skirts only at true
-  // edges. Full boxes' interior seam faces reach y=0 with zero depth margin
-  // under BackSide shadow rendering and flicker as acne past ~5m of the torch;
-  // seamless, SLAB_THICKNESS is the self-bias and the slab can keep casting.
-  // A run also breaks where a side's openness flips, so every skirt shares its
-  // corners with the top face (no T-junction cracks).
+  // Slab skirts only cover exposed edges, avoiding internal shadow seams.
   const solidAt = (x: number, z: number) => carvedAt(x, z) && !inDownHole(x, z)
-  const slab = quadMeshBuilder(DUNGEON_FLOOR_UV_SCALE)
+  const floorTexAt = (x: number, z: number) =>
+    roomAt(x, z) || inAnyShaft(x, z)
+      ? DUNGEON_FLOOR_TEXTURE_IDX
+      : cave.floorTexture
+  const slabs = new Map<number, ReturnType<typeof quadMeshBuilder>>()
+  const masonryFloor =
+    cave.id === 'masonry'
+      ? masonryFloorBuilder(
+          cave.floorTexture,
+          caveSeed,
+          dungeonFloorClearance(layout, ctx)
+        )
+      : null
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
   const yB = -SLAB_THICKNESS
   for (let z = 0; z < grid; z++) {
     let runStart = -1
     let runN = false
     let runS = false
+    let runTex = -1
     for (let x = 0; x <= grid; x++) {
       const solid = x < grid && solidAt(x, z)
       const nOpen = solid && !solidAt(x, z - 1)
       const sOpen = solid && !solidAt(x, z + 1)
-      if (runStart >= 0 && (!solid || nOpen !== runN || sOpen !== runS)) {
+      const tex = solid ? floorTexAt(x, z) : -1
+      if (
+        runStart >= 0 &&
+        (!solid || nOpen !== runN || sOpen !== runS || tex !== runTex)
+      ) {
+        let slab = slabs.get(runTex)
+        if (!slab) {
+          slab = quadMeshBuilder(DUNGEON_FLOOR_UV_SCALE)
+          slabs.set(runTex, slab)
+        }
         const x0 = runStart
         const cap = (y: number, n: THREE.Vector3) =>
           slab.addQuad(
@@ -133,7 +145,10 @@ export function buildDungeonFloorGroup(
             v(xa, 0, z),
             n
           )
-        cap(0, v(0, 1, 0))
+        if (masonryFloor && runTex === cave.floorTexture) {
+          for (let column = x0; column < x; column++)
+            masonryFloor.addCell(column, z)
+        } else cap(0, v(0, 1, 0))
         cap(yB, v(0, -1, 0))
         if (runN) skirtZ(z, v(0, 0, -1))
         if (runS) skirtZ(z + 1, v(0, 0, 1))
@@ -145,31 +160,22 @@ export function buildDungeonFloorGroup(
         runStart = x
         runN = nOpen
         runS = sOpen
+        runTex = tex
       }
     }
   }
-  slab.finish(entries, DUNGEON_FLOOR_TEXTURE_IDX)
+  for (const [tex, slab] of slabs) slab.finish(entries, tex)
+  masonryFloor?.finish(entries)
 
-  // Walls on all four sides are built lower down as per-run fade meshes (the
-  // dungeon layer ghosts any run that occludes the player), not merged here.
-
-  // --- Down shaft (0 → -floorHeight) merges with the floor geometry, so it
-  // shares the slab's y=0 and isn't lifted for shadow contact like the up-shaft;
-  // any peter-panning at the hole's top edge is deferred (split it out to fix).
   if (down) {
     collectShaftStairs(entries, down, ctx, 0, -ctx.floorHeight, false, true)
   }
 
   const group = new THREE.Group()
   addMergedMeshes(group, entries)
+  group.add(buildDungeonFloorRubble(layout, ctx, dungeonId))
 
-  // --- Up shaft (descends from the floor above, +floorHeight → 0): the
-  // staircase you arrive by. Built into its own sub-group so the dungeon layer
-  // can fade it to a ghost material when it occludes the player from the iso
-  // camera (it shares the floor texture, so it can't fade while merged in).
-  // Its side wall is omitted: the steps are blocked by an impassable flag, so
-  // no wall is needed to contain the player, and a wall would only block the
-  // view down the stairs.
+  // Keep the up-shaft separate for occlusion fading.
   const upEntries: GeoEntry[] = []
   collectShaftStairs(
     upEntries,
@@ -201,11 +207,29 @@ export function buildDungeonFloorGroup(
     cx: number,
     cy: number,
     cz: number,
-    fadeGroup = -1
+    fadeGroup = -1,
+    inward = 1
   ) => {
-    const e: GeoEntry[] = []
-    addBox(e, texIdx, w, h, d, cx, cy, cz)
-    const geo = e[0].geo
+    let geo: THREE.BufferGeometry
+    if (texIdx === cave.wallTexture) {
+      const alongX = w > d
+      const length = alongX ? w : d
+      const center = alongX ? cx : cz
+      const buildWall = cave.id === 'masonry' ? buildMasonryWall : buildCaveWall
+      geo = buildWall(
+        alongX,
+        center - length / 2,
+        center + length / 2,
+        (alongX ? cz : cx) + inward * WALL_HALF_THICKNESS,
+        inward,
+        h,
+        caveSeed
+      )
+    } else {
+      const e: GeoEntry[] = []
+      addBox(e, texIdx, w, h, d, cx, cy, cz)
+      geo = e[0].geo
+    }
     const mesh = new THREE.Mesh(geo, getHousingMaterial(texIdx))
     mesh.castShadow = false
     mesh.receiveShadow = true
@@ -239,17 +263,9 @@ export function buildDungeonFloorGroup(
   }
 
   // Carved cells outside rooms use the corridor texture; shafts emit no walls.
-  const roomIndexAt = (x: number, z: number) =>
-    layout.rooms.findIndex((r) => rectContains(r, x, z))
-  const roomAt = (x: number, z: number) => roomIndexAt(x, z) >= 0
   const wallTexAt = (x: number, z: number) =>
-    roomAt(x, z) ? DUNGEON_WALL_TEXTURE_IDX : DUNGEON_CORRIDOR_WALL_TEXTURE_IDX
-  // Pull a corridor run in by the wall thickness at each end where a perpendicular
-  // room wall crosses, so the two coplanar faces don't z-fight (the room wall keeps
-  // the corner). `diagLo`/`diagHi` are the cells just past each end on the wall
-  // side; a room cell there means a room wall crosses. Colinear continuations and
-  // corridor↔corridor corners have a solid/corridor cell there, so they stay
-  // full-length (no gap). Returns the trimmed run span [lo, hi].
+    roomAt(x, z) ? DUNGEON_WALL_TEXTURE_IDX : cave.wallTexture
+  // Trim corridor ends where perpendicular room walls cross.
   const trimCorridorRun = (
     tex: number,
     lo: number,
@@ -257,7 +273,7 @@ export function buildDungeonFloorGroup(
     diagLo: [number, number],
     diagHi: [number, number]
   ): [number, number] =>
-    tex !== DUNGEON_CORRIDOR_WALL_TEXTURE_IDX
+    tex !== cave.wallTexture
       ? [lo, hi]
       : [
           roomAt(diagLo[0], diagLo[1]) ? lo + WALL_THICKNESS : lo,
@@ -317,7 +333,14 @@ export function buildDungeonFloorGroup(
           lo + len / 2,
           ctx.wallHeight / 2 + SHADOW_CONTACT_LIFT,
           z + 1 + WALL_HALF_THICKNESS,
-          wallFadeGroup(roomIndexAt(southStart, z), southStart, z + 1, x, z + 1)
+          wallFadeGroup(
+            roomIndexAt(southStart, z),
+            southStart,
+            z + 1,
+            x,
+            z + 1
+          ),
+          -1
         )
         southStart = -1
       }
@@ -355,7 +378,9 @@ export function buildDungeonFloorGroup(
           len,
           x + 1 + WALL_HALF_THICKNESS,
           ctx.wallHeight / 2 + SHADOW_CONTACT_LIFT,
-          lo + len / 2
+          lo + len / 2,
+          -1,
+          -1
         )
         eastStart = -1
       }
@@ -393,17 +418,12 @@ export function buildDungeonFloorGroup(
   for (const run of wallRuns) run.fadeGroup = resolveFadeGroup(run.fadeGroup)
   group.add(wallRunGroup)
 
-  // --- Interior room doors, placed by the shared wasm scan (see the Rust
-  // `dungeon::doors` module doc). Arches merge statically; the swinging
-  // leaves are returned for the layer to animate.
+  // Door arches are static; the layer animates the leaves.
   const archEntries: GeoEntry[] = []
   const doors: InteriorDoor[] = doorSpecs.map((spec) =>
     buildInteriorDoor(layout.depth, spec, ctx.wallHeight, archEntries)
   )
-  // Arches merge into the floor group but stay non-pickable, so a ground click
-  // near a doorway falls through to the floor. The door leaves are NOT added
-  // here — the layer parents them to a separate pickable group (so the door
-  // click raycast can hit them without them intercepting click-to-move).
+  // Ground clicks pass through arches; door leaves have their own pickable group.
   if (archEntries.length > 0) {
     const archGroup = new THREE.Group()
     addMergedMeshes(archGroup, archEntries)

@@ -930,7 +930,8 @@
         shaftW: c.shaftW,
         shaftLen: c.shaftLen,
       },
-      dungeonManager.interiorDoorsAt(depth)
+      dungeonManager.interiorDoorsAt(depth),
+      id!
     )
     currentGroup = built.group
     currentGroup.position.set(

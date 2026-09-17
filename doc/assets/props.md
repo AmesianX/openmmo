@@ -91,9 +91,9 @@ Poly Haven에서 받은 .gltf를 Blender에서 .glb로 다시 export
 
 하우징·던전 GLB 텍스처도 `tools/repack-material-glbs.py`로 만든 배포본이다(원본 `assets/textures-src/`, 규칙은 environment.md Terrain Textures 참조).
 
-Poly Haven 벽 텍스처. `rock_wall_10`만 배선됨 (`housing-textures.ts`).
+기존 Poly Haven 복도 벽 텍스처. 자연 동굴 세트로 교체(2026-09-17).
 
-- rock_wall_10 https://polyhaven.com/a/rock_wall_10 — 던전 복도 벽 (사용 중, CC0)
+- **[미사용]** rock_wall_10 https://polyhaven.com/a/rock_wall_10 — 기존 던전 복도 벽, CC0. 저장된 하우징 텍스처 인덱스 보존을 위해 카탈로그 슬롯 유지.
 - damaged_plaster — **[미사용]**
 - old_stone_wall — **[미사용]**
 - plaster_stone_wall_02 — **[미사용]**
@@ -102,6 +102,39 @@ Poly Haven 벽 텍스처. `rock_wall_10`만 배선됨 (`housing-textures.ts`).
 - rock_wall_08 — **[미사용]**
 - rock_wall_13 — **[미사용]**
 - rustic_stone_wall — **[미사용]**
+
+### 던전 통로 세트 (2026-09-17)
+
+출처: OpenAI Codex built-in ImageGen. 요금제: workspace-provided tier(정확한 등급은 도구에서 공개되지 않음). 생성일: 2026-09-17. 라이선스: 프로젝트용 생성 출력물, OpenAI 출력물 이용 조건 적용, 별도 CC 라이선스 지정 없음. [자연 암반 생성 프롬프트](dungeon-cave-prompts.json) · [벽돌·타일 생성 프롬프트](dungeon-masonry-prompts.json).
+
+경로: `client/public/textures/dungeon/`. 생성 PNG를 ffmpeg로 1024² WebP q88로 축소·인코딩했다.
+
+| 세트 | 벽 | 바닥 |
+| --- | --- | --- |
+| 회색 석회암 | `cave-limestone-wall.webp` | `cave-limestone-floor.webp` |
+| 이끼 암반 | `cave-moss-wall.webp` | `cave-moss-floor.webp` |
+| 벽돌·석재 타일 | `cave-masonry-wall.webp` | `cave-masonry-floor.webp` |
+| **[미사용]** 갈색 셰일 | `cave-shale-wall.webp` | `cave-shale-floor.webp` |
+
+갈색 셰일은 이끼 암반과 분위기가 비슷하다는 사용자 피드백에 따라 벽돌·타일 세트로 교체했다. 기존 셰일 이미지는 시안으로 보관한다.
+
+던전 ID와 층 깊이로 세트를 고정 선택한다. 통로 벽·바닥에만 적용하며 방·계단은 기존 재질을 쓴다. 벽 상단은 약 10cm 두께로 시야를 확보하고 바닥과 만나는 하부 약 16cm를 둥글게 처리한다. 자연 암반 벽은 중간 면이 완만하게 돌출·함몰되며 끝과 상단에서 굴곡이 줄어든다. 벽돌 세트는 대부분 평평하게 엇갈려 쌓고, 내부 벽돌의 약 4%만 1.5–4cm 돌출시키며 약 2%는 1.2cm 후퇴시킨다. 연결부와 맨 위·아래 줄은 평평하다. 벽돌 크기는 기존 텍스처 2배 반복에 맞춘 약 44×22cm이며 원본 이미지의 벽돌 면을 골라 매핑한다. 평평한 벽돌의 내부 옆면과 벽면 뒤의 중복 면을 없애 반투명 상태에서 진하게 겹쳐 보이는 현상을 줄였다.
+
+바닥에는 자체 코드로 만든 낮은 돌판(약 2–4cm)과 작은 자갈(최대 10cm)을 벽 주변 위주로 배치한다. 벽돌 세트는 3.5cm 이하의 타일 파편을 쓴다. 한 메시로 합치고 이동 충돌·바닥 클릭을 방해하지 않으며 문·계단·기물 주변은 비워 둔다. 물웅덩이는 벽까지 이어지는 모양을 바닥 경계에서 잘라 표시한다.
+
+벽돌 세트의 바닥은 텍스처 줄눈에 맞춘 50cm 타일 단위로 일부가 빠지거나 모서리가 깨지고 갈라진다. 파손 구역은 바닥 윗면을 실제로 생략하고 약 4.5cm 아래의 울퉁불퉁한 흙, 타일 단면, 남은 파편을 표시한다. 문·계단·기물 주변은 온전하게 유지한다. 흙 재질은 기존 [Poly Haven red_laterite_soil_stones](https://polyhaven.com/a/red_laterite_soil_stones) (CC0, [environment.md](environment.md))을 재사용한다. 각진 벽과 파손 타일 메시 출처: 프로젝트 자체 코드, 프로젝트와 동일 라이선스 (2026-09-18). 추가 이미지 생성 없음.
+
+[벽돌 돌출 밀도·반투명 가림 비교](../devlog/images/dungeon-masonry-fade-v6.webp) — 2026-09-18 자체 캡처, 프로젝트 소유 문서 이미지. 이전·수정 메시를 같은 카메라와 실제 반투명도 50%로 별도 Three.js 장면에서 비교했다. 캐릭터 대신 코드로 만든 마커를 두었으며 게임 플레이 스크린샷은 아니다. 오른쪽은 수정한 벽 안쪽의 일반 렌더링이다.
+
+**[미사용·5차 시안]** [각진 벽돌·파손 타일 미리보기](../devlog/images/dungeon-masonry-damage-v5.webp) — 2026-09-18 자체 캡처, 프로젝트 소유 문서 이미지. 돌출 벽돌이 많고 반투명 상태에서 내부 면이 겹쳤던 이전 모습.
+
+**[미사용·4차 시안]** [벽 돌출·함몰 미리보기](../devlog/images/dungeon-wall-relief-v4.webp) — 2026-09-18 자체 캡처, 프로젝트 소유 문서 이미지. 벽돌 벽에도 완만한 굴곡을 썼던 이전 모습.
+
+**[미사용·3차 시안]** [수직 벽·둥근 바닥 접점 미리보기](../devlog/images/dungeon-wall-base-v3.webp) — 2026-09-17 자체 캡처, 프로젝트 소유 문서 이미지. 벽 중간에 돌출·함몰을 넣기 전 모습.
+
+**[미사용·2차 시안]** [바닥·물웅덩이 미리보기](../devlog/images/dungeon-floor-detail-v2.webp) — 2026-09-17 자체 캡처, 프로젝트 소유 문서 이미지. 벽 상부가 넓었던 이전 단면.
+
+**[미사용·1차 시안]** [최초 자연 암반 3세트 미리보기](../devlog/images/dungeon-cave-sets.webp) — 2026-09-17 자체 캡처. 셰일 세트 교체와 바닥 장식·물웅덩이 변경 전 모습. 포함된 기존 방 재질은 위 Poly Haven CC0 출처를 따른다.
 
 ## Research
 

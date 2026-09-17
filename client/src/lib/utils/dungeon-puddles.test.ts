@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { DungeonFloorLayout } from '../managers/dungeonManager'
-import { dungeonPuddleRadius, generateDungeonPuddles } from './dungeon-puddles'
+import {
+  dungeonPuddleBounds,
+  dungeonPuddleRadius,
+  generateDungeonPuddles,
+} from './dungeon-puddles'
 
 const ctx = {
   grid: 64,
@@ -62,13 +66,14 @@ describe('dungeon puddle placement', () => {
     for (let seed = 0; seed < 100; seed++) {
       const puddles = generateDungeonPuddles(layout, ctx, `crypt-${seed}`)
       for (const p of puddles) {
+        const bounds = dungeonPuddleBounds(p)
         const region = roomAt(p.x, p.z)
         if (region < 0) corridors++
         else rooms++
-        for (let z = Math.floor(p.z - p.depth / 2); z <= p.z + p.depth / 2; z++)
+        for (let z = Math.floor(bounds.minZ); z < Math.ceil(bounds.maxZ); z++)
           for (
-            let x = Math.floor(p.x - p.width / 2);
-            x <= p.x + p.width / 2;
+            let x = Math.floor(bounds.minX);
+            x < Math.ceil(bounds.maxX);
             x++
           ) {
             expect(layout.carved[x + z * ctx.grid]).toBe(true)
@@ -77,6 +82,14 @@ describe('dungeon puddle placement', () => {
             expect(x >= 42 && x < 50 && z >= 44 && z < 46).toBe(false)
             expect(x === 45 && z === 5).toBe(false)
             expect(x === 12 && z === 12).toBe(false)
+            if (p.x - p.width / 2 < bounds.minX && x === bounds.minX)
+              expect(layout.carved[x - 1 + z * ctx.grid]).toBe(false)
+            if (p.x + p.width / 2 > bounds.maxX && x + 1 === bounds.maxX)
+              expect(layout.carved[x + 1 + z * ctx.grid]).toBe(false)
+            if (p.z - p.depth / 2 < bounds.minZ && z === bounds.minZ)
+              expect(layout.carved[x + (z - 1) * ctx.grid]).toBe(false)
+            if (p.z + p.depth / 2 > bounds.maxZ && z + 1 === bounds.maxZ)
+              expect(layout.carved[x + (z + 1) * ctx.grid]).toBe(false)
           }
       }
     }
@@ -120,6 +133,11 @@ describe('dungeon puddle placement', () => {
     for (const p of puddles) {
       counts[p.drips.length]++
       for (const drip of p.drips) {
+        const bounds = dungeonPuddleBounds(p)
+        expect(drip.x).toBeGreaterThanOrEqual(bounds.minX + 0.1)
+        expect(drip.x).toBeLessThanOrEqual(bounds.maxX - 0.1)
+        expect(drip.z).toBeGreaterThanOrEqual(bounds.minZ + 0.1)
+        expect(drip.z).toBeLessThanOrEqual(bounds.maxZ - 0.1)
         const dx = ((drip.x - p.x) * 2) / p.width
         const dz = ((drip.z - p.z) * 2) / p.depth
         const angle = Math.atan2(dz, dx)
@@ -137,5 +155,30 @@ describe('dungeon puddle placement', () => {
     }
     for (const count of counts)
       expect(count).toBeGreaterThan(puddles.length * 0.1)
+  })
+
+  it('cuts the actual water outline against walls in all four directions', () => {
+    const touching = [0, 0, 0, 0]
+    for (let index = 0; index < 40; index++) {
+      for (const p of generateDungeonPuddles(
+        fixture(),
+        ctx,
+        `edges-${index}`
+      )) {
+        const b = dungeonPuddleBounds(p)
+        const extents = [
+          p.x + (dungeonPuddleRadius(p.shape, 0) * p.width) / 2 > b.maxX,
+          p.z + (dungeonPuddleRadius(p.shape, Math.PI / 2) * p.depth) / 2 >
+            b.maxZ,
+          p.x - (dungeonPuddleRadius(p.shape, Math.PI) * p.width) / 2 < b.minX,
+          p.z - (dungeonPuddleRadius(p.shape, -Math.PI / 2) * p.depth) / 2 <
+            b.minZ,
+        ]
+        extents.forEach((cut, side) => {
+          if (cut) touching[side]++
+        })
+      }
+    }
+    expect(touching.every((count) => count > 10)).toBe(true)
   })
 })

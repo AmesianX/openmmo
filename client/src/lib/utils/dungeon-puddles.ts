@@ -25,6 +25,23 @@ export interface DungeonPuddle {
   seed: number
   shape: DungeonPuddleShape
   drips: DungeonDrip[]
+  clip?: DungeonPuddleBounds
+}
+
+export interface DungeonPuddleBounds {
+  minX: number
+  minZ: number
+  maxX: number
+  maxZ: number
+}
+
+export function dungeonPuddleBounds(p: DungeonPuddle): DungeonPuddleBounds {
+  return {
+    minX: Math.max(p.x - p.width / 2, p.clip?.minX ?? -Infinity),
+    minZ: Math.max(p.z - p.depth / 2, p.clip?.minZ ?? -Infinity),
+    maxX: Math.min(p.x + p.width / 2, p.clip?.maxX ?? Infinity),
+    maxZ: Math.min(p.z + p.depth / 2, p.clip?.maxZ ?? Infinity),
+  }
 }
 
 const MAX_PUDDLES = 96
@@ -51,6 +68,8 @@ export function generateDungeonPuddles(
     return seed / 4294967296
   }
   const { grid } = ctx
+  const carvedAt = (x: number, z: number) =>
+    x >= 0 && z >= 0 && x < grid && z < grid && layout.carved[x + z * grid]
   const roomAt = new Int16Array(grid * grid).fill(-1)
   layout.rooms.forEach((room, index) => {
     for (let z = room.z; z < room.z + room.d; z++)
@@ -66,11 +85,7 @@ export function generateDungeonPuddles(
     excluded.push({ x: layout.chest[0], z: layout.chest[1], w: 1, d: 1 })
 
   const eligible = (x: number, z: number, room: number) =>
-    x >= 0 &&
-    z >= 0 &&
-    x < grid &&
-    z < grid &&
-    layout.carved[x + z * grid] &&
+    carvedAt(x, z) &&
     roomAt[x + z * grid] === room &&
     !excluded.some((rect) => rectContains(rect, x, z))
 
@@ -93,6 +108,12 @@ export function generateDungeonPuddles(
     let acrossMax = acrossCell + 1
     while (at(alongCell, acrossMin - 1)) acrossMin--
     while (at(alongCell, acrossMax)) acrossMax++
+    const wallAt = (along: number, across: number) =>
+      !carvedAt(alongX ? along : across, alongX ? across : along)
+    const lowWall = wallAt(alongCell, acrossMin - 1)
+    const highWall = wallAt(alongCell, acrossMax)
+    const clipLow = acrossMin + (lowWall ? 0 : 0.08)
+    const clipHigh = acrossMax - (highWall ? 0 : 0.08)
 
     const sizeRoll = random()
     const scale =
@@ -105,17 +126,22 @@ export function generateDungeonPuddles(
     )
     const acrossLow = acrossMin + acrossSize / 2 + 0.08
     const acrossHigh = acrossMax - acrossSize / 2 - 0.08
-    const edgeBias = random() < 0.65
-    const fraction = edgeBias
-      ? random() < 0.5
-        ? random() * 0.12
-        : 1 - random() * 0.12
-      : random()
-    const across = acrossLow + (acrossHigh - acrossLow) * fraction
+    const edgeBias = random() < 0.65 && (lowWall || highWall)
+    const lowEdge = lowWall && (!highWall || random() < 0.5)
+    const inset = 0.06 + random() * 0.12
+    const across = edgeBias
+      ? lowEdge
+        ? acrossMin + inset
+        : acrossMax - inset
+      : acrossLow + (acrossHigh - acrossLow) * random()
     const stripAt = (along: number) => {
+      if (across - acrossSize / 2 < clipLow && !wallAt(along, acrossMin - 1))
+        return false
+      if (across + acrossSize / 2 > clipHigh && !wallAt(along, acrossMax))
+        return false
       for (
-        let cell = Math.floor(across - acrossSize / 2);
-        cell <= across + acrossSize / 2;
+        let cell = Math.floor(Math.max(clipLow, across - acrossSize / 2));
+        cell < Math.ceil(Math.min(clipHigh, across + acrossSize / 2));
         cell++
       )
         if (!at(along, cell)) return false
@@ -143,6 +169,12 @@ export function generateDungeonPuddles(
     const z = alongX ? across : along
     const width = alongX ? alongSize : acrossSize
     const depth = alongX ? acrossSize : alongSize
+    const clip = {
+      minX: alongX ? alongMin + 0.08 : clipLow,
+      minZ: alongX ? clipLow : alongMin + 0.08,
+      maxX: alongX ? alongMax - 0.08 : clipHigh,
+      maxZ: alongX ? clipHigh : alongMax - 0.08,
+    }
     if (
       puddles.some(
         (p) =>
@@ -159,20 +191,30 @@ export function generateDungeonPuddles(
     }
     const dripRoll = random()
     const dripCount = dripRoll < 0.3 ? 0 : dripRoll < 0.8 ? 1 : 2
-    const firstAngle = random() * Math.PI * 2
-    const drips = Array.from({ length: dripCount }, (_, index) => {
-      const angle = firstAngle + index * (Math.PI + (random() - 0.5) * 1.2)
+    const drips: DungeonDrip[] = []
+    for (let attempt = 0; attempt < 24 && drips.length < dripCount; attempt++) {
+      const angle = random() * Math.PI * 2
       const radius =
         (dungeonPuddleRadius(shape, angle) - 0.12) * (0.35 + random() * 0.4)
+      const dx = x + (Math.cos(angle) * radius * width) / 2
+      const dz = z + (Math.sin(angle) * radius * depth) / 2
+      if (
+        dx < clip.minX + 0.12 ||
+        dx > clip.maxX - 0.12 ||
+        dz < clip.minZ + 0.12 ||
+        dz > clip.maxZ - 0.12 ||
+        drips.some((drip) => Math.hypot(drip.x - dx, drip.z - dz) <= 0.12)
+      )
+        continue
       const period = 1.8 + random() * 2.8
-      return {
-        x: x + (Math.cos(angle) * radius * width) / 2,
-        z: z + (Math.sin(angle) * radius * depth) / 2,
+      drips.push({
+        x: dx,
+        z: dz,
         seed: random() * 100,
         period,
         phase: random() * period,
-      }
-    })
+      })
+    }
     puddles.push({
       x,
       z,
@@ -181,6 +223,7 @@ export function generateDungeonPuddles(
       seed: random() * 100,
       shape,
       drips,
+      clip,
     })
     return true
   }

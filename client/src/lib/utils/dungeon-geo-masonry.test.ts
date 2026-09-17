@@ -1,0 +1,180 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  Mesh,
+  MeshBasicMaterial,
+  Raycaster,
+  Vector3,
+  type BufferGeometry,
+  type Group,
+} from 'three'
+import type { DungeonFloorLayout } from '../managers/dungeonManager'
+import { buildMasonryWall } from './dungeon-geo-masonry'
+import { buildDungeonFloorGroup } from './dungeon-geo-floor'
+import { dungeonCaveTheme } from './dungeon-cave-themes'
+import { HOUSING_TEXTURES } from './housing-textures'
+import { DUNGEON_FLOOR_TEXTURE_IDX } from './dungeon-geo-constants'
+
+vi.mock('./dungeon-geo-doors', () => ({ buildInteriorDoor: vi.fn() }))
+
+const geometries: BufferGeometry[] = []
+const material = new MeshBasicMaterial()
+afterEach(() => {
+  for (const geo of geometries) geo.dispose()
+  geometries.length = 0
+  material.dispose()
+})
+
+describe('masonry walls', () => {
+  it.each([
+    [true, 1],
+    [true, -1],
+    [false, 1],
+    [false, -1],
+  ] as const)(
+    'has flat stepped brick faces and thin tops (alongX=%s, inward=%s)',
+    (alongX, inward) => {
+      const geo = buildMasonryWall(alongX, 2, 10, 5, inward, 3, 42)
+      geometries.push(geo)
+      const mesh = new Mesh(geo, material)
+      const point = (a: number, y: number, depth: number) =>
+        new Vector3(
+          alongX ? a : 5 + inward * depth,
+          y,
+          alongX ? 5 + inward * depth : a
+        )
+      const direction = point(0, 0, -1).sub(point(0, 0, 0))
+      const frontAt = (a: number, y: number) => {
+        const hits = new Raycaster(point(a, y, 1), direction).intersectObject(
+          mesh
+        )
+        const hit = hits[0]
+        expect(hit).toBeDefined()
+        expect(new Set(hits.map((h) => h.distance.toFixed(5))).size).toBe(1)
+        expect(hit.face!.normal.dot(direction)).toBeCloseTo(-1, 5)
+        return 1 - hit.distance
+      }
+      const depths: number[] = []
+      for (let row = 2; row < 12; row++) {
+        for (let column = 7; column < 20; column++) {
+          const a = ((column + 0.5 + (row % 2) * 0.5) * 4) / 9
+          const y = ((row + 0.5) * 2) / 9
+          const depth = frontAt(a, y)
+          expect(frontAt(a + 0.05, y + 0.025)).toBeCloseTo(depth, 5)
+          depths.push(depth)
+        }
+      }
+      expect(Math.max(...depths)).toBeGreaterThan(0.015)
+      expect(Math.max(...depths)).toBeLessThan(0.04001)
+      expect(Math.min(...depths)).toBeGreaterThan(-0.01201)
+      expect(depths.filter((depth) => depth > 0.001).length).toBeLessThan(
+        depths.length * 0.1
+      )
+      expect(
+        depths.filter((depth) => Math.abs(depth) < 0.001).length
+      ).toBeGreaterThan(depths.length * 0.9)
+      expect(frontAt(2.01, 1)).toBeCloseTo(0, 5)
+      expect(frontAt(9.99, 1)).toBeCloseTo(0, 5)
+      expect(frontAt(6, 2.98)).toBeCloseTo(0, 5)
+      const back = new Raycaster(
+        point(6, 1, -1),
+        direction.clone().negate()
+      ).intersectObject(mesh)[0]
+      expect(back.distance).toBeCloseTo(0.9, 5)
+      expect(geo.index!.count / 3).toBeLessThan(3000)
+    }
+  )
+
+  it('keeps brick depths stable across rebuilds', () => {
+    const first = buildMasonryWall(true, 2, 10, 5, 1, 3, 42)
+    const again = buildMasonryWall(true, 2, 10, 5, 1, 3, 42)
+    const other = buildMasonryWall(true, 2, 10, 5, 1, 3, 77)
+    geometries.push(first, again, other)
+    expect(first.getAttribute('position').array).toEqual(
+      again.getAttribute('position').array
+    )
+    expect(first.getAttribute('position').array).not.toEqual(
+      other.getAttribute('position').array
+    )
+  })
+})
+
+const ctx = { grid: 32, wallHeight: 3, floorHeight: 4, shaftW: 2, shaftLen: 8 }
+const carved = Array<boolean>(ctx.grid ** 2).fill(false)
+for (let z = 2; z < 28; z++)
+  for (let x = 4; x < 8; x++) carved[x + z * ctx.grid] = true
+const layout: DungeonFloorLayout = {
+  depth: 1,
+  carved,
+  rooms: [{ x: 4, z: 24, w: 4, d: 4 }],
+  upShaft: { x: 4, z: 2, alongZ: true, reversed: false },
+  downShaft: { x: 6, z: 2, alongZ: true, reversed: false },
+  props: [{ x: 4, z: 12, kind: 'barrel', rotation: 0, stack: 1 }],
+  chest: [7, 18],
+  spawns: [],
+}
+const dungeonId = 'floor-review-111'
+const soilTexture = HOUSING_TEXTURES.findIndex(
+  (entry) => entry.glb === 'red_laterite_soil_stones_1k'
+)
+function buildFloor() {
+  const { group } = buildDungeonFloorGroup(layout, ctx, [], dungeonId)
+  group.traverse((obj) => {
+    if (obj instanceof Mesh) geometries.push(obj.geometry)
+  })
+  return group
+}
+const groundAt = (group: Group, x: number, z: number) =>
+  new Raycaster(
+    new Vector3(x, 0.5, z),
+    new Vector3(0, -1, 0),
+    0,
+    1
+  ).intersectObject(group)[0]
+
+describe('damaged masonry floors', () => {
+  it('exposes pickable soil below missing tiles with shallow broken edges', () => {
+    expect(dungeonCaveTheme(dungeonId, 1).id).toBe('masonry')
+    const group = buildFloor()
+    let soilHits = 0
+    let raisedHits = 0
+    let intactHits = 0
+    for (let z = 10.625; z < 23.5; z += 0.25) {
+      for (let x = 4.125; x < 8; x += 0.25) {
+        const hit = groundAt(group, x, z)
+        expect(hit).toBeDefined()
+        expect(hit.point.y).toBeGreaterThan(-0.046)
+        expect(hit.point.y).toBeLessThan(0.025)
+        if (hit.object.userData.textureIndex === soilTexture) {
+          soilHits++
+          expect(hit.point.y).toBeLessThan(-0.03)
+        } else if (hit.point.y > 0.001) raisedHits++
+        else if (Math.abs(hit.point.y) < 0.00001) intactHits++
+      }
+    }
+    expect(soilHits).toBeGreaterThan(20)
+    expect(raisedHits).toBeGreaterThan(5)
+    expect(intactHits).toBeGreaterThan(soilHits * 3)
+    expect(groundAt(group, 3.9, 16)).toBeUndefined()
+  })
+
+  it('preserves rooms, shaft openings, and clearance around props and chests', () => {
+    const group = buildFloor()
+    const floorTexture = dungeonCaveTheme(dungeonId, 1).floorTexture
+    for (const [x, z] of [
+      [4.25, 12.25],
+      [5.25, 12.75],
+      [7.25, 18.25],
+      [6.75, 19.25],
+      [4.25, 10.25],
+      [6.25, 23.75],
+    ]) {
+      const hit = groundAt(group, x, z)
+      expect(hit.object.userData.textureIndex).toBe(floorTexture)
+      expect(hit.point.y).toBeCloseTo(0, 5)
+    }
+    expect(groundAt(group, 5.25, 25.25).object.userData.textureIndex).toBe(
+      DUNGEON_FLOOR_TEXTURE_IDX
+    )
+    expect(groundAt(group, 6.5, 7.5)).toBeUndefined()
+  })
+})
