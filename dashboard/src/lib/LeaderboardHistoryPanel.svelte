@@ -2,6 +2,7 @@
   import MetricsError from './MetricsError.svelte'
   import GoldAmount from './GoldAmount.svelte'
   import PeriodFilter from './PeriodFilter.svelte'
+  import { createChartSelection } from './chartSelection.svelte'
   import { axisRange, formatAxisTime, formatDateTime, leaderboardMetrics, leaderboardPeriods, type LeaderboardHours, type CharacterLeaderboard, type LeaderboardMetric } from './metrics'
   import { sampleAt, stepPath } from './leaderboardHistory'
 
@@ -21,7 +22,7 @@
   let container = $state<HTMLDivElement>()
   let width = $state(600)
   let height = $state(360)
-  let selectedTime = $state<number | null>(null)
+  const selection = createChartSelection(timeAtPointer, () => leaderboard?.timestamp ?? null, () => `${hours}:${metric}`)
   let period = $derived(leaderboardPeriods.find((option) => option.hours === hours)!)
   let series = $derived(leaderboard?.series ?? [])
   let focused = $derived(series.some((entry) => entry.name === selectedCharacter) ? selectedCharacter : null)
@@ -48,13 +49,13 @@
   let { floor, ceiling, ticks } = $derived(axisRange(minimum, maximum, padding, maximum - minimum + (metric === 'gold' ? padding * 2 : 0)))
   const x = (timestamp: number) => left + (timestamp - (leaderboard?.from ?? 0)) / (hours * 3600) * plotWidth
   const y = (value: number) => top + plotHeight * (1 - (value - floor) / (ceiling - floor))
-  let selected = $derived(leaderboard && selectedTime !== null && selectedTime >= leaderboard.from && selectedTime <= leaderboard.timestamp ? selectedTime : null)
+  let selected = $derived(leaderboard && selection.time !== null && selection.time >= leaderboard.from && selection.time <= leaderboard.timestamp ? selection.time : null)
   let tooltipLeft = $derived(selected === null ? 0 : Math.max(8, Math.min(width - 276, x(selected) - 132)))
 
-  function selectAtPointer(event: PointerEvent) {
-    if (!leaderboard || !container) return
+  function timeAtPointer(event: MouseEvent) {
+    if (!leaderboard || !container) return null
     const fraction = Math.max(0, Math.min(1, (event.clientX - container.getBoundingClientRect().left - left) / plotWidth))
-    selectedTime = Math.round(leaderboard.from + fraction * hours * 3600)
+    return Math.round(leaderboard.from + fraction * hours * 3600)
   }
 </script>
 
@@ -72,8 +73,8 @@
   {#if leaderboard && series.length > 0}
     <div class="chart-canvas" style:min-height={width < 450 ? '280px' : '360px'} bind:this={container}
       bind:contentRect={null, (rect: DOMRectReadOnly | null | undefined) => { if (rect) { width = rect.width; height = rect.height } }}>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`최근 ${period.label} ${metric === 'weapon_enchant' ? '+7 이상 무기 보유' : '상위'} ${series.length}명 ${label} 변화. 캐릭터별 색상은 표와 같습니다.`}
-        onpointermove={selectAtPointer} onpointerleave={() => { selectedTime = null }}>
+      <svg viewBox={`0 0 ${width} ${height}`} role="button" tabindex="0" aria-pressed={selection.pinned} aria-label={`최근 ${period.label} ${metric === 'weapon_enchant' ? '+7 이상 무기 보유' : '상위'} ${series.length}명 ${label} 변화. 캐릭터별 색상은 표와 같습니다. 클릭 또는 Enter로 시점 고정, 다시 클릭 또는 Esc로 해제.`}
+        {...selection.handlers}>
         {#each ticks as tick (tick)}
           <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} class="grid-line" />
           <text x={left - 10} y={y(tick) + 4} text-anchor="end" class="axis-label">{#if metric === 'gold'}<GoldAmount copper={tick} svg />{:else}{enchantPrefix}{tick}{/if}</text>
@@ -108,6 +109,7 @@
             {@const sample = sampleAt(entry.samples, selected)}
             <div class="tooltip-entry"><span><i style:background={colors[entry.name]}></i>{entry.name}</span><b>{#if !sample}기록 없음{:else if metric === 'gold'}<GoldAmount copper={sample[metric]} />{:else if metric === 'land_plots'}{sample[metric].toLocaleString('ko-KR')} 필지{:else}{enchantPrefix || 'Lv. '}{sample[metric]}{/if}</b></div>
           {/each}
+          <span>{selection.hint}</span>
         </div>
       {/if}
     </div>

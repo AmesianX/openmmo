@@ -1,5 +1,6 @@
 <script lang="ts" generics="T extends TimestampSample">
   import type { Snippet } from 'svelte'
+  import { createChartSelection } from './chartSelection.svelte'
   import { axisRange, axisStep, formatAxisTime, formatCount, formatDateTime, formatPeriod, nearestSample, splitSegments, type ChartMarker, type TimestampSample, type ChartHistory } from './metrics'
 
   let { history, peak, value, legend, legendLabel = legend, valueLabel, unit = '계정', peakLabel = '기간 최고 접속', axisWidth: left = 42, formatValue = formatCount, fitAxis = false, markers = [], amount, layers, detail, legends }: {
@@ -22,7 +23,7 @@
   } = $props()
   let container: HTMLDivElement
   let width = $state(1000)
-  let selectedTime = $state<number | null>(null)
+  const selection = createChartSelection(timeAtPointer, () => history.samples.at(-1)?.timestamp ?? null, () => `${hours}:${history.sample_interval_seconds}`)
   let height = $derived(width < 600 ? 260 : 320)
   let hours = $derived((history.until - history.from) / 3600)
   let daily = $derived(history.sample_interval_seconds >= 86400)
@@ -46,8 +47,8 @@
   let segments = $derived(splitSegments(history.samples, history.sample_interval_seconds))
   let visibleMarkers = $derived(markers.filter((marker) => marker.timestamp >= history.from && marker.timestamp <= history.until))
   let showMarkerLabels = $derived(visibleMarkers.length <= 8)
-  let selectedIndex = $derived(selectedTime === null ? null : nearestSample(history.samples, selectedTime))
-  let selected = $derived(selectedIndex === null ? null : history.samples[selectedIndex])
+  let selectedIndex = $derived(selection.time === null ? null : nearestSample(history.samples, selection.time))
+  let selected = $derived(selectedIndex !== null && history.samples[selectedIndex].timestamp === selection.time ? history.samples[selectedIndex] : null)
   const x = (timestamp: number) => left + (timestamp - history.from) / (history.until - history.from) * plotWidth
   const y = (amount: number) => top + plotHeight * (1 - (amount - floor) / (ceiling - floor))
   let tooltipLeft = $derived(selected ? Math.max(8, Math.min(width - 244, x(selected.timestamp) - 118)) : 0)
@@ -56,18 +57,18 @@
     return samples.map((sample, index) => `${index === 0 ? 'M' : 'L'}${x(sample.timestamp)},${y(value(sample))}`).join(' ')
   }
 
-  function selectAtPointer(event: PointerEvent) {
+  function timeAtPointer(event: MouseEvent) {
     const fraction = Math.max(0, Math.min(1, (event.clientX - container.getBoundingClientRect().left - left) / plotWidth))
     const timestamp = history.from + fraction * (history.until - history.from)
     const index = nearestSample(history.samples, timestamp)
-    selectedTime = index !== null && Math.abs(history.samples[index].timestamp - timestamp) <= Math.max(history.sample_interval_seconds, (history.until - history.from) * 12 / plotWidth)
+    return index !== null && Math.abs(history.samples[index].timestamp - timestamp) <= Math.max(history.sample_interval_seconds, (history.until - history.from) * 12 / plotWidth)
       ? history.samples[index].timestamp : null
   }
 </script>
 
 <div class="chart-canvas" bind:this={container} bind:contentRect={null, (rect: DOMRectReadOnly | null | undefined) => { if (rect) width = rect.width }}>
-  <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`최근 ${formatPeriod(hours)} ${legend} 그래프. ${history.samples.length}개 지점.${peak === null ? '' : ` 가로 점선은 ${peakLabel} ${formatValue(peak)}${unit} 기준입니다.`}`}
-    onpointermove={selectAtPointer} onpointerleave={() => { selectedTime = null }}>
+  <svg viewBox={`0 0 ${width} ${height}`} role="button" tabindex="0" aria-pressed={selection.pinned} aria-label={`최근 ${formatPeriod(hours)} ${legend} 그래프. ${history.samples.length}개 지점.${peak === null ? '' : ` 가로 점선은 ${peakLabel} ${formatValue(peak)}${unit} 기준입니다.`} 클릭 또는 Enter로 시점 고정, 다시 클릭 또는 Esc로 해제.`}
+    {...selection.handlers}>
     {#each ticks as tick (tick)}
       <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} class="grid-line" />
       <text x={left - 14} y={y(tick) + 4} text-anchor="end" class="axis-label">{#if amount}{@render amount(tick, true)}{:else}{tick}{/if}</text>
@@ -110,6 +111,7 @@
       <span>{formatDateTime(selected.timestamp)}</span>
       <strong>{#if amount}{@render amount(value(selected), false)}{:else}{formatValue(value(selected))}{/if} <small>{valueLabel}</small></strong>
       {@render detail?.(selected)}
+      <span>{selection.hint}</span>
     </div>
   {/if}
 </div>

@@ -94,6 +94,8 @@ h2 { font-size: 16px; font-weight: 600; letter-spacing: -.5px; margin: 0; }
 .chart-meta { display: flex; justify-content: space-between; margin: 20px 0 2px; color: #98a59e; font-size: 10px; }
 .chart-canvas { position: relative; width: 100%; }
 .chart-canvas > svg { width: 100%; overflow: visible; }
+.chart-canvas > svg[role="button"] { cursor: crosshair; }
+.chart-canvas > svg:focus-visible { outline: 2px solid #83b7ac; outline-offset: 4px; border-radius: 4px; }
 .grid-line { stroke: #edf1ee; stroke-width: 1; stroke-dasharray: 3 4; }
 .axis-label { fill: #92a098; font: 10px 'Noto Sans KR', sans-serif; font-variant-numeric: tabular-nums; }
 .peak-line { stroke: #b37b30; stroke-width: 1.5; stroke-dasharray: 6 4; }

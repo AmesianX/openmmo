@@ -3,6 +3,7 @@
   import GoldAmount from './GoldAmount.svelte'
   import MetricsError from './MetricsError.svelte'
   import PeriodFilter from './PeriodFilter.svelte'
+  import { createChartSelection } from './chartSelection.svelte'
   import { axisRange, formatAxisTime, formatCount, formatDateTime, leaderboardPeriods, nearestSample, type LeaderboardHours, type PriceIndexHistory } from './metrics'
   import { stepPath } from './leaderboardHistory'
 
@@ -15,7 +16,7 @@
   let container = $state<HTMLDivElement>()
   let width = $state(600)
   let height = $state(320)
-  let selectedTime = $state<number | null>(null)
+  const selection = createChartSelection(timeAtPointer, () => meetings.at(-1)?.timestamp ?? null, () => hours)
   const left = 48
   const right = 18
   const top = 24
@@ -30,17 +31,17 @@
   let { floor, ceiling, ticks } = $derived(axisRange(minimum, maximum, 5))
   const x = (timestamp: number) => left + (timestamp - (history?.from ?? 0)) / (hours * 3600) * plotWidth
   const y = (value: number) => top + plotHeight * (1 - (value - floor) / (ceiling - floor))
-  let selected = $derived(meetings.find((meeting) => meeting.timestamp === selectedTime) ?? null)
+  let selected = $derived(meetings.find((meeting) => meeting.timestamp === selection.time) ?? null)
   let tooltipLeft = $derived(selected ? Math.max(8, Math.min(width - 244, x(selected.timestamp) - 118)) : 0)
   let last = $derived(meetings.at(-1))
   const signed = (ratio: number) => `${ratio > 0 ? '+' : ''}${formatCount(ratio * 100)}%`
 
-  function selectAtPointer(event: PointerEvent) {
-    if (!history || !container) return
+  function timeAtPointer(event: MouseEvent) {
+    if (!history || !container) return null
     const fraction = Math.max(0, Math.min(1, (event.clientX - container.getBoundingClientRect().left - left) / plotWidth))
     const timestamp = history.from + fraction * hours * 3600
     const index = nearestSample(meetings, timestamp)
-    selectedTime = index !== null && Math.abs(meetings[index].timestamp - timestamp) <= hours * 3600 * 16 / plotWidth ? meetings[index].timestamp : null
+    return index !== null && Math.abs(meetings[index].timestamp - timestamp) <= hours * 3600 * 16 / plotWidth ? meetings[index].timestamp : null
   }
 </script>
 
@@ -61,8 +62,8 @@
   {#if history}
     <div class="chart-canvas" style:min-height={width < 450 ? '260px' : '320px'} bind:this={container}
       bind:contentRect={null, (rect: DOMRectReadOnly | null | undefined) => { if (rect) { width = rect.width; height = rect.height } }}>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`최근 ${period.label} 상인 물가 지수 변화. ${meetings.length}회 회의.`}
-        onpointermove={selectAtPointer} onpointerleave={() => { selectedTime = null }}>
+      <svg viewBox={`0 0 ${width} ${height}`} role="button" tabindex="0" aria-pressed={selection.pinned} aria-label={`최근 ${period.label} 상인 물가 지수 변화. ${meetings.length}회 회의. 클릭 또는 Enter로 시점 고정, 다시 클릭 또는 Esc로 해제.`}
+        {...selection.handlers}>
         {#each ticks as tick (tick)}
           <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} class="grid-line" />
           <text x={left - 10} y={y(tick) + 4} text-anchor="end" class="axis-label">{tick}%</text>
@@ -86,6 +87,7 @@
           <span>{formatDateTime(selected.timestamp)} KST · 게임일 {selected.game_day}</span>
           <strong>{selected.index_before}% → {selected.index_after}%</strong>
           <span>활성 유저 1인당 골드 {signed(selected.growth)} · <GoldAmount copper={selected.m_prev} /> → <GoldAmount copper={selected.m_now} /></span>
+          <span>{selection.hint}</span>
         </div>
       {/if}
     </div>
