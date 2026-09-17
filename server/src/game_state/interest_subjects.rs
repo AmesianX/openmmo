@@ -213,7 +213,7 @@ impl Interest {
                                 ServerMessage::PlayerTorchToggled { enabled, .. } => { player.torch_on = *enabled; },
                                 ServerMessage::PlayerRadianceToggled { enabled, .. } => { player.radiance_on = *enabled; },
                                 ServerMessage::PlayerWetToggled { wet, .. } => { player.wet = *wet; },
-                                ServerMessage::PlayerMountChanged { mounted, .. } => { player.mounted = *mounted; },
+                                ServerMessage::PlayerMountChanged { mount, .. } => { player.mount = *mount; },
                                 ServerMessage::PlayerTitleChanged { title, .. } => { player.title = title.clone(); },
                                 ServerMessage::PlayerMainHandChanged { item_def_id, .. } => { player.main_hand = item_def_id.clone(); },
                                 ServerMessage::PlayerBackChanged { item_def_id, cape_color, cape_texture, .. } => { player.back = item_def_id.clone(); player.back_color = cape_color.clone(); player.back_texture = cape_texture.clone(); },

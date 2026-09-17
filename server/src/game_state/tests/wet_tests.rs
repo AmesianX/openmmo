@@ -32,6 +32,7 @@ fn step_to(player_id: PlayerId, x: f32, floor_level: i8) -> MoveStep {
         to,
         floor_level,
         is_official_npc: false,
+        mount: None,
     }
 }
 
@@ -669,4 +670,19 @@ async fn wet_path_cost_at_scale() {
         "tick_campfire_drying, {USERS} wet x 200 fires: {:?}",
         start.elapsed()
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_boat_rider_does_not_get_wet() {
+    let game_state = make_test_game_state("wet_rowboat");
+    let (id, _rx) = make_wader(&game_state, "rower").await;
+
+    let mut afloat = step_to(id, -100.0, 0);
+    afloat.mount = Some(onlinerpg_shared::mount::MountKind::Rowboat);
+    soak(&game_state, &[afloat]).await;
+    assert_eq!(wet_remaining(&game_state, &id).await, None);
+
+    // The same crossing on foot still soaks, so the exemption is the boat.
+    soak(&game_state, &[step_to(id, -100.0, 0)]).await;
+    assert!(wet_remaining(&game_state, &id).await.is_some());
 }

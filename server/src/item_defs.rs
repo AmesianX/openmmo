@@ -229,7 +229,8 @@ pub struct EatEffect {
 /// The effect produced by consuming a usable item via `use_item`, decided by
 /// the item's `category`. One place to extend when a new consumable lands.
 pub enum UseEffect {
-    ToggleMount,
+    /// Board or leave the mount this item carries.
+    ToggleMount(onlinerpg_shared::mount::MountKind),
     /// Restore HP by rolling the given dice notation.
     Heal(String),
     /// Restore satiation and regenerate HP from nutrition; `debuff` is
@@ -405,7 +406,12 @@ impl ItemDefinition {
             }),
             "campfire_kit" => Some(UseEffect::PlaceCampfire),
             "return_scroll" => Some(UseEffect::TeleportTown),
-            "horse_reins" => Some(UseEffect::ToggleMount),
+            "horse_reins" => Some(UseEffect::ToggleMount(
+                onlinerpg_shared::mount::MountKind::Horse,
+            )),
+            "rowboat" => Some(UseEffect::ToggleMount(
+                onlinerpg_shared::mount::MountKind::Rowboat,
+            )),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
             "enchant_armor_scroll" => Some(UseEffect::EnchantArmor),
             "party_summon_scroll" => Some(UseEffect::SummonParty),

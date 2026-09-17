@@ -8,6 +8,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::character::{CharacterClass, Gender};
+use crate::mount::MountKind;
 use crate::world::Position;
 
 /// A live player's session handle. Minted fresh on every login and dropped on
@@ -99,7 +100,7 @@ pub struct Player {
     #[serde(default)]
     pub object_id: Option<u32>,
     #[serde(default)]
-    pub mounted: bool,
+    pub mount: Option<MountKind>,
     #[serde(default)]
     pub radiance_on: bool,
     #[serde(skip)]
@@ -125,6 +126,10 @@ impl Player {
 
     pub fn is_damageable(&self, now_ms: u64) -> bool {
         self.health > 0 && self.is_ready(now_ms)
+    }
+
+    pub fn is_mounted(&self) -> bool {
+        self.mount.is_some()
     }
 }
 
@@ -342,7 +347,7 @@ mod tests {
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),
-            mounted: false,
+            mount: None,
             ready_at: 0,
             back_color: None,
             back_texture: None,
@@ -388,7 +393,7 @@ mod tests {
             object_id: Some(52),
             last_combat_at: 0,
             client_kind: ClientKind::default(),
-            mounted: false,
+            mount: None,
             ready_at: 0,
             back_color: None,
             back_texture: None,

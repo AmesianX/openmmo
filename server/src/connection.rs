@@ -1189,6 +1189,7 @@ async fn handle_client_message(
                         player.floor_level as u8,
                         &player.position,
                         player.position.y,
+                        player.mount,
                     )
                     .await;
             }

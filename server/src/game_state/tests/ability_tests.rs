@@ -195,7 +195,7 @@ async fn bow_mark_rejects_dead_loading_and_mounted_casters() {
             let caster = players.get_mut(&pid("caster")).unwrap();
             caster.health = health;
             caster.ready_at = ready_at;
-            caster.mounted = mounted;
+            caster.mount = mounted.then_some(onlinerpg_shared::mount::MountKind::Horse);
         }
         gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
             .await;
@@ -206,7 +206,7 @@ async fn bow_mark_rejects_dead_loading_and_mounted_casters() {
         .await
         .get_mut(&pid("caster"))
         .unwrap()
-        .mounted = false;
+        .mount = None;
     gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
         .await;
     assert!(gs
@@ -574,7 +574,7 @@ async fn radiance_rejects_dead_loading_and_mounted_casters_and_clears_on_death_o
             } else {
                 0
             };
-            player.mounted = state == 2;
+            player.mount = (state == 2).then_some(onlinerpg_shared::mount::MountKind::Horse);
         }
         gs.use_ability(&pid("caster"), RADIANCE).await;
         rejected(&mut rx, AbilityRejectReason::Unavailable);
@@ -584,7 +584,7 @@ async fn radiance_rejects_dead_loading_and_mounted_casters_and_clears_on_death_o
         .await
         .get_mut(&pid("caster"))
         .unwrap()
-        .mounted = false;
+        .mount = None;
     gs.use_ability(&pid("caster"), RADIANCE).await;
     assert!(gs.get_all_players().await[&pid("caster")].radiance_on);
     gs.players

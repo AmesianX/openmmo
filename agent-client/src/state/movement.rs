@@ -47,21 +47,26 @@ impl SharedState {
     pub fn mount_turn_delay_ms(&self, rotation: f32) -> u64 {
         self.self_player
             .as_ref()
-            .filter(|p| p.mounted)
-            .map_or(0, |p| {
+            .and_then(|p| p.mount.map(|kind| (p, kind)))
+            .map_or(0, |(p, kind)| {
                 let speed = onlinerpg_shared::PLAYER_MOVE_SPEED * self.movement_speed_mult();
-                (onlinerpg_shared::mount_movement::turn_delay(p.rotation, rotation, speed) * 1000.0)
+                (onlinerpg_shared::mount_movement::turn_delay(
+                    p.rotation,
+                    rotation,
+                    speed,
+                    kind.turn_radius(),
+                ) * 1000.0)
                     .ceil() as u64
             })
     }
 
     pub fn movement_speed_mult(&self) -> f32 {
         self.self_move_mult
-            * if self.self_player.as_ref().is_some_and(|p| p.mounted) {
-                onlinerpg_shared::world::HORSE_MOVE_MULT
-            } else {
-                1.0
-            }
+            * self
+                .self_player
+                .as_ref()
+                .and_then(|p| p.mount)
+                .map_or(1.0, onlinerpg_shared::mount::MountKind::speed_mult)
     }
 
     /// Resolve a visible `move` target by id shape, then by exact name.

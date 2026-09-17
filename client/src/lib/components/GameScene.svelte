@@ -62,6 +62,7 @@
     playerInsideHouseId,
   } from '../stores/housingStore'
   import { drainTileWork } from '../utils/tileWorkQueue'
+  import { isMounted } from '../utils/mounts'
   import { FRAME_TIME_MS, FRAME_TOLERANCE_MS } from '../utils/frameTiming'
   import { createRenderCadence } from '../utils/renderCadence'
   import { bootstrapSceneAssets } from './game-scene/asset-bootstrap'
@@ -223,6 +224,10 @@
   const waterFieldManager = new WaterFieldManager()
   monsterManager.heightManager = terrainHeightManager
   remotePlayerManager.heightManager = terrainHeightManager
+  remotePlayerManager.waterSurfaceAt = (x, z) =>
+    waterFieldManager.surfaceAt(x, z)
+  remotePlayerManager.hasWaterSurfaceData = (x, z) =>
+    waterFieldManager.hasSurfaceData(x, z)
   editorHeightManager.set(terrainHeightManager)
   editorSplatManager.set(terrainSplatManager)
   editorZoneManager.set(new ZoneManager())
@@ -243,6 +248,8 @@
   let shoreSprayRef = $state<GameSceneShoreSprayLayer | undefined>(undefined)
   const waterSurfaceAt = (x: number, z: number) =>
     waterFieldManager.surfaceAt(x, z)
+  const hasWaterSurfaceData = (x: number, z: number) =>
+    waterFieldManager.hasSurfaceData(x, z)
   let footprintsRef = $state<GameSceneFootprintsLayer | undefined>(undefined)
   let grassLayerRef = $state<GameSceneGrassLayer | undefined>(undefined)
   let treeLayerRef = $state<GameSceneTreeLayer | undefined>(undefined)
@@ -1427,7 +1434,7 @@
 {/if}
 
 <GameSceneFootprintsLayer
-  mounted={currentPlayer?.mounted}
+  mounted={isMounted(currentPlayer)}
   bind:this={footprintsRef}
   playerPosition={currentPlayer?.position ?? null}
   remotePlayers={remotePlayerManager.players}
@@ -1478,6 +1485,7 @@
     houseTorchPositions={() => objectOverlayRef?.getTorchPositions() ?? []}
     heightManager={terrainHeightManager}
     {waterSurfaceAt}
+    {hasWaterSurfaceData}
     onStateChange={handlePlayerStateChange}
     onPlayerControlEvent={enqueuePlayerControlEvent}
     onAttackDuration={(duration) => (playerAttackDuration = duration)}

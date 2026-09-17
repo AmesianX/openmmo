@@ -45,6 +45,8 @@ pub(super) struct MoveStep {
     pub to: Position,
     pub floor_level: i8,
     pub is_official_npc: bool,
+    /// What they were riding, so the soaking check can skip a dry deck.
+    pub mount: Option<onlinerpg_shared::mount::MountKind>,
 }
 
 impl super::GameState {

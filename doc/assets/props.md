@@ -31,6 +31,21 @@
 - rustic_bed.glb — Meshy AI "Rustic Wooden Bed" (Pro 요금제, 2026-08-30 생성, 소스 `assets/Meshy_AI_Rustic_Wooden_Bed_0830120934_texture.glb`). 완전 소유권·상업 OK (characters.md License 참조). 집 안에 놓는 소박한 나무 침대 — 둥근 손잡이 기둥 4개·아치 헤드보드·베개·갈색 담요. Blender에서 긴 쪽(길이) 2.2m로 스케일 적용(0.91×0.98×2.20 W×H×D, 기존 bed.glb 2.58m보다 작게), 원점=바닥·발끝(bed.glb처럼 눕는 위치가 원점이라 머리판이 -Z 끝, 발끝이 z 0), 텍스처 2048→1024(2m 가구라 512는 흐림), JPEG q85로 export(0.37MB), 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² `client/public/items/objects/rustic_bed.png` (2026-08-30). items.csv `rustic_bed` furniture, catalog.json sleep(offset y 0.56)·solid
     - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, 2026-08-30) ![원화](../images/props/rustic_bed.png)
 
+## Mounts
+
+- rowboat.glb — `tools/blender-scripts/build_rowboat.py`가 절차적으로 생성하는 노 젓는 배 (2026-09-14,
+  Blender 5.2.1 LTS). 외부 모델·텍스처·AI 생성물 없음, 저장소 라이선스를 따른다.
+  스크립트가 원본이며 재실행하면 같은 결과가 나온다 (`blender -b -P tools/blender-scripts/build_rowboat.py`).
+  선체는 단면 19점 × 길이 37 스테이션을 5cm 판재 두께로 안팎 두 겹 로프팅한 닫힌 셸(외피+내피+현연+선수미 캡)이고,
+  가로보 3개(`ThwartBow`/`ThwartMid`/`ThwartStern`)와 노 2개(`OarPort`/`OarStarboard`)는 클라이언트가
+  따로 돌릴 수 있게 별도 노드다. 삼각형 3,116개, 텍스처 없이 단색 머티리얼 2개(`BoatOak`, `BoatTrim`).
+  크기 1.37×3.40m(폭×길이), 용골 -0.15m ~ 뱃전 0.53m.
+  **원점은 용골이 아니라 흘수선**(draft 0.15m)이라 샘플링한 수면 높이에 그대로 올리면 된다.
+  뱃머리는 Blender -Y = **glTF +Z**. 탑승점은 말과 같은 이름의 빈 오브젝트 `RideSeat`
+  (고물 가로보 위, glTF 기준 `[0, 0.196, -0.748]`). 아이콘 `client/public/items/objects/rowboat.png`는
+  같은 스크립트가 `icon_render` 공용 레시피로 렌더한다.
+  말 출처는 [animals.md](animals.md), 게임 규칙은 [MOUNTS.md](../MOUNTS.md).
+
 ## House
 
 Poly Haven에서 받은 .gltf를 Blender에서 .glb로 다시 export

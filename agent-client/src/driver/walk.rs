@@ -309,7 +309,7 @@ async fn recover_mount(
         if !s
             .self_player
             .as_ref()
-            .is_some_and(|p| p.mounted && p.health > 0)
+            .is_some_and(|p| p.is_mounted() && p.health > 0)
         {
             return false;
         }
@@ -409,7 +409,7 @@ pub(super) async fn walk(
                 .await
                 .self_player
                 .as_ref()
-                .is_some_and(|p| p.mounted);
+                .is_some_and(|p| p.is_mounted());
             if mounted && !recovery_attempted {
                 recovery_attempted = true;
                 sprint = Some(false);
@@ -909,7 +909,13 @@ mod tests {
                     Walked::Lost(LostReason::Desynced)
                 }
             );
-            assert!(state.lock().await.self_player.as_ref().unwrap().mounted);
+            assert!(state
+                .lock()
+                .await
+                .self_player
+                .as_ref()
+                .unwrap()
+                .is_mounted());
         }
     }
 
@@ -985,7 +991,7 @@ mod tests {
     ) -> (SharedState, tokio::sync::mpsc::Receiver<ClientMessage>) {
         let (mut state, rx) = test_state();
         let mut player = test_player(x, z);
-        player.mounted = mounted;
+        player.mount = (mounted).then_some(onlinerpg_shared::mount::MountKind::Horse);
         state.push_event(ServerMessage::JoinSuccess {
             player,
             is_admin: false,

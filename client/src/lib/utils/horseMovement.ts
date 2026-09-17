@@ -88,7 +88,8 @@ export function moveHorse(
   rotation: number,
   speed: number,
   dt: number,
-  goal: Position | number
+  goal: Position | number,
+  turnRadius = HORSE_TURN_RADIUS
 ): MovementResult {
   let current = { ...position }
   let remaining = Math.max(0, dt)
@@ -107,9 +108,7 @@ export function moveHorse(
     const desired = typeof goal === 'number' ? goal : Math.atan2(dx, dz)
     const stepTime = Math.min(remaining, STEP_SECONDS)
     const radius =
-      typeof goal === 'number'
-        ? HORSE_TURN_RADIUS
-        : Math.min(HORSE_TURN_RADIUS, distance / 4)
+      typeof goal === 'number' ? turnRadius : Math.min(turnRadius, distance / 4)
     const step = horseArcStep(rotation, desired, speed, stepTime, radius)
     const next = { x: current.x + step.x, y: current.y, z: current.z + step.z }
     distanceMoved += Math.hypot(next.x - current.x, next.z - current.z)

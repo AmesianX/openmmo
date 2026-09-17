@@ -37,7 +37,7 @@ export type ServerPlayer = {
   class: CharacterClass
   gender: Gender
   is_official_npc: boolean
-  mounted?: boolean
+  mount?: MountKind | null
   torch_on: boolean
   radiance_on?: boolean
   floor_level: number
@@ -402,6 +402,9 @@ export type EstateChestState = {
 
 /** Trained-skill ids (shared `SkillId` wire strings). */
 export type SkillId = 'fishing'
+
+/** Shared `MountKind` wire strings (`Player::mount`). */
+export type MountKind = 'horse' | 'rowboat'
 
 /** Shared `FishingAction` wire strings (`ClientMessage::FishingRespond`).
  *  `hook` answers a bite; the rest are held stances during the fight. */

@@ -7,7 +7,7 @@ fn mounted_movement_waits_for_turning_before_the_next_leg() {
     me.rotation = 0.0;
     s.self_player = Some(me.clone());
     assert_eq!(s.mount_turn_delay_ms(std::f32::consts::PI), 0);
-    me.mounted = true;
+    me.mount = Some(onlinerpg_shared::mount::MountKind::Horse);
     s.self_player = Some(me);
     assert_eq!(s.mount_turn_delay_ms(0.0), 0);
     assert_eq!(s.mount_turn_delay_ms(std::f32::consts::FRAC_PI_2), 714);

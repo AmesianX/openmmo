@@ -21,7 +21,7 @@ impl From<&Player> for Pose {
             position: player.position,
             rotation: player.rotation,
             floor: player.floor_level,
-            mounted: player.mounted,
+            mounted: player.is_mounted(),
         }
     }
 }

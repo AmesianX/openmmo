@@ -79,6 +79,7 @@
     heightManager: TerrainHeightManager
     /** Baked water surface height at a world XZ (for fishing cast detection). */
     waterSurfaceAt?: (x: number, z: number) => number
+    hasWaterSurfaceData?: (x: number, z: number) => boolean
     onStateChange: (newState: PlayerState) => void
     onPlayerControlEvent?: (event: PlayerControlEvent) => void
     onAttackDuration: (duration: number) => void
@@ -122,6 +123,7 @@
     playerAttackDuration,
     heightManager,
     waterSurfaceAt,
+    hasWaterSurfaceData,
     onStateChange,
     onPlayerControlEvent,
     onAttackDuration,
@@ -587,6 +589,7 @@
   <PlayerControl
     bind:this={playerControl}
     {waterSurfaceAt}
+    {hasWaterSurfaceData}
     {onStateChange}
     {camera}
     {heightManager}
@@ -631,7 +634,7 @@
   <PlayerModel
     bind:this={currentPlayerModel}
     position={currentPlayer.position}
-    mounted={currentPlayer.mounted}
+    mount={currentPlayer.mount}
     name={currentPlayer.name}
     title={currentPlayer.title}
     isCurrentPlayer={true}
@@ -707,7 +710,7 @@
         health={player.health}
         maxHealth={player.maxHealth}
         torchOn={player.torchOn}
-        mounted={player.mounted}
+        mount={player.mount}
         mainHand={player.mainHand}
         back={player.back}
         backColor={player.backColor}

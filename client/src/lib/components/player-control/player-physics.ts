@@ -18,6 +18,9 @@ export interface PlayerPhysicsDeps {
   /** Live read — passability floor index the player is keyed to. Housing and
    *  dungeon collision select their grid by this, not by Y. */
   getPassabilityFloor: () => number
+  /** Live read — water surface Y while afloat, else null. A boat rides the
+   *  surface, so terrain height (the bed) would sink it. */
+  getFloatSurfaceY?: (x: number, z: number) => number | null
 }
 
 export interface PlayerPhysics {
@@ -58,6 +61,8 @@ export function createPlayerPhysics(deps: PlayerPhysicsDeps): PlayerPhysics {
     // say whether a point is the room or the ramp.
     const deckY = bridgeManager.findDeckYAt(x, z, deps.getCurrentPlayerY())
     if (deckY !== null) return deckY
+    const floatY = deps.getFloatSurfaceY?.(x, z)
+    if (floatY !== null && floatY !== undefined) return floatY
     return (
       deps.getHeightManager().getHeightAtWorldPosition(x, z) +
       deps.getFloorOffset()

@@ -3,7 +3,6 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 const TURN_RATE: f32 = FRAC_PI_2 / 0.6;
 const REVERSE_RATE: f32 = FRAC_PI_2 / 0.4;
 const MOVE_ANGLE: f32 = PI / 6.0;
-pub const TURN_RADIUS: f32 = 0.65;
 pub const STEP_SECONDS: f32 = 1.0 / 60.0;
 pub const ARRIVAL_DISTANCE: f32 = 1.0;
 pub const BACKWARD_SPEED: f32 = 1.5;
@@ -23,9 +22,9 @@ fn movement_credit(angle: f32) -> f32 {
 }
 
 /// Conservative turn and detour allowance for external-client movement timers.
-pub fn turn_delay(from: f32, to: f32, speed: f32) -> f32 {
+pub fn turn_delay(from: f32, to: f32, speed: f32, radius: f32) -> f32 {
     let angle = angle_delta(from, to).abs();
-    turn_duration(angle) + TURN_RADIUS * angle / speed.max(0.01)
+    turn_duration(angle) + radius * angle / speed.max(0.01)
 }
 
 /// Angular steering and the extra forward travel available while aligning.
@@ -67,6 +66,7 @@ pub fn recovery_target(
     rotation: f32,
     goal: crate::Position,
     speed: f32,
+    turn_radius: f32,
 ) -> Option<crate::Position> {
     use crate::{pathfinding, shortest_world_delta_x, wrap_world_x, Position};
     if !rotation.is_finite() || !speed.is_finite() || speed <= 0.0 {
@@ -117,7 +117,7 @@ pub fn recovery_target(
                 desired,
                 speed,
                 STEP_SECONDS,
-                TURN_RADIUS.min(dist / 4.0),
+                turn_radius.min(dist / 4.0),
             );
             let next = Position {
                 x: p.x + ax,
@@ -159,6 +159,10 @@ pub fn recovery_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The horse's radius, so these stay the exercise they were before the
+    /// value moved onto `MountKind`.
+    const TURN_RADIUS: f32 = 0.65;
 
     #[test]
     fn arc_has_a_radius_and_mirrors_without_exceeding_movement_speed() {

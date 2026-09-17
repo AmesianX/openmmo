@@ -19,6 +19,7 @@
     addChatMessage,
     hoveredMonsterId,
   } from '../stores/gameStore'
+  import { isMounted } from '../utils/mounts'
   import {
     abilityCooldowns,
     abilityPending,
@@ -87,7 +88,7 @@
       if (
         !$gameStore.currentPlayer ||
         $gameStore.currentPlayer.health <= 0 ||
-        $gameStore.currentPlayer.mounted
+        isMounted($gameStore.currentPlayer)
       )
         return
       if (!abilityEquipmentAllowed(entry.skill.id, $inventoryStore.equipped)) {
