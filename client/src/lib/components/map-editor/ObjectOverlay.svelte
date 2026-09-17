@@ -304,9 +304,7 @@
   const cloneById = new SvelteMap<number, THREE.Object3D>()
   const isEditing = () => isEditorMode && tool === 'object'
 
-  // Flames of placements whose catalog def has `fire` (hearths). Kept under a
-  // separate root: rebuild() sweeps `group`'s children through the material
-  // disposer, which must never touch the fire material shared scene-wide.
+  // Keep shared fire materials outside the model group's rebuild/disposal sweep.
   const Y_AXIS = new THREE.Vector3(0, 1, 0)
   const fireRoot = new THREE.Group()
   fireRoot.name = 'objectFires'
@@ -376,6 +374,7 @@
   }
 
   export function update(deltaTime: number, camera: THREE.Camera | undefined) {
+    if (!fireRoot.visible) return
     for (const s of _activeFires) s.update(deltaTime, camera)
   }
 
@@ -618,6 +617,11 @@
 
   export function getGroup(): THREE.Group {
     return group
+  }
+
+  export function setVisible(visible: boolean) {
+    group.visible = visible
+    fireRoot.visible = visible
   }
 
   onDestroy(() => {

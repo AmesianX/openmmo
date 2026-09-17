@@ -1,5 +1,5 @@
 repo jake-song-openmmo/onlinerpg-assets
-revision d7da4f8fb6f6c52a4ab3774e40ec05be00ef912b
+revision 3b44f0f7cd455ca498b98a1485cc38dac10067e2
 file 5edac6dfec09f450747fa2d9ad9dc64b10e717f2fa5a01729f0d4ebc00396cdd assets/Clapping.fbx
 file 811755702cbd64a11a2228c02d1814185321b0cb18ff0eab39825ce783a7d38d assets/Defeated.fbx
 file 81b84a7b0d42d73f40b12833b679409e6d9a34e014bc818da9b974e8bd173e95 assets/Excited.fbx
@@ -132,6 +132,12 @@ file 52ab374959aac6ba3ef3f5e80904086e522f578dc741c69c4ed7fb07b9c09a33 assets/ogr
 file b8de3f32aa2f54328dc1ba631b8568a95f7c26bf06e91e383c1caacb27cf430b assets/rowboat/rowboat.blend
 file effd331bf77e1cdad2632502e6f8529a5481ce822801a3acfdc6a1a6bbe50a86 assets/rowboat/wood_albedo.png
 file 1bdf30ad78a7624e2420c06dfc46558f314d948b5625aaaca31543aac08cbba2 assets/rusty_metal_grid_1k.gltf.zip
+file 6e5688fdf184a5986747197e60249e5116241d04900b6d1cc7fbd2a4f5a95807 assets/sfx/dungeon-drips-2026-09-17/dungeon-drip_take1_2026-09-17.json
+file cc3fb4f6e094a2335eef813be7dd3f2a07d83beaa99c710f7f0df08d5c626925 assets/sfx/dungeon-drips-2026-09-17/dungeon-drip_take1_2026-09-17.mp3
+file 9b9c056452a3e8ac3c0e53ffa1bf984666ff3bf1b79a248d45cebbf05caa3c79 assets/sfx/dungeon-drips-2026-09-17/dungeon-drip_take2_2026-09-17.json
+file 1952e9f8c51b4899c43619202339d87805ecf67696872351f97def7fd989e08b assets/sfx/dungeon-drips-2026-09-17/dungeon-drip_take2_2026-09-17.mp3
+file 70f57cb81e37c6dbc99f379b1f1656870f211ad34bcf5c26ef01ef47d925c5c4 assets/sfx/dungeon-drips-2026-09-17/unused-procedural-drip.ogg
+file 2026357f67ffd20814d9bea01db1665c3f5ae3abc9b8209eb3d1dbb1881cb4b4 assets/sfx/dungeon-drips-2026-09-17/unused-procedural-generator.mjs
 file 6e3fbb7576d907321b62fb822749c067111d0287746afd65c493daa948131ee5 assets/sfx/skeleton-hits-2026-09-15/armored-bone-hit_candidate1_2026-09-15.json
 file 164b0dfce48b32dec8ea284b7c960f6f84c22594e2b7fdf630915c87a3a7ac48 assets/sfx/skeleton-hits-2026-09-15/armored-bone-hit_candidate1_2026-09-15.mp3
 file 97dcd01687977d148bc4851692e51c83e13dfaaf62fa2e783f7399fdc9075e21 assets/sfx/skeleton-hits-2026-09-15/armored-bone-hit_candidate2_2026-09-15.json

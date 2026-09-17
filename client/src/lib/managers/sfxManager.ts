@@ -65,6 +65,7 @@ export type BowSound = keyof typeof BOW_SOUNDS
 
 const DUNGEON_SOUNDS = {
   reset: { url: '/sounds/dungeon-roar.ogg', volume: 0.5, pool: 1 },
+  drip: { url: '/sounds/dungeon-drip.ogg', volume: 0.35, pool: 4 },
 } as const
 export type DungeonSound = keyof typeof DUNGEON_SOUNDS
 
@@ -158,7 +159,12 @@ function preloadAudioPool(url: string, volume: number, poolSize: number) {
   pools.set(url, pool)
 }
 
-function playAudioFromPool(url: string, volume: number, poolSize: number) {
+function playAudioFromPool(
+  url: string,
+  volume: number,
+  poolSize: number,
+  playbackRate = 1
+) {
   preloadAudioPool(url, volume, poolSize)
 
   const pool = pools.get(url)
@@ -173,6 +179,8 @@ function playAudioFromPool(url: string, volume: number, poolSize: number) {
   try {
     audio.currentTime = 0
     audio.volume = effectiveVolume
+    audio.playbackRate = playbackRate
+    audio.preservesPitch = playbackRate === 1
     audio.play().catch(() => {})
     return audio
   } catch {
@@ -279,14 +287,26 @@ export function playPropSound(kind: PropSound) {
   playSound(PROP_SOUNDS[kind])
 }
 
-/** Called on dungeon entry, not at world entry: the roar is the heaviest clip
- *  here and only delvers ever hear it. */
+/** Load dungeon effects on entry. */
 export function preloadDungeonSounds() {
   preloadSounds(DUNGEON_SOUNDS)
 }
 
 export function playDungeonSound(kind: DungeonSound) {
   playSound(DUNGEON_SOUNDS[kind])
+}
+
+export function playDungeonDripSound(distance: number, seed: number) {
+  const gain = Math.max(0, 1 - distance / 10) ** 2
+  if (gain <= 0 || getSfxMultiplier() <= 0) return
+  const { url, volume, pool } = DUNGEON_SOUNDS.drip
+  playAudioFromPool(url, volume * gain, pool, 0.92 + (seed % 1) * 0.16)
+}
+
+export function stopDungeonDripSounds() {
+  const pool = pools.get(DUNGEON_SOUNDS.drip.url)
+  if (!pool) return
+  for (const audio of pool.audios) audio.pause()
 }
 
 export function preloadAbilitySounds() {

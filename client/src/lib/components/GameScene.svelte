@@ -428,8 +428,7 @@
     if (treeGroup) treeGroup.visible = !underground
     const housingGroup = housingLayerRef?.getGroup()
     if (housingGroup) housingGroup.visible = !underground
-    const objectGroup = objectOverlayRef?.getGroup()
-    if (objectGroup) objectGroup.visible = !underground
+    objectOverlayRef?.setVisible(!underground)
     const windGroup = windParticlesRef?.getGroup?.()
     if (windGroup) windGroup.visible = !underground
     const rainGroup = rainLayerRef?.getGroup()
@@ -1351,6 +1350,7 @@
 
 <GameSceneDungeonLayer
   bind:this={dungeonLayerRef}
+  animatePuddles={graphicsPreset.enablePuddleRipples}
   onPropReady={(entranceId, depth, propId, x, z) =>
     playerControl?.swingAndBreakProp(entranceId, depth, propId, x, z)}
 />

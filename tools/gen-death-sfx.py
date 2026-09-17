@@ -8,6 +8,14 @@ Candidates land in sfx-candidates/<subject>-<n>.mp3 (gitignored).
 import argparse, json, os, pathlib, sys, time, urllib.request
 
 PROMPTS = {
+    "dungeon_drip": (
+        "One isolated water droplet falling into a still shallow puddle of water. "
+        "Close-up realistic water foley: a distinct small wet plip, a tiny liquid "
+        "splash and a very brief natural bubble tail. Clearly water landing in "
+        "water, delicate and organic. Immediate onset, one drop only, then silence. "
+        "No solid surface impact, thud, wood, drum, metallic ping, bell, musical "
+        "note, synthesizer, electronic beep, flowing water, rain, voice or music."
+    ),
     "rain_drops": (
         "Very light rain beginning: sparse tiny raindrops softly tapping leaves "
         "and dry earth. Delicate irregular ticks and pits, distinct individual "

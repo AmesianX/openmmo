@@ -17,6 +17,28 @@ applies — never construct `Audio` elements elsewhere.
 Everything below the cast sound is CC0 as credited. All six are trimmed,
 peak-normalized to ≈ −3 dB, with a short tail fade.
 
+## Dungeon
+
+- dungeon-drip.ogg — 물방울이 얕은 물웅덩이에 떨어지는 짧은 물소리.
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) API로 2026-09-17 생성.
+  Starter 유료 플랜(API 구독 조회로 확인),
+  [유료 플랜 상업 이용 라이선스](https://help.elevenlabs.io/hc/en-us/articles/13313564601361-Can-I-publish-the-content-I-generate-on-the-platform) 적용.
+  `eleven_text_to_sound_v2`, 0.7초, `prompt_influence=0.75`, 2테이크 중 take 2 사용,
+  총 14크레딧. 프롬프트는 `tools/gen-death-sfx.py`의 `dungeon_drip`에 기록.
+  원본과 생성 메타데이터는 `assets/sfx/dungeon-drips-2026-09-17/`의
+  `dungeon-drip_take2_2026-09-17.mp3` 및 같은 이름의 `.json`에 보관.
+  `node tools/gen-dungeon-drip.mjs`로 원본 0.037초부터 0.22초를 추출하고,
+  시작 1 ms·끝 50 ms 페이드를 적용. 2026-09-17 부드러운 짧은 리버브 추가:
+  고음을 감쇠하는 6개 병렬 딜레이와 2개 올패스 필터, RT60 목표 0.55초,
+  원음에 리버브 게인 0.3을 더해 둥근 잔향을 만듦. 리버브 끝 80 ms 페이드,
+  총 0.8초, 인코딩 전 피크 −6 dB, 44.1 kHz 모노 Ogg Vorbis q5로 가공.
+  플레이어와의 거리에 따라 감쇠하며 10 m 밖에서는 재생하지 않음.
+- **[미사용]** 같은 폴더의 `dungeon-drip_take1_2026-09-17.mp3` — 생성 후보.
+  위와 동일한 ElevenLabs Starter 라이선스·생성일 적용.
+- **[미사용]** 같은 폴더의 `unused-procedural-drip.ogg` 및
+  `unused-procedural-generator.mjs` — 2026-09-17 직접 절차적 합성한 이전 버전.
+  외부 샘플·생성 API 없음(유료 도구/플랜 해당 없음), [프로젝트 라이선스](../../LICENSE) 적용.
+
 ## Weather
 
 - rain-drops-loop.ogg — 약한 비와 비가 시작할 때 사용하는 독립 빗방울 레이어.

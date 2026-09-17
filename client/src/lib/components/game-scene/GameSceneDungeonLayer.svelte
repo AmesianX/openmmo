@@ -1,11 +1,5 @@
 <script lang="ts">
-  /**
-   * GameSceneDungeonLayer — renders the dungeon floor the local player is
-   * on. Geometry comes from the shared wasm layout (see dungeonManager);
-   * only the current depth is built, rebuilt on depth/dungeon change.
-   * Stair shafts are part of both adjacent floors' groups with identical
-   * world-space geometry, so the midpoint floor switch is seamless.
-   */
+  // Build only the current floor; adjacent floors share matching stair geometry.
   import { T } from '@threlte/core'
   import * as THREE from 'three'
   import { onDestroy } from 'svelte'
@@ -41,8 +35,15 @@
   import { isoCameraOccludesPlayer } from '../../utils/iso-occlusion'
   import { passabilityDebugVisible } from '../../stores/debugStore'
   import { pushPassabilityEdges } from '../../utils/passability-wireframe'
+  import { generateDungeonPuddles } from '../../utils/dungeon-puddles'
+  import { DungeonPuddles } from '../../effects/dungeon-puddles'
+  import {
+    playDungeonDripSound,
+    stopDungeonDripSounds,
+  } from '../../managers/sfxManager'
 
   interface Props {
+    animatePuddles?: boolean
     /** Fired the frame the player comes into range of a clicked barrel/crate,
      *  handing off to the player swing that breaks it at the contact frame. */
     onPropReady?: (
@@ -53,7 +54,7 @@
       z: number
     ) => void
   }
-  let { onPropReady }: Props = $props()
+  let { onPropReady, animatePuddles = true }: Props = $props()
 
   /** Once the player walking up to a clicked prop is within this range, the
    *  break/open is requested. Kept inside the server's 2.5m so a borderline
@@ -108,6 +109,7 @@
 
   const root = new THREE.Group()
   let currentGroup: THREE.Group | null = null
+  let puddles: DungeonPuddles | null = null
   let entranceGroup: THREE.Group | null = null
   /** Decorative room clutter (barrel/crate/chest GLBs) for the current floor,
    *  kept in its own group on `root` — never inside currentGroup, whose
@@ -207,6 +209,9 @@
   }
 
   function clearGroup() {
+    stopDungeonDripSounds()
+    puddles?.dispose()
+    puddles = null
     if (currentGroup) {
       root.remove(currentGroup)
       disposeDungeonGroup(currentGroup)
@@ -938,6 +943,12 @@
       dungeonManager.originZ
     )
     root.add(currentGroup)
+    const placements = generateDungeonPuddles(layout, c, id!)
+    if (placements.length) {
+      puddles = new DungeonPuddles(placements, c.wallHeight)
+      puddles.group.position.copy(currentGroup.position)
+      root.add(puddles.group)
+    }
     cacheUpShaft(currentGroup, built.upShaftAABB)
     cacheWallRuns(currentGroup, built.wallRuns)
 
@@ -1008,6 +1019,22 @@
     deltaMs = 0
   ) {
     dungeonManager.updateFromPlayerPosition(playerX, playerZ)
+    if (puddles) {
+      const impacts = puddles.update(deltaMs / 1000, animatePuddles)
+      if (
+        !document.hidden &&
+        builtKey === `${$currentDungeonId}:${$currentDungeonDepth}`
+      ) {
+        for (const impact of impacts) {
+          const distance = Math.hypot(
+            playerX - puddles.group.position.x - impact.x,
+            playerY - puddles.group.position.y,
+            playerZ - puddles.group.position.z - impact.z
+          )
+          playDungeonDripSound(distance, impact.seed)
+        }
+      }
+    }
 
     // Advance one-shot GLB clips; clamped actions hold their final poses.
     if (propMixers.length > 0) {
