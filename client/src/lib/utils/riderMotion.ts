@@ -82,13 +82,11 @@ export class RiderMotion {
       weight < 0.001
     )
       return
-    for (const saved of this.saved) {
-      saved.position.copy(saved.bone.position)
-      saved.rotation.copy(saved.bone.quaternion)
+    this.savePose()
+    for (const arm of this.arms) {
+      arm.end.getWorldPosition(arm.target)
+      arm.end.getWorldQuaternion(arm.rotation)
     }
-    this.applied = true
-    this.root.updateWorldMatrix(true, true)
-    for (const arm of this.arms) this.capture(arm)
     this.direction.set(1, 0, 0).transformDirection(this.root.matrixWorld)
     this.rotation.setFromAxisAngle(this.direction, lean * weight)
     this.torso.joint.getWorldQuaternion(this.parentRotation)
@@ -120,12 +118,7 @@ export class RiderMotion {
         facingYaw === undefined)
     )
       return
-    for (const saved of this.saved) {
-      saved.position.copy(saved.bone.position)
-      saved.rotation.copy(saved.bone.quaternion)
-    }
-    this.applied = true
-    this.root.updateWorldMatrix(true, true)
+    this.savePose()
     this.forward.set(0, 0, 1).transformDirection(this.root.matrixWorld)
     this.forward.y = 0
     this.forward.normalize()
@@ -180,6 +173,15 @@ export class RiderMotion {
       )
       this.orient(torso.joint, this.rotation)
     }
+  }
+
+  private savePose() {
+    for (const saved of this.saved) {
+      saved.position.copy(saved.bone.position)
+      saved.rotation.copy(saved.bone.quaternion)
+    }
+    this.applied = true
+    this.root.updateWorldMatrix(true, true)
   }
 
   private capture(limb: Limb) {

@@ -79,6 +79,8 @@
     heightManager: TerrainHeightManager
     /** Baked water surface height at a world XZ (for fishing cast detection). */
     waterSurfaceAt?: (x: number, z: number) => number
+    waterFoamMap?: THREE.Texture | null
+    waterSunDirection?: THREE.Vector3 | null
     hasWaterSurfaceData?: (x: number, z: number) => boolean
     onStateChange: (newState: PlayerState) => void
     onPlayerControlEvent?: (event: PlayerControlEvent) => void
@@ -123,6 +125,8 @@
     playerAttackDuration,
     heightManager,
     waterSurfaceAt,
+    waterFoamMap = null,
+    waterSunDirection = null,
     hasWaterSurfaceData,
     onStateChange,
     onPlayerControlEvent,
@@ -669,6 +673,10 @@
     lastDamageInfo={currentPlayer.lastDamageInfo}
     lastRegenInfo={currentPlayer.lastRegenInfo}
     lastGoldInfo={currentPlayer.lastGoldInfo}
+    {heightManager}
+    {waterSurfaceAt}
+    {waterFoamMap}
+    {waterSunDirection}
     {torchEffectsDisabled}
   />
 {/if}
@@ -720,6 +728,9 @@
         remotePlayerId={player.id}
         floorLevel={player.floorLevel}
         {heightManager}
+        {waterSurfaceAt}
+        {waterFoamMap}
+        {waterSunDirection}
         onInteractionFinished={() =>
           remotePlayerManager.handleInteractionFinished(player.id)}
       />

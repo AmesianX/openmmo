@@ -74,6 +74,7 @@
   import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
   import { onDestroy, onMount, untrack } from 'svelte'
   import { BoatMount, ROWBOAT_MODEL_PATH } from '../utils/boatMount'
+  import { BoatWaterEffects } from '../effects/boat-water'
   import { seatedFishingClip } from '../utils/seatedFishing'
   import type { MountKind } from '../network/networkTypes'
   import { SvelteMap } from 'svelte/reactivity'
@@ -227,6 +228,9 @@
     /** Remote player's floor (negative = dungeon depth), for the hover ring. */
     floorLevel?: number
     heightManager?: TerrainHeightManager | null
+    waterSurfaceAt?: (x: number, z: number) => number
+    waterFoamMap?: THREE.Texture | null
+    waterSunDirection?: THREE.Vector3 | null
   }
 
   let {
@@ -269,6 +273,9 @@
     title = null,
     floorLevel = 0,
     heightManager = null,
+    waterSurfaceAt,
+    waterFoamMap = null,
+    waterSunDirection = null,
   }: Props = $props()
 
   const DEFAULT_IDLE_INDICES = [
@@ -333,6 +340,7 @@
   let modelRoot = $state<THREE.Group | null>(null)
   let horseMount = $state<HorseMount | null>(null)
   let boatMount = $state<BoatMount | null>(null)
+  let boatWater = $state<BoatWaterEffects | null>(null)
   let riderGroup = $state<THREE.Group | undefined>()
   let ridingClip: THREE.AnimationClip | null = null
   let riderMotion: RiderMotion | null = null
@@ -347,7 +355,25 @@
       playerState !== 'interact'
   )
   const boating = $derived(mount === 'rowboat' && health > 0)
+  const canRow = $derived(
+    playerState !== 'attack' && playerState !== 'interact'
+  )
   const rowing = $derived(boating && playerState === 'moving')
+
+  $effect(() => {
+    if (!boatMount || !waterFoamMap || !waterSurfaceAt) return
+    const sampleSurface = waterSurfaceAt
+    const terrain = heightManager
+    const effects = new BoatWaterEffects(boatMount, waterFoamMap, (x, z) => {
+      const y = sampleSurface(x, z)
+      return terrain && terrain.getHeightAtWorldPosition(x, z) >= y ? null : y
+    })
+    boatWater = effects
+    return () => {
+      effects.dispose()
+      boatWater = null
+    }
+  })
 
   $effect(() => {
     const root = modelRoot
@@ -1038,7 +1064,7 @@
     }
 
     // Skip chair entry; attacks and interactions keep their animations.
-    if (boating && playerState !== 'attack' && playerState !== 'interact') {
+    if (boating && canRow) {
       const seated = socialClipsByName.get(SitAnimationName.IDLE)
       if (seated) {
         startAction(seated, true)
@@ -1456,10 +1482,7 @@
 
   function updateHeldPropVisibility() {
     const handsOnOars =
-      boating &&
-      playerState !== 'attack' &&
-      playerState !== 'interact' &&
-      (rowing || (boatMount?.rowingWeight ?? 0) >= 0.001)
+      boating && canRow && (rowing || (boatMount?.rowingWeight ?? 0) >= 0.001)
     const fishingInteraction =
       interactionAnim === FishingAnimationName.CAST ||
       interactionAnim === FishingAnimationName.IDLE
@@ -1494,6 +1517,9 @@
     riderMotion?.restore()
     rowingMotion?.restore()
     updatePose(deltaTime)
+    if (boatWater && camera) {
+      boatWater.update(deltaTime, camera, rowing, waterSunDirection?.y ?? 1)
+    }
     updateHeldPropVisibility()
     if (
       daggerTrail &&
@@ -1516,12 +1542,7 @@
       )
       horseReins?.update()
     }
-    if (
-      boating &&
-      boatMount &&
-      playerState !== 'attack' &&
-      playerState !== 'interact'
-    ) {
+    if (boating && boatMount && canRow) {
       rowingMotion?.applyRowing(
         boatMount.grips,
         boatMount.riderLean,
@@ -1610,7 +1631,6 @@
     }
 
     if (boatMount && riderGroup && modelGroup) {
-      const canRow = playerState !== 'attack' && playerState !== 'interact'
       boatMount.update(deltaTime, playerState === 'moving' ? _speed : 0, canRow)
       boatMount.seat.getWorldPosition(seatPosition)
       riderGroup.position.copy(modelGroup.worldToLocal(seatPosition))
@@ -1770,7 +1790,7 @@
     // Update animation state
     if (validAnimations.length > 0) {
       const stateKey =
-        boating && playerState !== 'interact' && playerState !== 'attack'
+        boating && canRow
           ? 'boating'
           : riding && ridingClip
             ? 'riding'
@@ -1802,6 +1822,9 @@
 </script>
 
 <!-- Character Model -->
+{#if boatWater}
+  <T is={boatWater.group} />
+{/if}
 {#if modelRoot}
   <T.Group
     bind:ref={modelGroup}

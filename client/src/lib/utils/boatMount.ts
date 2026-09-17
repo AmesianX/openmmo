@@ -17,6 +17,7 @@ export class BoatMount {
   readonly root: THREE.Object3D
   readonly seat: THREE.Object3D
   readonly grips: THREE.Object3D[] = []
+  readonly bladeTips: THREE.Object3D[] = []
   readonly riderBaseOffsetY = -0.25
   rowingWeight = 0
   riderLean = 0
@@ -53,6 +54,10 @@ export class BoatMount {
       )
       node.add(grip)
       this.grips.push(grip)
+      const bladeTip = new THREE.Object3D()
+      bladeTip.position.copy(grip.position).multiplyScalar(-1.224)
+      node.add(bladeTip)
+      this.bladeTips.push(bladeTip)
       this.oars.push({
         node,
         side,

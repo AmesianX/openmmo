@@ -51,7 +51,7 @@ white-cloud.jpg도 같은 폴더의 원본(5964px)을 2048px q85로 줄인 것.
 ## Sea
 
 - sea https://www.filterforge.com/filters/4141.html — **[미사용]** 물 표면은 절차적 렌더 + waternormals(three.js examples); 4141 사용 흔적 없음
-- sea foam https://www.filterforge.com/filters/13843.html — 폼 텍스처로 사용 중 (`textures/13843.png`, water-foam-gen.ts)
+- sea foam https://www.filterforge.com/filters/13843.html — 수면 및 나룻배의 항적·노 물보라에 사용 (`textures/13843.png`, water-foam-gen.ts, effects/boat-water.ts)
 - waternormals (Three.js examples) https://github.com/mrdoob/three.js/tree/dev/examples/textures — 물 표면 노멀맵으로 사용 중 (`textures/waternormals.jpg`, scene-init.ts)
 
 ## References
