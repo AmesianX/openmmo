@@ -173,23 +173,19 @@
   /** Ray inside the AABB before it counts as occluding (matches housing). */
   const MIN_OCCLUSION_DEPTH = 0.3
 
-  // ── Wall-run occlusion fade ──────────────────────────────
-  // Any wall run (all four sides) that ends up between the iso camera and the
-  // player is ghosted, per-run (per-run AABB, so the others stay solid). The
-  // runs are thin (0.1m), so the SW camera ray only ever crosses ~0.1 of one — a
-  // much smaller occlusion depth than the bulky up-shaft AABB.
+  // Thin walls need a smaller occlusion depth than the stair shaft.
   interface WallRunFade {
     mesh: THREE.Mesh
     base: THREE.Material
     ghost: THREE.Material
     aabb: THREE.Box3
-    fadeRoom: number
+    fadeGroup: number
     occluded?: boolean
   }
   let wallRuns: WallRunFade[] = []
   // Per-frame scratch, never rendered from.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const fadedRooms = new Set<number>()
+  const fadedWallGroups = new Set<number>()
   const WALL_RUN_MIN_OCCLUSION = 0.05
 
   // ── Interior room doors ──────────────────────────────────
@@ -777,7 +773,7 @@
         base: r.mesh.material as THREE.Material,
         ghost: getGhostHousingMaterial(idx),
         aabb: r.localAABB.clone().translate(group.position),
-        fadeRoom: r.fadeRoom,
+        fadeGroup: r.fadeGroup,
       })
     }
   }
@@ -1061,10 +1057,8 @@
       }
     }
 
-    // Fade each wall run that occludes the player to a ghost, and a room's
-    // south and west walls as a pair. The mesh's current material is the
-    // single source of truth for its occluded state.
-    fadedRooms.clear()
+    // Fade occluding walls together with their room or corridor corner group.
+    fadedWallGroups.clear()
     for (const w of wallRuns) {
       w.occluded = isoCameraOccludesPlayer(
         w.aabb,
@@ -1073,10 +1067,10 @@
         playerZ,
         WALL_RUN_MIN_OCCLUSION
       )
-      if (w.occluded && w.fadeRoom >= 0) fadedRooms.add(w.fadeRoom)
+      if (w.occluded && w.fadeGroup >= 0) fadedWallGroups.add(w.fadeGroup)
     }
     for (const w of wallRuns) {
-      const occ = w.occluded || fadedRooms.has(w.fadeRoom)
+      const occ = w.occluded || fadedWallGroups.has(w.fadeGroup)
       if (occ !== (w.mesh.material === w.ghost)) {
         w.mesh.material = occ ? w.ghost : w.base
       }

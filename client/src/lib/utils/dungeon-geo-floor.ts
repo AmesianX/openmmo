@@ -45,9 +45,8 @@ export interface WallRun {
   mesh: THREE.Mesh
   /** Group-local AABB; the layer adds the floor group's world position. */
   localAABB: THREE.Box3
-  /** Room whose camera-facing (south/west) wall this is, else -1. The two
-   *  fade together: standing at one edge the other still hides the room. */
-  fadeRoom: number
+  /** South/west walls in a room or connected corridor corner fade together. */
+  fadeGroup: number
 }
 
 export interface DungeonFloorGroup {
@@ -190,14 +189,7 @@ export function buildDungeonFloorGroup(
   addMergedMeshes(upGroup, upEntries)
   group.add(upGroup)
 
-  // --- Wall runs (all four sides): one mesh per straight run (a run breaks at
-  // a corner, a doorway gap or a shaft cell) in their own sub-group, so the
-  // dungeon layer can ghost just the runs that occlude the player. The
-  // camera-facing south/west runs fade often; the far north/east runs fade only
-  // when the layout puts them between the iso camera and the player. They are
-  // decorative — collision is server-side — so they cast no shadow (a ghosted
-  // run would otherwise drop a wall-less shadow on the floor) and ignore click
-  // raycasts (so click-to-move targets the floor behind them).
+  // Wall runs fade independently or by group, without shadows or click blocking.
   const wallRunGroup = new THREE.Group()
   wallRunGroup.name = WALL_RUN_GROUP_NAME
   const wallRuns: WallRun[] = []
@@ -209,7 +201,7 @@ export function buildDungeonFloorGroup(
     cx: number,
     cy: number,
     cz: number,
-    fadeRoom = -1
+    fadeGroup = -1
   ) => {
     const e: GeoEntry[] = []
     addBox(e, texIdx, w, h, d, cx, cy, cz)
@@ -221,12 +213,32 @@ export function buildDungeonFloorGroup(
     mesh.userData.textureIndex = texIdx
     geo.computeBoundingBox()
     wallRunGroup.add(mesh)
-    wallRuns.push({ mesh, localAABB: geo.boundingBox!.clone(), fadeRoom })
+    wallRuns.push({ mesh, localAABB: geo.boundingBox!.clone(), fadeGroup })
   }
-  // Room cells keep the medieval-stone wall; carved cells in no room are
-  // corridors and get the rock-wall corridor texture. Matches the Rust
-  // `cell_in_any_room` convention (half-open rectangles). Shaft cells emit no
-  // wall (filtered by `inAnyShaft`), so they need no classification here.
+  // Corridor groups join at grid corners, independent of wall thickness.
+  const corridorParents = new Map<number, number>()
+  const resolveFadeGroup = (id: number): number => {
+    const parent = corridorParents.get(id)
+    if (parent === undefined) return id
+    const group = resolveFadeGroup(parent)
+    corridorParents.set(id, group)
+    return group
+  }
+  const wallFadeGroup = (
+    room: number,
+    x0: number,
+    z0: number,
+    x1: number,
+    z1: number
+  ): number => {
+    if (room >= 0) return room
+    const start = resolveFadeGroup(layout.rooms.length + x0 + z0 * (grid + 1))
+    const end = resolveFadeGroup(layout.rooms.length + x1 + z1 * (grid + 1))
+    if (start !== end) corridorParents.set(end, start)
+    return start
+  }
+
+  // Carved cells outside rooms use the corridor texture; shafts emit no walls.
   const roomIndexAt = (x: number, z: number) =>
     layout.rooms.findIndex((r) => rectContains(r, x, z))
   const roomAt = (x: number, z: number) => roomIndexAt(x, z) >= 0
@@ -305,7 +317,7 @@ export function buildDungeonFloorGroup(
           lo + len / 2,
           ctx.wallHeight / 2 + SHADOW_CONTACT_LIFT,
           z + 1 + WALL_HALF_THICKNESS,
-          roomIndexAt(southStart, z)
+          wallFadeGroup(roomIndexAt(southStart, z), southStart, z + 1, x, z + 1)
         )
         southStart = -1
       }
@@ -368,7 +380,7 @@ export function buildDungeonFloorGroup(
           x - WALL_HALF_THICKNESS,
           ctx.wallHeight / 2 + SHADOW_CONTACT_LIFT,
           lo + len / 2,
-          roomIndexAt(x, westStart)
+          wallFadeGroup(roomIndexAt(x, westStart), x, westStart, x, z)
         )
         westStart = -1
       }
@@ -378,6 +390,7 @@ export function buildDungeonFloorGroup(
       }
     }
   }
+  for (const run of wallRuns) run.fadeGroup = resolveFadeGroup(run.fadeGroup)
   group.add(wallRunGroup)
 
   // --- Interior room doors, placed by the shared wasm scan (see the Rust
