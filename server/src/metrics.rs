@@ -1126,7 +1126,13 @@ mod tests {
         }
         let previous = unix_now() - 86400;
         conn.execute(
-            "UPDATE character_weapon_enchant_history SET timestamp = ?1 WHERE character_id = 1",
+            "DELETE FROM character_weapon_enchant_history WHERE character_id = 1",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO character_weapon_enchant_history (character_id, timestamp, weapon_enchant)
+             VALUES (1, ?1, 1)",
             [previous],
         )
         .unwrap();
