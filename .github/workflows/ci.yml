@@ -58,6 +58,8 @@ jobs:
       - name: Test concurrent WASM builds
         run: bash ../tools/test-build-wasm.sh
       - run: npm run build:wasm
+      - name: Fetch rowboat model for tests
+        run: bash ../tools/fetch-assets.sh client/public/models/mounts/rowboat.glb
       - run: npm test
       - run: npm run check
       - run: npm run lint
