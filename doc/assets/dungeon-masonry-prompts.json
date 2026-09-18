@@ -2,6 +2,7 @@
   "tool": "OpenAI Codex built-in ImageGen",
   "tier": "workspace-provided tier; exact tier not exposed",
   "generated": "2026-09-17",
+  "status": "[미사용] Original red-brick and pale-tile versions, replaced by dungeon-weathering-prompts.json on 2026-09-18.",
   "license": "Project-owned generated output; OpenAI output terms apply, no separate CC license.",
   "encoding": "Generated PNG resized to 1024 x 1024 WebP quality 88 using ffmpeg; no visual edits.",
   "assets": [

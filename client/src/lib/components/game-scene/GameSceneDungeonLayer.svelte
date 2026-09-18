@@ -176,6 +176,7 @@
   // Thin walls need a smaller occlusion depth than the stair shaft.
   interface WallRunFade {
     mesh: THREE.Mesh
+    ghostMesh?: THREE.Mesh
     base: THREE.Material
     ghost: THREE.Material
     aabb: THREE.Box3
@@ -763,13 +764,13 @@
     })
   }
 
-  /** Cache each wall run's mesh, ghost material and world AABB for the per-run
-   *  fade pass. `group.position` is set before this is called. */
+  /** Cache wall meshes and world bounds after positioning the floor. */
   function cacheWallRuns(group: THREE.Group, runs: WallRun[]) {
     for (const r of runs) {
       const idx = r.mesh.userData.textureIndex as number
       wallRuns.push({
         mesh: r.mesh,
+        ghostMesh: r.ghostMesh,
         base: r.mesh.material as THREE.Material,
         ghost: getGhostHousingMaterial(idx),
         aabb: r.localAABB.clone().translate(group.position),
@@ -1072,7 +1073,10 @@
     }
     for (const w of wallRuns) {
       const occ = w.occluded || fadedWallGroups.has(w.fadeGroup)
-      if (occ !== (w.mesh.material === w.ghost)) {
+      if (w.ghostMesh) {
+        w.mesh.visible = !occ
+        w.ghostMesh.visible = occ
+      } else if (occ !== (w.mesh.material === w.ghost)) {
         w.mesh.material = occ ? w.ghost : w.base
       }
     }

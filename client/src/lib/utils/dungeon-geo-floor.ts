@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { addMergedMeshes, type GeoEntry } from './house-geo-utils'
-import { getHousingMaterial } from './housing-textures'
+import { getGhostHousingMaterial, getHousingMaterial } from './housing-textures'
 import type {
   DungeonFloorLayout,
   InteriorDoorSpec,
@@ -9,6 +9,7 @@ import { addBox, quadMeshBuilder } from './dungeon-geo-primitives'
 import { buildCaveWall } from './dungeon-geo-cave'
 import {
   buildMasonryWall,
+  buildMasonryWallGhost,
   masonryFloorDamageBuilder,
 } from './dungeon-geo-masonry'
 import { dungeonFloorClearance } from './dungeon-floor-clearance'
@@ -39,6 +40,7 @@ const WALL_RUN_GROUP_NAME = 'wallRuns'
 /** A wall run that fades when it occludes the player. */
 export interface WallRun {
   mesh: THREE.Mesh
+  ghostMesh?: THREE.Mesh
   /** Group-local AABB; the layer adds the floor group's world position. */
   localAABB: THREE.Box3
   /** South/west walls in a room or connected corridor corner fade together. */
@@ -224,20 +226,19 @@ export function buildDungeonFloorGroup(
     inward = 1
   ) => {
     let geo: THREE.BufferGeometry
+    let ghostGeometry: THREE.BufferGeometry | undefined
     if (texIdx === cave.wallTexture) {
       const alongX = w > d
       const length = alongX ? w : d
       const center = alongX ? cx : cz
+      const lo = center - length / 2
+      const hi = center + length / 2
+      const boundary = (alongX ? cz : cx) + inward * WALL_HALF_THICKNESS
       const buildWall = cave.id === 'masonry' ? buildMasonryWall : buildCaveWall
-      geo = buildWall(
-        alongX,
-        center - length / 2,
-        center + length / 2,
-        (alongX ? cz : cx) + inward * WALL_HALF_THICKNESS,
-        inward,
-        h,
-        caveSeed
-      )
+      geo = buildWall(alongX, lo, hi, boundary, inward, h, caveSeed)
+      if (cave.id === 'masonry') {
+        ghostGeometry = buildMasonryWallGhost(alongX, lo, hi, boundary, h)
+      }
     } else {
       const e: GeoEntry[] = []
       addBox(e, texIdx, w, h, d, cx, cy, cz)
@@ -250,7 +251,20 @@ export function buildDungeonFloorGroup(
     mesh.userData.textureIndex = texIdx
     geo.computeBoundingBox()
     wallRunGroup.add(mesh)
-    wallRuns.push({ mesh, localAABB: geo.boundingBox!.clone(), fadeGroup })
+    let ghostMesh: THREE.Mesh | undefined
+    if (ghostGeometry) {
+      ghostMesh = new THREE.Mesh(ghostGeometry, getGhostHousingMaterial(texIdx))
+      ghostMesh.visible = false
+      ghostMesh.raycast = () => {}
+      ghostMesh.userData.textureIndex = texIdx
+      wallRunGroup.add(ghostMesh)
+    }
+    wallRuns.push({
+      mesh,
+      ghostMesh,
+      localAABB: geo.boundingBox!.clone(),
+      fadeGroup,
+    })
   }
   // Corridor groups join at grid corners, independent of wall thickness.
   const corridorParents = new Map<number, number>()

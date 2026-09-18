@@ -7,6 +7,7 @@ import { quadMeshBuilder } from './dungeon-geo-primitives'
 
 const BRICK_WIDTH = 4 / 9
 const BRICK_HEIGHT = 2 / 9
+const JOINT_INSET = 0.008
 const TILE_SIZE = 1 / (4 * DUNGEON_FLOOR_UV_SCALE)
 const TILES_PER_CELL = Math.round(1 / TILE_SIZE)
 const DAMAGE_LIFT = 0.006
@@ -14,16 +15,56 @@ const SOIL_TEXTURE = HOUSING_TEXTURES.findIndex(
   (entry) => entry.glb === 'red_laterite_soil_stones_1k'
 )
 const BRICK_FACES = [
-  [0.18, 0.06, 0.54, 0.23],
-  [0.36, 0.28, 0.8, 0.43],
-  [0.17, 0.5, 0.54, 0.64],
-  [0.35, 0.71, 0.82, 0.85],
+  [0.004, 0.009, 0.495, 0.246],
+  [0.506, 0.009, 0.995, 0.246],
+  [0.129, 0.258, 0.554, 0.495],
+  [0.561, 0.258, 0.933, 0.495],
+  [0.004, 0.505, 0.495, 0.749],
+  [0.506, 0.505, 0.995, 0.749],
+  [0.129, 0.758, 0.554, 0.992],
+  [0.561, 0.758, 0.933, 0.992],
 ]
 
 function noise(seed: number, x: number, y: number) {
   let hash = seed ^ Math.imul(x, 374761393) ^ Math.imul(y, 668265263)
   hash = Math.imul(hash ^ (hash >>> 13), 1274126177)
   return ((hash ^ (hash >>> 16)) >>> 0) / 4294967296
+}
+
+function addWhiteVertexColors(geo: THREE.BufferGeometry) {
+  geo.setAttribute(
+    'color',
+    new THREE.BufferAttribute(
+      new Float32Array(geo.getAttribute('position').count * 3).fill(1),
+      3
+    )
+  )
+}
+
+export function buildMasonryWallGhost(
+  alongX: boolean,
+  lo: number,
+  hi: number,
+  boundary: number,
+  height: number
+): THREE.BufferGeometry {
+  const surface = quadMeshBuilder(0.45)
+  const point = (along: number, y: number) =>
+    new THREE.Vector3(alongX ? along : boundary, y, alongX ? boundary : along)
+  for (const side of [-1, 1]) {
+    surface.addQuad(
+      point(lo, 0),
+      point(hi, 0),
+      point(hi, height),
+      point(lo, height),
+      new THREE.Vector3(alongX ? 0 : side, 0, alongX ? side : 0)
+    )
+  }
+  const entries: GeoEntry[] = []
+  surface.finish(entries, 0)
+  const geo = entries[0].geo
+  addWhiteVertexColors(geo)
+  return geo
 }
 
 export function buildMasonryWall(
@@ -79,10 +120,12 @@ export function buildMasonryWall(
           : sample > 0.96
             ? 0.015 + ((sample - 0.96) / 0.04) * 0.025
             : 0
-      const x0 = left + (left === lo ? 0 : 0.0035)
-      const x1 = right - (right === hi ? 0 : 0.0035)
-      const y0 = bottom + (row === 0 ? 0 : 0.0035)
-      const y1 = top - (top === height ? 0 : 0.0035)
+      const insetX = Math.min(JOINT_INSET, (right - left) / 4)
+      const insetY = Math.min(JOINT_INSET, (top - bottom) / 4)
+      const x0 = left + (left === lo ? 0 : insetX)
+      const x1 = right - (right === hi ? 0 : insetX)
+      const y0 = bottom + (row === 0 ? 0 : insetY)
+      const y1 = top - (top === height ? 0 : insetY)
       const brick =
         depth === 0
           ? new THREE.PlaneGeometry(x1 - x0, y1 - y0)
@@ -97,21 +140,37 @@ export function buildMasonryWall(
         BRICK_FACES[
           Math.floor(noise(wallSeed + 1, column, row) * BRICK_FACES.length)
         ]
+      const mirrored = noise(wallSeed + 2, column, row) > 0.5
+      const shade = 0.78 + noise(wallSeed + 3, column, row) * 0.2
+      const warmth = (noise(wallSeed + 4, column, row) - 0.5) * 0.04
+      const colors = new THREE.BufferAttribute(
+        new Float32Array(positions.count * 3),
+        3
+      )
       for (let i = 0; i < positions.count; i++) {
+        colors.setXYZ(i, shade + warmth, shade, shade - warmth)
         positions.setZ(i, positions.getZ(i) > 0 ? depth : 0)
         const u = THREE.MathUtils.clamp(
-          (positions.getX(i) - start) / BRICK_WIDTH,
+          (positions.getX(i) - start - JOINT_INSET) /
+            (BRICK_WIDTH - 2 * JOINT_INSET),
           0,
           1
         )
-        const v = (positions.getY(i) - row * BRICK_HEIGHT) / BRICK_HEIGHT
+        const v = THREE.MathUtils.clamp(
+          (positions.getY(i) - row * BRICK_HEIGHT - JOINT_INSET) /
+            (BRICK_HEIGHT - 2 * JOINT_INSET),
+          0,
+          1
+        )
         const side = Math.abs(normals.getZ(i)) < 0.5
+        const faceU = mirrored ? 1 - u : u
         uv.setXY(
           i,
-          (face[0] + (face[2] - face[0]) * (side ? u * 0.2 : u)) / 2,
+          (face[0] + (face[2] - face[0]) * (side ? faceU * 0.2 : faceU)) / 2,
           (1 - face[3] + (face[3] - face[1]) * v) / 2
         )
       }
+      brick.setAttribute('color', colors)
       geos.push(brick)
       addJoint(left, x0, bottom, top)
       addJoint(x1, right, bottom, top)
@@ -160,6 +219,9 @@ export function buildMasonryWall(
   const footEntries: GeoEntry[] = []
   foot.finish(footEntries, 0)
   geos.push(footEntries[0].geo)
+  for (const part of geos) {
+    if (!part.hasAttribute('color')) addWhiteVertexColors(part)
+  }
   const geo = mergeGeometries(geos, false)!
   for (const part of geos) part.dispose()
   const positions = geo.getAttribute('position')

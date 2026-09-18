@@ -8,6 +8,8 @@ export interface HousingTextureEntry {
   mapUrl?: string
   bumpScale?: number
   roughness?: number
+  vertexColors?: boolean
+  ghostOpacity?: number
   fallbackColor: number
   /** UV scale multiplier — smaller = larger tiles. Default 1.0 */
   uvScale?: number
@@ -212,18 +214,29 @@ export const HOUSING_TEXTURES: HousingTextureEntry[] = [
   ...[
     { id: 'limestone', color: 0x89867d, roughness: 0.94 },
     { id: 'moss', color: 0x6c7362, roughness: 0.88 },
-    { id: 'masonry', color: 0x927361, roughness: 0.93 },
+    { id: 'masonry', color: 0x626763, roughness: 0.93 },
   ].flatMap(({ id, color, roughness }) =>
-    ['wall', 'floor'].map((surface) => ({
-      label: `Cave ${id} ${surface}`,
-      glb: '',
-      mapUrl: `/textures/dungeon/cave-${id}-${surface}.webp`,
-      uvScale: id === 'masonry' && surface === 'wall' ? 2 : 1,
-      fallbackColor: color,
-      roughness,
-      bumpScale: surface === 'wall' ? 0.09 : id === 'masonry' ? 0 : 0.035,
-      internal: true,
-    }))
+    ['wall', 'floor'].map((surface) => {
+      const masonryWall = id === 'masonry' && surface === 'wall'
+      return {
+        label: `Cave ${id} ${surface}`,
+        glb: '',
+        mapUrl: `/textures/dungeon/cave-${id}-${surface}.webp`,
+        uvScale: masonryWall ? 2 : 1,
+        fallbackColor: color,
+        roughness,
+        vertexColors: masonryWall,
+        ghostOpacity: masonryWall ? 0.22 : undefined,
+        bumpScale: masonryWall
+          ? 0.012
+          : surface === 'wall'
+            ? 0.09
+            : id === 'masonry'
+              ? 0
+              : 0.035,
+        internal: true,
+      }
+    })
   ),
 ]
 
@@ -245,6 +258,7 @@ export function getHousingMaterial(
       color: entry.fallbackColor,
       side: THREE.FrontSide,
       roughness: entry.roughness ?? 0.85,
+      vertexColors: entry.vertexColors ?? false,
       metalness: 0.0,
       ...(entry.transparent && { transparent: true, depthWrite: false }),
     })
@@ -253,18 +267,14 @@ export function getHousingMaterial(
   return mat
 }
 
-/** Swap a merged/door mesh between its opaque and ghost material by the
- *  texture index recorded on it at build time. */
+/** Swap between opaque and ghost materials using the mesh's texture index. */
 export function setMeshGhost(mesh: THREE.Mesh, ghost: boolean) {
   const idx = mesh.userData.textureIndex
   if (typeof idx !== 'number') return
   mesh.material = ghost ? getGhostHousingMaterial(idx) : getHousingMaterial(idx)
 }
 
-/**
- * Get or create a semi-transparent ghost material for the given texture index.
- * Used when doors/windows should appear semi-transparent inside a house.
- */
+/** Shared semi-transparent material for an occluding surface. */
 export function getGhostHousingMaterial(
   textureIndex: number
 ): THREE.MeshStandardMaterial {
@@ -275,7 +285,8 @@ export function getGhostHousingMaterial(
     ghost = base.clone()
     ghost.transparent = true
     ghost.depthWrite = false
-    ghost.opacity = base.transparent ? 0.4 : 0.5
+    ghost.opacity =
+      HOUSING_TEXTURES[idx].ghostOpacity ?? (base.transparent ? 0.4 : 0.5)
     ghostMaterialCache.set(idx, ghost)
   }
   return ghost

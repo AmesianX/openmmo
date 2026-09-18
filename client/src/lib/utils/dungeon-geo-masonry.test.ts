@@ -8,7 +8,8 @@ import {
   type BufferGeometry,
 } from 'three'
 import type { DungeonFloorLayout } from '../managers/dungeonManager'
-import { buildMasonryWall } from './dungeon-geo-masonry'
+import { buildMasonryWall, buildMasonryWallGhost } from './dungeon-geo-masonry'
+import { disposeDungeonGroup } from './dungeon-geometry'
 import { buildDungeonFloorGroup } from './dungeon-geo-floor'
 import { dungeonCaveTheme } from './dungeon-cave-themes'
 import { HOUSING_TEXTURES } from './housing-textures'
@@ -95,6 +96,97 @@ describe('masonry walls', () => {
     expect(first.getAttribute('position').array).not.toEqual(
       other.getAttribute('position').array
     )
+    expect(first.getAttribute('color').array).toEqual(
+      again.getAttribute('color').array
+    )
+    const colors = first.getAttribute('color')
+    const tones = new Set<number>()
+    for (let i = 0; i < colors.count; i++) tones.add(colors.getX(i))
+    expect(tones.size).toBeGreaterThan(100)
+  })
+
+  it('keeps visible mortar gaps between staggered block faces', () => {
+    const geo = buildMasonryWall(true, 2, 10, 5, 1, 3, 42)
+    geometries.push(geo)
+    const mesh = new Mesh(geo, material)
+    const uvAt = (x: number, y: number) => {
+      const hit = new Raycaster(
+        new Vector3(x, y, 6),
+        new Vector3(0, 0, -1)
+      ).intersectObject(mesh)[0]
+      expect(hit).toBeDefined()
+      return hit.uv!
+    }
+    const joint = uvAt(4, 1)
+    for (const offset of [-0.006, 0.006]) {
+      expect(uvAt(4 + offset, 1).distanceTo(joint)).toBeLessThan(0.00001)
+      expect(uvAt(4.1, 8 / 9 + offset).distanceTo(joint)).toBeLessThan(0.00001)
+    }
+    expect(uvAt(4.02, 1).distanceTo(joint)).toBeGreaterThan(0.01)
+    expect(uvAt(4, 11 / 9).distanceTo(joint)).toBeGreaterThan(0.01)
+  })
+
+  it.each([true, false])(
+    'keeps clipped blocks inside very short wall runs (alongX=%s)',
+    (alongX) => {
+      const geo = buildMasonryWall(alongX, 2.221, 2.223, 5, 1, 3, 42)
+      geometries.push(geo)
+      const positions = geo.getAttribute('position')
+      for (let i = 0; i < positions.count; i++) {
+        const along = alongX ? positions.getX(i) : positions.getZ(i)
+        expect(along).toBeGreaterThanOrEqual(2.221 - 0.000001)
+        expect(along).toBeLessThanOrEqual(2.223 + 0.000001)
+      }
+    }
+  )
+})
+
+describe('masonry wall ghosts', () => {
+  it.each([true, false])(
+    'draws only one flat layer from either side (alongX=%s)',
+    (alongX) => {
+      const geo = buildMasonryWallGhost(alongX, 2, 10, 5, 3)
+      geometries.push(geo)
+      const mesh = new Mesh(geo, material)
+      const positions = geo.getAttribute('position')
+      for (let i = 0; i < positions.count; i++) {
+        expect(alongX ? positions.getZ(i) : positions.getX(i)).toBe(5)
+      }
+      for (const side of [-1, 1]) {
+        for (const y of [0.25, 1, 2.5]) {
+          const target = new Vector3(alongX ? 6.1 : 5, y, alongX ? 5 : 6.1)
+          const origin = target
+            .clone()
+            .add(new Vector3(alongX ? 0.8 : side, 0.7, alongX ? side : 0.8))
+          const hits = new Raycaster(
+            origin,
+            target.clone().sub(origin).normalize()
+          ).intersectObject(mesh)
+          expect(hits).toHaveLength(1)
+          expect(hits[0].point.distanceTo(target)).toBeLessThan(0.00001)
+        }
+      }
+      expect(geo.index!.count / 3).toBe(4)
+    }
+  )
+
+  it('keeps ghost planes unpickable and releases them with the floor', () => {
+    const floor = buildDungeonFloorGroup(layout, ctx, [], dungeonId)
+    const masonryWalls = floor.wallRuns.filter((wall) => wall.ghostMesh)
+    expect(masonryWalls.length).toBeGreaterThan(0)
+    const disposals = []
+    for (const { mesh, ghostMesh } of masonryWalls) {
+      expect(mesh.visible).toBe(true)
+      expect(ghostMesh!.visible).toBe(false)
+      expect(ghostMesh!.parent).toBe(mesh.parent)
+      expect(new Raycaster().intersectObject(ghostMesh!)).toEqual([])
+      const ghostMaterial = ghostMesh!.material as MeshBasicMaterial
+      expect(ghostMaterial.opacity).toBeLessThanOrEqual(0.25)
+      expect(ghostMaterial.depthWrite).toBe(false)
+      disposals.push(vi.spyOn(ghostMesh!.geometry, 'dispose'))
+    }
+    disposeDungeonGroup(floor.group)
+    for (const dispose of disposals) expect(dispose).toHaveBeenCalledOnce()
   })
 })
 
