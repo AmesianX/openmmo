@@ -84,6 +84,21 @@ export function buildMasonryWall(
     ...backingIndices.slice(30),
   ])
   backing.translate((lo + hi) / 2, height / 2, -WALL_THICKNESS / 2)
+  const backingPositions = backing.getAttribute('position')
+  const backingNormals = backing.getAttribute('normal')
+  const backingUVs = backing.getAttribute('uv')
+  for (let i = 0; i < backingPositions.count; i++) {
+    const along = backingPositions.getX(i)
+    const across = boundary + inward * backingPositions.getZ(i)
+    const y = backingPositions.getY(i)
+    const top = Math.abs(backingNormals.getY(i)) > 0.5
+    const end = Math.abs(backingNormals.getX(i)) > 0.5
+    backingUVs.setXY(
+      i,
+      (top ? (alongX ? along : across) : end ? across : along) * 0.45,
+      (top ? (alongX ? across : along) : y) * 0.45
+    )
+  }
   geos.push(backing)
   const mortar = quadMeshBuilder()
   const addJoint = (x0: number, x1: number, y0: number, y1: number) => {
@@ -99,7 +114,7 @@ export function buildMasonryWall(
 
   const wallSeed = seed ^ Math.round(boundary * 7919) ^ (alongX ? 8191 : 0)
   for (let row = 0; row * BRICK_HEIGHT < height; row++) {
-    const bottom = Math.max(0.16, row * BRICK_HEIGHT)
+    const bottom = row * BRICK_HEIGHT
     const top = Math.min(height, (row + 1) * BRICK_HEIGHT)
     const shift = (row % 2) * BRICK_WIDTH * 0.5
     for (
@@ -180,49 +195,17 @@ export function buildMasonryWall(
   }
   const mortarEntries: GeoEntry[] = []
   mortar.finish(mortarEntries, 0)
-  for (const geo of [backing, mortarEntries[0].geo]) {
-    const uv = geo.getAttribute('uv')
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, 0.235, 0.375)
-  }
+  const mortarUVs = mortarEntries[0].geo.getAttribute('uv')
+  for (let i = 0; i < mortarUVs.count; i++) mortarUVs.setXY(i, 0.235, 0.375)
   geos.push(mortarEntries[0].geo)
 
-  const foot = quadMeshBuilder(0.45)
-  const profile = [
-    [0, 0.16],
-    [0.021, 0.08],
-    [0.08, 0.021],
-    [0.16, 0],
-  ]
-  const taperLength = Math.min(0.4, (hi - lo) / 2)
-  const stops = [...new Set([lo, lo + taperLength, hi - taperLength, hi])].sort(
-    (a, b) => a - b
-  )
-  for (let i = 0; i < stops.length - 1; i++) {
-    for (let p = 0; p < profile.length - 1; p++) {
-      const [y0, z0] = profile[p]
-      const [y1, z1] = profile[p + 1]
-      const point = (x: number, y: number, z: number) =>
-        new THREE.Vector3(
-          x,
-          y,
-          z * Math.min(1, (x - lo) / taperLength, (hi - x) / taperLength)
-        )
-      foot.addQuad(
-        point(stops[i], y0, z0),
-        point(stops[i + 1], y0, z0),
-        point(stops[i + 1], y1, z1),
-        point(stops[i], y1, z1),
-        new THREE.Vector3(0, z0 - z1, y1 - y0).normalize()
-      )
-    }
-  }
-  const footEntries: GeoEntry[] = []
-  foot.finish(footEntries, 0)
-  geos.push(footEntries[0].geo)
   for (const part of geos) {
     if (!part.hasAttribute('color')) addWhiteVertexColors(part)
   }
   const geo = mergeGeometries(geos, false)!
+  const backingCount = backing.getIndex()!.count
+  geo.addGroup(0, backingCount, 1)
+  geo.addGroup(backingCount, geo.getIndex()!.count - backingCount, 0)
   for (const part of geos) part.dispose()
   const positions = geo.getAttribute('position')
   for (let i = 0; i < positions.count; i++) {

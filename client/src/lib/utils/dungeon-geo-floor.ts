@@ -7,6 +7,7 @@ import type {
 } from '../managers/dungeonManager'
 import { addBox, quadMeshBuilder } from './dungeon-geo-primitives'
 import { buildCaveWall } from './dungeon-geo-cave'
+import { buildDungeonWallWeathering } from './dungeon-wall-weathering'
 import {
   buildMasonryWall,
   buildMasonryWallGhost,
@@ -26,6 +27,9 @@ import { buildInteriorDoor, type InteriorDoor } from './dungeon-geo-doors'
 import {
   DUNGEON_FLOOR_TEXTURE_IDX,
   DUNGEON_WALL_TEXTURE_IDX,
+  DUNGEON_MASONRY_BACK_TEXTURE_IDX,
+  DUNGEON_WALL_WEATHERING_TEXTURE_IDX,
+  DUNGEON_WALL_DETAILS_TEXTURE_IDX,
   SLAB_THICKNESS,
   DUNGEON_FLOOR_UV_SCALE,
   SHADOW_CONTACT_LIFT,
@@ -41,6 +45,7 @@ const WALL_RUN_GROUP_NAME = 'wallRuns'
 export interface WallRun {
   mesh: THREE.Mesh
   ghostMesh?: THREE.Mesh
+  weathering?: THREE.Mesh
   /** Group-local AABB; the layer adds the floor group's world position. */
   localAABB: THREE.Box3
   /** South/west walls in a room or connected corridor corner fade together. */
@@ -227,13 +232,13 @@ export function buildDungeonFloorGroup(
   ) => {
     let geo: THREE.BufferGeometry
     let ghostGeometry: THREE.BufferGeometry | undefined
+    const alongX = w > d
+    const length = alongX ? w : d
+    const center = alongX ? cx : cz
+    const lo = center - length / 2
+    const hi = center + length / 2
+    const boundary = (alongX ? cz : cx) + inward * WALL_HALF_THICKNESS
     if (texIdx === cave.wallTexture) {
-      const alongX = w > d
-      const length = alongX ? w : d
-      const center = alongX ? cx : cz
-      const lo = center - length / 2
-      const hi = center + length / 2
-      const boundary = (alongX ? cz : cx) + inward * WALL_HALF_THICKNESS
       const buildWall = cave.id === 'masonry' ? buildMasonryWall : buildCaveWall
       geo = buildWall(alongX, lo, hi, boundary, inward, h, caveSeed)
       if (cave.id === 'masonry') {
@@ -244,13 +249,39 @@ export function buildDungeonFloorGroup(
       addBox(e, texIdx, w, h, d, cx, cy, cz)
       geo = e[0].geo
     }
-    const mesh = new THREE.Mesh(geo, getHousingMaterial(texIdx))
+    const weatheringGeometry = buildDungeonWallWeathering(geo, {
+      alongX,
+      lo,
+      hi,
+      boundary,
+      inward,
+      height: h,
+      seed: caveSeed,
+    })
+    const material = getHousingMaterial(texIdx)
+    const mesh = new THREE.Mesh(
+      geo,
+      ghostGeometry
+        ? [material, getHousingMaterial(DUNGEON_MASONRY_BACK_TEXTURE_IDX)]
+        : material
+    )
     mesh.castShadow = false
     mesh.receiveShadow = true
     mesh.raycast = () => {}
     mesh.userData.textureIndex = texIdx
     geo.computeBoundingBox()
     wallRunGroup.add(mesh)
+    let weathering: THREE.Mesh | undefined
+    if (weatheringGeometry) {
+      weathering = new THREE.Mesh(weatheringGeometry, [
+        getHousingMaterial(DUNGEON_WALL_WEATHERING_TEXTURE_IDX),
+        getHousingMaterial(DUNGEON_WALL_DETAILS_TEXTURE_IDX),
+      ])
+      weathering.name = 'wallWeathering'
+      weathering.receiveShadow = true
+      weathering.raycast = () => {}
+      mesh.add(weathering)
+    }
     let ghostMesh: THREE.Mesh | undefined
     if (ghostGeometry) {
       ghostMesh = new THREE.Mesh(ghostGeometry, getGhostHousingMaterial(texIdx))
@@ -262,6 +293,7 @@ export function buildDungeonFloorGroup(
     wallRuns.push({
       mesh,
       ghostMesh,
+      weathering,
       localAABB: geo.boundingBox!.clone(),
       fadeGroup,
     })

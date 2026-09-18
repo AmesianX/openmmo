@@ -3,6 +3,15 @@ import { HOUSING_TEXTURES } from './house-geo-utils'
 export const DUNGEON_WALL_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
   (e) => e.glb === 'housing/medieval_blocks_03_1k'
 )
+export const DUNGEON_MASONRY_BACK_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
+  (e) => e.mapUrl === '/textures/dungeon/cave-limestone-wall.webp'
+)
+export const DUNGEON_WALL_WEATHERING_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
+  (e) => e.mapUrl === '/textures/dungeon/wall-weathering-decals.webp'
+)
+export const DUNGEON_WALL_DETAILS_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
+  (e) => e.mapUrl === '/textures/dungeon/wall-cracks-cobwebs.webp'
+)
 /** Mossy plaster for the *surface* entrance building walls — distinct from the
  *  underground stone walls (DUNGEON_WALL_TEXTURE_IDX). */
 export const DUNGEON_ENTRANCE_WALL_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(

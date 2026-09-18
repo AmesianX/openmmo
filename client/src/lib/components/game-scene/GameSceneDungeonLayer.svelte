@@ -177,7 +177,8 @@
   interface WallRunFade {
     mesh: THREE.Mesh
     ghostMesh?: THREE.Mesh
-    base: THREE.Material
+    weathering?: THREE.Mesh
+    base: THREE.Material | THREE.Material[]
     ghost: THREE.Material
     aabb: THREE.Box3
     fadeGroup: number
@@ -771,7 +772,8 @@
       wallRuns.push({
         mesh: r.mesh,
         ghostMesh: r.ghostMesh,
-        base: r.mesh.material as THREE.Material,
+        weathering: r.weathering,
+        base: r.mesh.material,
         ghost: getGhostHousingMaterial(idx),
         aabb: r.localAABB.clone().translate(group.position),
         fadeGroup: r.fadeGroup,
@@ -1073,6 +1075,7 @@
     }
     for (const w of wallRuns) {
       const occ = w.occluded || fadedWallGroups.has(w.fadeGroup)
+      if (w.weathering) w.weathering.visible = !occ
       if (w.ghostMesh) {
         w.mesh.visible = !occ
         w.ghostMesh.visible = occ

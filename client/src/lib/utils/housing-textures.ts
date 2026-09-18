@@ -23,6 +23,7 @@ export interface HousingTextureEntry {
   internal?: boolean
   /** Enable standard alpha-blend transparency (transparent + depthWrite off). */
   transparent?: boolean
+  decal?: boolean
 }
 
 /** Shared texture catalog for walls, floors, and roofs. */
@@ -238,6 +239,17 @@ export const HOUSING_TEXTURES: HousingTextureEntry[] = [
       }
     })
   ),
+  ...['wall-weathering-decals', 'wall-cracks-cobwebs'].map((id) => ({
+    label: `Dungeon ${id}`,
+    glb: '',
+    mapUrl: `/textures/dungeon/${id}.webp`,
+    fallbackColor: 0xffffff,
+    roughness: 1,
+    vertexColors: true,
+    transparent: true,
+    decal: true,
+    internal: true,
+  })),
 ]
 
 /** Per-texture-index material cache (module-level singleton). */
@@ -261,6 +273,13 @@ export function getHousingMaterial(
       vertexColors: entry.vertexColors ?? false,
       metalness: 0.0,
       ...(entry.transparent && { transparent: true, depthWrite: false }),
+      ...(entry.decal && {
+        visible: false,
+        alphaTest: 0.015,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      }),
     })
     materialCache.set(idx, mat)
   }
@@ -343,6 +362,7 @@ export function initHousingTextures(): Promise<void> {
 
         // Switch from fallback color to texture-driven color
         mat.color.set(0xffffff)
+        mat.visible = true
         mat.needsUpdate = true
 
         const oldGhost = ghostMaterialCache.get(idx)
