@@ -3,15 +3,16 @@ import {
   cancelPendingFishingSounds,
   playDungeonDripSound,
   playFishingSound,
+  preloadDungeonSounds,
   sfxMuted,
   sfxVolume,
   stopDungeonDripSounds,
 } from './sfxManager'
 
-// sfxManager caches audio pools at module level, so FakeAudio instances
-// survive across tests — count plays in a per-test map instead.
+// Audio pools persist across tests; playback counts do not.
 let plays = new Map<string, number>()
 let playbacks: { audio: FakeAudio; volume: number; rate: number }[] = []
+const loadedUrls: string[] = []
 
 class FakeAudio {
   preload = ''
@@ -20,7 +21,9 @@ class FakeAudio {
   playbackRate = 1
   paused = true
   constructor(public url: string) {}
-  load() {}
+  load() {
+    loadedUrls.push(this.url)
+  }
   play() {
     this.paused = false
     playbacks.push({
@@ -118,7 +121,39 @@ describe('dungeon drip audio', () => {
     stopDungeonDripSounds()
     sfxVolume.set(0.5)
     sfxMuted.set(false)
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('preloads both variants without playing them or recreating their pools', () => {
+    preloadDungeonSounds()
+    for (const url of [
+      '/sounds/dungeon-drip.ogg',
+      '/sounds/dungeon-drip-2.ogg',
+    ]) {
+      expect(loadedUrls.filter((loaded) => loaded === url)).toHaveLength(4)
+    }
+    expect(playbacks).toHaveLength(0)
+
+    const loadCount = loadedUrls.length
+    preloadDungeonSounds()
+    expect(loadedUrls).toHaveLength(loadCount)
+  })
+
+  it('randomly chooses either recording on each impact, including repeats', () => {
+    vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.5)
+      .mockReturnValueOnce(0.9999)
+
+    for (let i = 0; i < 3; i++) playDungeonDripSound(0, 1.5)
+
+    expect(playbacks.map(({ audio }) => audio.url)).toEqual([
+      '/sounds/dungeon-drip.ogg',
+      '/sounds/dungeon-drip-2.ogg',
+      '/sounds/dungeon-drip-2.ogg',
+    ])
+    expect(playbacks.map(({ volume }) => volume)).toEqual([0.35, 0.35, 0.35])
   })
 
   it('fades with distance and skips drops outside hearing range', () => {
@@ -127,7 +162,7 @@ describe('dungeon drip audio', () => {
     playDungeonDripSound(10, 1.5)
     playDungeonDripSound(25, 1.5)
     expect(playbacks).toHaveLength(2)
-    expect(playbacks[0].volume).toBeCloseTo(0.175)
+    expect(playbacks[0].volume).toBeCloseTo(0.35)
     expect(playbacks[1].volume).toBeCloseTo(playbacks[0].volume / 4)
   })
 
@@ -140,7 +175,7 @@ describe('dungeon drip audio', () => {
     expect(playbacks).toHaveLength(0)
     sfxVolume.set(0.2)
     playDungeonDripSound(0, 1)
-    expect(playbacks[0].volume).toBeCloseTo(0.07)
+    expect(playbacks[0].volume).toBeCloseTo(0.14)
   })
 
   it('varies the pitch between puddles', () => {
@@ -149,11 +184,14 @@ describe('dungeon drip audio', () => {
     expect(playbacks[0].rate).not.toBe(playbacks[1].rate)
   })
 
-  it('stops drip tails on floor exit without stopping other effects', () => {
+  it('stops both drip variants on floor exit without stopping other effects', () => {
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.9)
+    playDungeonDripSound(0, 1)
     playDungeonDripSound(0, 1)
     playFishingSound('plop')
     stopDungeonDripSounds()
     expect(playbacks[0].audio.paused).toBe(true)
-    expect(playbacks[1].audio.paused).toBe(false)
+    expect(playbacks[1].audio.paused).toBe(true)
+    expect(playbacks[2].audio.paused).toBe(false)
   })
 })

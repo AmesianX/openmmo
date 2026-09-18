@@ -65,9 +65,12 @@ export type BowSound = keyof typeof BOW_SOUNDS
 
 const DUNGEON_SOUNDS = {
   reset: { url: '/sounds/dungeon-roar.ogg', volume: 0.5, pool: 1 },
-  drip: { url: '/sounds/dungeon-drip.ogg', volume: 0.35, pool: 4 },
+  drip: { url: '/sounds/dungeon-drip.ogg', volume: 0.7, pool: 4 },
+  drip2: { url: '/sounds/dungeon-drip-2.ogg', volume: 0.7, pool: 4 },
 } as const
 export type DungeonSound = keyof typeof DUNGEON_SOUNDS
+
+const DUNGEON_DRIP_SOUNDS = [DUNGEON_SOUNDS.drip, DUNGEON_SOUNDS.drip2]
 
 const ABILITY_SOUNDS: Partial<Record<AbilityId, SoundSpec>> = {
   guardian_ward: {
@@ -299,14 +302,17 @@ export function playDungeonSound(kind: DungeonSound) {
 export function playDungeonDripSound(distance: number, seed: number) {
   const gain = Math.max(0, 1 - distance / 10) ** 2
   if (gain <= 0 || getSfxMultiplier() <= 0) return
-  const { url, volume, pool } = DUNGEON_SOUNDS.drip
+  const { url, volume, pool } =
+    DUNGEON_DRIP_SOUNDS[Math.floor(Math.random() * DUNGEON_DRIP_SOUNDS.length)]
   playAudioFromPool(url, volume * gain, pool, 0.92 + (seed % 1) * 0.16)
 }
 
 export function stopDungeonDripSounds() {
-  const pool = pools.get(DUNGEON_SOUNDS.drip.url)
-  if (!pool) return
-  for (const audio of pool.audios) audio.pause()
+  for (const { url } of DUNGEON_DRIP_SOUNDS) {
+    const pool = pools.get(url)
+    if (!pool) continue
+    for (const audio of pool.audios) audio.pause()
+  }
 }
 
 export function preloadAbilitySounds() {

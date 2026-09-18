@@ -1,5 +1,5 @@
 repo jake-song-openmmo/onlinerpg-assets
-revision 3b44f0f7cd455ca498b98a1485cc38dac10067e2
+revision 0691191bcfa000c4d162f35694dac9e03b159bb9
 file 5edac6dfec09f450747fa2d9ad9dc64b10e717f2fa5a01729f0d4ebc00396cdd assets/Clapping.fbx
 file 811755702cbd64a11a2228c02d1814185321b0cb18ff0eab39825ce783a7d38d assets/Defeated.fbx
 file 81b84a7b0d42d73f40b12833b679409e6d9a34e014bc818da9b974e8bd173e95 assets/Excited.fbx
@@ -132,12 +132,33 @@ file 52ab374959aac6ba3ef3f5e80904086e522f578dc741c69c4ed7fb07b9c09a33 assets/ogr
 file b8de3f32aa2f54328dc1ba631b8568a95f7c26bf06e91e383c1caacb27cf430b assets/rowboat/rowboat.blend
 file effd331bf77e1cdad2632502e6f8529a5481ce822801a3acfdc6a1a6bbe50a86 assets/rowboat/wood_albedo.png
 file 1bdf30ad78a7624e2420c06dfc46558f314d948b5625aaaca31543aac08cbba2 assets/rusty_metal_grid_1k.gltf.zip
+file 2abb530b73da677fc86e205e8eab1b4555678ed4807548b90971ff6312645f6e assets/sfx/dungeon-drip-ocons-2026-09-18/ocons_6gEs_tJpkIY_158.556-158.796.json
+file 4cbe13615927f5ad414617403d5265bc9d007333c66fa30ceec270777ef04ccf assets/sfx/dungeon-drip-ocons-2026-09-18/ocons_6gEs_tJpkIY_158.556-158.796.wav
+file 3337aa679a60eab163fc5b07922e759f40a1e4a5f4ed8c2df10845cc014c207f assets/sfx/dungeon-drip-ocons-2026-09-18/ocons_6gEs_tJpkIY_68.932-69.332.json
+file 463378beb26124792d325e16e8deb7fb2112793fc6e4c75937e5ee0f508a5107 assets/sfx/dungeon-drip-ocons-2026-09-18/ocons_6gEs_tJpkIY_68.932-69.332.wav
 file 6e5688fdf184a5986747197e60249e5116241d04900b6d1cc7fbd2a4f5a95807 assets/sfx/dungeon-drips-2026-09-17/dungeon-drip_take1_2026-09-17.json
 file cc3fb4f6e094a2335eef813be7dd3f2a07d83beaa99c710f7f0df08d5c626925 assets/sfx/dungeon-drips-2026-09-17/dungeon-drip_take1_2026-09-17.mp3
 file 9b9c056452a3e8ac3c0e53ffa1bf984666ff3bf1b79a248d45cebbf05caa3c79 assets/sfx/dungeon-drips-2026-09-17/dungeon-drip_take2_2026-09-17.json
 file 1952e9f8c51b4899c43619202339d87805ecf67696872351f97def7fd989e08b assets/sfx/dungeon-drips-2026-09-17/dungeon-drip_take2_2026-09-17.mp3
 file 70f57cb81e37c6dbc99f379b1f1656870f211ad34bcf5c26ef01ef47d925c5c4 assets/sfx/dungeon-drips-2026-09-17/unused-procedural-drip.ogg
 file 2026357f67ffd20814d9bea01db1665c3f5ae3abc9b8209eb3d1dbb1881cb4b4 assets/sfx/dungeon-drips-2026-09-17/unused-procedural-generator.mjs
+file 4176014522d8a08d02cd018aa56a6177025f3acafa933227250fe2585496bcc0 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-stone_take1_2026-09-18.json
+file 052880e52e01e1cbd08d752a1b701c9c70173b2e4202e5e59cf1c3532b91fe21 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-stone_take1_2026-09-18.mp3
+file 15a6a1d274399203fdb1db1b23db18ffac02b86fc26d160a8310a711427cde04 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-stone_take2_2026-09-18.json
+file e1ceed66a00f3bdf9ee950fa09b4336835700a31869a78e5d206eddba083f433 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-stone_take2_2026-09-18.mp3
+file e2ef496affabddadae96e6bfab0af1487f98e5a7702ab4bf35ba748265b7e68a assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-stone_take3_2026-09-18.json
+file c274ac231357ba53fb94707d06bd5be9f6629c9d6168b53837fbf4741fd510bf assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-stone_take3_2026-09-18.mp3
+file 712535c1dc1261baf861efaf841ffb79f7e4ac00be3c17b0958bb4f562813499 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-stone_take4_2026-09-18.json
+file c2db1fd3b5bcb9ddef7e1180eaea981aa6182609bdf3123d19a257c18c38b8d5 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-stone_take4_2026-09-18.mp3
+file b734486c4aee8cb384fbf02de0fcf3db570378918eef0099abcd78c46d515845 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-wet-stone_take1_2026-09-18.json
+file 90898b6f50c1cc27d5bcef80e36685aaa554f85155952bb1628624f4fa416043 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-wet-stone_take1_2026-09-18.mp3
+file 1bafcf9774c042bd0a19e60ceb99bee7994ca23f6ef2c8326b442c3e21d77424 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-wet-stone_take2_2026-09-18.json
+file 72ca1c6954a75ff8ec8acf55c9b9d69b737f0b92024c8bf82b31ef75dfdb583e assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-wet-stone_take2_2026-09-18.mp3
+file f18bf08263431eb17e903a4ff358c60436b66b6e41865403c68961026e8ff323 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-wet-stone_take3_2026-09-18.json
+file cccfd52ecb237e6bd122868e0068a26688e42fdd4c4e280b362bcd3243478637 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-wet-stone_take3_2026-09-18.mp3
+file 3898aef47e7cf34e10f4b02bdc511cf360fd8d6fafea4988a8445c937706e050 assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-wet-stone_take4_2026-09-18.json
+file bed349f97d8856db36534fc94c5e29d2bde5a37928a4cdb82da4adfafb46e9ce assets/sfx/dungeon-drips-2026-09-18/dungeon-drip-wet-stone_take4_2026-09-18.mp3
+file 23b7a865c21f22942bc3493e8a4bf1a661c3c7defb87a1e5488402889b628760 assets/sfx/dungeon-drips-2026-09-18/unused-percussive-drip.ogg
 file 6e3fbb7576d907321b62fb822749c067111d0287746afd65c493daa948131ee5 assets/sfx/skeleton-hits-2026-09-15/armored-bone-hit_candidate1_2026-09-15.json
 file 164b0dfce48b32dec8ea284b7c960f6f84c22594e2b7fdf630915c87a3a7ac48 assets/sfx/skeleton-hits-2026-09-15/armored-bone-hit_candidate1_2026-09-15.mp3
 file 97dcd01687977d148bc4851692e51c83e13dfaaf62fa2e783f7399fdc9075e21 assets/sfx/skeleton-hits-2026-09-15/armored-bone-hit_candidate2_2026-09-15.json

@@ -19,23 +19,47 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
 
 ## Dungeon
 
-- dungeon-drip.ogg — 물방울이 얕은 물웅덩이에 떨어지는 짧은 물소리.
-  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) API로 2026-09-17 생성.
+- dungeon-drip.ogg, dungeon-drip-2.ogg — [오콘스 — 물방울 떨어지는 소리, Water dripping sound](https://www.youtube.com/watch?v=6gEs_tJpkIY).
+  영상 설명에서 연결한 [공식 블로그의 원본 MP3](https://blog.naver.com/ocons_sound/224177366898)에서
+  각각 158.556~158.796초(2분 38.56초 부근), 68.932~69.332초(1분 8.93초 부근)를
+  직접 추출해 2026-09-18 적용. 물방울이 떨어질 때마다 두 음원 중 하나를 50:50 확률로 선택.
+  라이선스: 제작자의 무료 편집·사용 허가. 공식 블로그는 출처 표기를 권장하며
+  음원 단독 재배포·판매를 금지함. 2026-09-18 설명·블로그 확인, CC0로 취급하지 않음.
+  출처 표기: Music provided by 오콘스 - 오디오 콘텐츠 스튜디오 — 물방울 떨어지는 소리, Water dripping sound.
+  AI 생성·유료 도구 사용 없음. 추출 원음과 출처·가공 메타데이터는
+  `assets/sfx/dungeon-drip-ocons-2026-09-18/`의
+  `ocons_6gEs_tJpkIY_158.556-158.796.wav`, `ocons_6gEs_tJpkIY_68.932-69.332.wav`
+  및 각각 같은 이름의 `.json`에 보관.
+  `node tools/gen-dungeon-drip.mjs`로 두 음원을 재생성. 모노 변환, 시작 1 ms와
+  끝 페이드(첫 음원 40 ms, 둘째 음원 80 ms)를 적용.
+  첫 120 ms RMS를 −21 dB로 정규화하되 인코딩 전 피크는 0.75 이하로 제한.
+  실제 디코딩 피크는 각각 −3.05 dB·−4.60 dB, 첫 120 ms RMS는 −21.14 dB·−21.04 dB.
+  EQ·압축·인공 리버브 없이 원래 물소리의 음색과 감쇠를 보존.
+  각각 0.24초·0.4초, 44.1 kHz 모노 Ogg Vorbis q5, 게임 재생 볼륨 0.7.
+  두 음원을 미리 로드하며, 플레이어와의 거리에 따라 감쇠하고 10 m 밖에서는 재생하지 않음.
+  던전 이탈 시 두 음원의 재생을 모두 중지.
+- **[미사용]** 로컬 후보 폴더 `sfx-candidates/dungeon-drip-reference-2026-09-18/`의
+  `terre-asmr_HWFv0Jr6s28_15.896-16.156.wav` —
+  [Terre ASMR 영상](https://www.youtube.com/watch?v=HWFv0Jr6s28)에서 2026-09-18 추출한 이전 후보.
+  재사용 라이선스 미확인. 허가가 명시된 오콘스 음원으로 교체했으며 HF에 동기화하지 않음.
+- **[미사용]** `assets/sfx/dungeon-drips-2026-09-18/`의
+  `dungeon-drip-wet-stone_take1`~`take4` — 이전 AI 생성 후보·사용 원본.
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) API로 2026-09-18 생성,
   Starter 유료 플랜(API 구독 조회로 확인),
   [유료 플랜 상업 이용 라이선스](https://help.elevenlabs.io/hc/en-us/articles/13313564601361-Can-I-publish-the-content-I-generate-on-the-platform) 적용.
-  `eleven_text_to_sound_v2`, 0.7초, `prompt_influence=0.75`, 2테이크 중 take 2 사용,
-  총 14크레딧. 프롬프트는 `tools/gen-death-sfx.py`의 `dungeon_drip`에 기록.
-  원본과 생성 메타데이터는 `assets/sfx/dungeon-drips-2026-09-17/`의
-  `dungeon-drip_take2_2026-09-17.mp3` 및 같은 이름의 `.json`에 보관.
-  `node tools/gen-dungeon-drip.mjs`로 원본 0.037초부터 0.22초를 추출하고,
-  시작 1 ms·끝 50 ms 페이드를 적용. 2026-09-17 부드러운 짧은 리버브 추가:
-  고음을 감쇠하는 6개 병렬 딜레이와 2개 올패스 필터, RT60 목표 0.55초,
-  원음에 리버브 게인 0.3을 더해 둥근 잔향을 만듦. 리버브 끝 80 ms 페이드,
-  총 0.8초, 인코딩 전 피크 −6 dB, 44.1 kHz 모노 Ogg Vorbis q5로 가공.
-  플레이어와의 거리에 따라 감쇠하며 10 m 밖에서는 재생하지 않음.
-- **[미사용]** 같은 폴더의 `dungeon-drip_take1_2026-09-17.mp3` — 생성 후보.
-  위와 동일한 ElevenLabs Starter 라이선스·생성일 적용.
-- **[미사용]** 같은 폴더의 `unused-procedural-drip.ogg` 및
+  `eleven_text_to_sound_v2`, 1초, 총 40크레딧. take 1·2는 `prompt_influence=0.7`,
+  take 3·4는 0.6. 각 프롬프트와 take 4의 이전 가공 정보는 동명 `.json`에 기록.
+- **[미사용]** 같은 폴더의 `dungeon-drip-stone_take1`~`take4` 및
+  `unused-percussive-drip.ogg` — 타격음이 강했던 이전 후보·게임용 음원.
+  위와 동일한 ElevenLabs Starter 라이선스·생성일 적용. 0.7초, 총 28크레딧.
+  take 1·2는 `prompt_influence=0.85`, take 3·4는 0.75. 원본 및 가공 정보는 동명 `.json`에 기록.
+- **[미사용]** `assets/sfx/dungeon-drips-2026-09-17/`의
+  `dungeon-drip_take1_2026-09-17.mp3` 및 `dungeon-drip_take2_2026-09-17.mp3` —
+  이전 물웅덩이 낙수음 후보와 사용 원본. ElevenLabs Starter 유료 플랜으로
+  2026-09-17 생성, 위 유료 플랜 상업 이용 라이선스 적용.
+  `eleven_text_to_sound_v2`, 0.7초, `prompt_influence=0.75`, 총 14크레딧.
+  기포 꼬리음을 포함한 기존 프롬프트는 동명 `.json`에 보관.
+- **[미사용]** 2026-09-17 폴더의 `unused-procedural-drip.ogg` 및
   `unused-procedural-generator.mjs` — 2026-09-17 직접 절차적 합성한 이전 버전.
   외부 샘플·생성 API 없음(유료 도구/플랜 해당 없음), [프로젝트 라이선스](../../LICENSE) 적용.
 
