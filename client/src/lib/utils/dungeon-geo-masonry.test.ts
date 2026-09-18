@@ -4,8 +4,8 @@ import {
   MeshBasicMaterial,
   Raycaster,
   Vector3,
+  Group,
   type BufferGeometry,
-  type Group,
 } from 'three'
 import type { DungeonFloorLayout } from '../managers/dungeonManager'
 import { buildMasonryWall } from './dungeon-geo-masonry'
@@ -131,34 +131,76 @@ const groundAt = (group: Group, x: number, z: number) =>
     1
   ).intersectObject(group)[0]
 
+function damageSurface(group: Group) {
+  const surface = new Group()
+  for (const child of group.getObjectByName('masonryFloorDamage')!.children) {
+    const mesh = new Mesh((child as Mesh).geometry, material)
+    mesh.userData.textureIndex = child.userData.textureIndex
+    surface.add(mesh)
+  }
+  return surface
+}
+
 describe('damaged masonry floors', () => {
-  it('exposes pickable soil below missing tiles with shallow broken edges', () => {
+  it('keeps a continuous flat picking surface beneath damaged tiles', () => {
     expect(dungeonCaveTheme(dungeonId, 1).id).toBe('masonry')
     const group = buildFloor()
-    let soilHits = 0
-    let raisedHits = 0
-    let intactHits = 0
+    const floor = groundAt(group, 5, 11).object as Mesh
+    expect(floor.userData.textureIndex).toBe(
+      dungeonCaveTheme(dungeonId, 1).floorTexture
+    )
+    expect(floor.geometry.index!.count / 3).toBeLessThan(200)
+    expect(HOUSING_TEXTURES[floor.userData.textureIndex].bumpScale).toBe(0)
     for (let z = 10.625; z < 23.5; z += 0.25) {
       for (let x = 4.125; x < 8; x += 0.25) {
         const hit = groundAt(group, x, z)
         expect(hit).toBeDefined()
-        expect(hit.point.y).toBeGreaterThan(-0.046)
-        expect(hit.point.y).toBeLessThan(0.025)
-        if (hit.object.userData.textureIndex === soilTexture) {
+        expect(hit.point.y).toBe(0)
+        expect(hit.object).toBe(floor)
+        expect(hit.face!.normal.y).toBe(1)
+      }
+    }
+    expect(groundAt(group, 3.9, 16)).toBeUndefined()
+  })
+
+  it('draws soil and broken pieces above the floor without casting seam shadows', () => {
+    const group = buildFloor()
+    const damage = group.getObjectByName('masonryFloorDamage')!
+    expect(damage.children).toHaveLength(2)
+    for (const child of damage.children) {
+      const mesh = child as Mesh
+      expect(mesh.castShadow).toBe(false)
+      expect(mesh.receiveShadow).toBe(true)
+      mesh.geometry.computeBoundingBox()
+      expect(mesh.geometry.boundingBox!.min.y).toBeGreaterThan(0)
+      expect(mesh.geometry.boundingBox!.max.y).toBeLessThan(0.035)
+    }
+    const surface = damageSurface(group)
+    let soilHits = 0
+    let fragmentHits = 0
+    let intactHits = 0
+    for (let z = 10.625; z < 23.5; z += 0.25) {
+      for (let x = 4.125; x < 8; x += 0.25) {
+        const hit = groundAt(surface, x, z)
+        if (!hit) {
+          intactHits++
+        } else if (hit.object.userData.textureIndex === soilTexture) {
           soilHits++
-          expect(hit.point.y).toBeLessThan(-0.03)
-        } else if (hit.point.y > 0.001) raisedHits++
-        else if (Math.abs(hit.point.y) < 0.00001) intactHits++
+          expect(hit.point.y).toBeCloseTo(0.006, 5)
+        } else {
+          fragmentHits++
+          expect(hit.point.y).toBeGreaterThan(0.006)
+        }
       }
     }
     expect(soilHits).toBeGreaterThan(20)
-    expect(raisedHits).toBeGreaterThan(5)
+    expect(fragmentHits).toBeGreaterThan(5)
     expect(intactHits).toBeGreaterThan(soilHits * 3)
-    expect(groundAt(group, 3.9, 16)).toBeUndefined()
   })
 
   it('preserves rooms, shaft openings, and clearance around props and chests', () => {
     const group = buildFloor()
+    const damage = damageSurface(group)
     const floorTexture = dungeonCaveTheme(dungeonId, 1).floorTexture
     for (const [x, z] of [
       [4.25, 12.25],
@@ -171,6 +213,7 @@ describe('damaged masonry floors', () => {
       const hit = groundAt(group, x, z)
       expect(hit.object.userData.textureIndex).toBe(floorTexture)
       expect(hit.point.y).toBeCloseTo(0, 5)
+      expect(groundAt(damage, x, z)).toBeUndefined()
     }
     expect(groundAt(group, 5.25, 25.25).object.userData.textureIndex).toBe(
       DUNGEON_FLOOR_TEXTURE_IDX

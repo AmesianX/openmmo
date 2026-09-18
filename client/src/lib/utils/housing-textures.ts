@@ -221,7 +221,7 @@ export const HOUSING_TEXTURES: HousingTextureEntry[] = [
       uvScale: id === 'masonry' && surface === 'wall' ? 2 : 1,
       fallbackColor: color,
       roughness,
-      bumpScale: surface === 'wall' ? 0.09 : 0.035,
+      bumpScale: surface === 'wall' ? 0.09 : id === 'masonry' ? 0 : 0.035,
       internal: true,
     }))
   ),

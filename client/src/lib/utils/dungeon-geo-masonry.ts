@@ -9,7 +9,7 @@ const BRICK_WIDTH = 4 / 9
 const BRICK_HEIGHT = 2 / 9
 const TILE_SIZE = 1 / (4 * DUNGEON_FLOOR_UV_SCALE)
 const TILES_PER_CELL = Math.round(1 / TILE_SIZE)
-const TILE_DEPTH = 0.045
+const DAMAGE_LIFT = 0.006
 const SOIL_TEXTURE = HOUSING_TEXTURES.findIndex(
   (entry) => entry.glb === 'red_laterite_soil_stones_1k'
 )
@@ -186,51 +186,42 @@ export function buildMasonryWall(
   return geo
 }
 
-export function masonryFloorBuilder(
+export function masonryFloorDamageBuilder(
   textureIndex: number,
   seed: number,
   clear: (x: number, z: number) => boolean
 ) {
   const entries: GeoEntry[] = []
   const sides = quadMeshBuilder(DUNGEON_FLOOR_UV_SCALE)
+  const soil = quadMeshBuilder(1.5)
   const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
-  const tile = (points: THREE.Vector2[], lift = 0, tilt = 0) => {
+  const tile = (points: THREE.Vector2[], lift = 0.012, tilt = 0) => {
     const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length
     const top = (p: THREE.Vector2) => lift + (p.x - cx) * tilt
-    if (points.length === 4) {
-      sides.addQuad(
-        v(points[0].x, top(points[0]), points[0].y),
-        v(points[1].x, top(points[1]), points[1].y),
-        v(points[2].x, top(points[2]), points[2].y),
-        v(points[3].x, top(points[3]), points[3].y),
-        v(-tilt, 1, 0).normalize()
+    const geo = new THREE.ShapeGeometry(
+      new THREE.Shape(points.map((p) => new THREE.Vector2(p.x, -p.y)))
+    )
+    geo.rotateX(-Math.PI / 2)
+    const positions = geo.getAttribute('position')
+    const uv = geo.getAttribute('uv')
+    for (let i = 0; i < positions.count; i++) {
+      positions.setY(i, lift + (positions.getX(i) - cx) * tilt)
+      uv.setXY(
+        i,
+        positions.getX(i) * DUNGEON_FLOOR_UV_SCALE,
+        positions.getZ(i) * DUNGEON_FLOOR_UV_SCALE
       )
-    } else {
-      const geo = new THREE.ShapeGeometry(
-        new THREE.Shape(points.map((p) => new THREE.Vector2(p.x, -p.y)))
-      )
-      geo.rotateX(-Math.PI / 2)
-      const positions = geo.getAttribute('position')
-      const uv = geo.getAttribute('uv')
-      for (let i = 0; i < positions.count; i++) {
-        positions.setY(i, lift + (positions.getX(i) - cx) * tilt)
-        uv.setXY(
-          i,
-          positions.getX(i) * DUNGEON_FLOOR_UV_SCALE,
-          positions.getZ(i) * DUNGEON_FLOOR_UV_SCALE
-        )
-      }
-      geo.computeVertexNormals()
-      entries.push({ geo, textureIndex })
     }
+    geo.computeVertexNormals()
+    entries.push({ geo, textureIndex })
     for (let i = 0; i < points.length; i++) {
       const a = points[i]
       const b = points[(i + 1) % points.length]
       sides.addQuad(
         v(a.x, top(a), a.y),
         v(b.x, top(b), b.y),
-        v(b.x, -TILE_DEPTH, b.y),
-        v(a.x, -TILE_DEPTH, a.y),
+        v(b.x, DAMAGE_LIFT, b.y),
+        v(a.x, DAMAGE_LIFT, a.y),
         v(b.y - a.y, 0, a.x - b.x).normalize()
       )
     }
@@ -242,42 +233,27 @@ export function masonryFloorBuilder(
         const tz = z * TILES_PER_CELL + dz
         const x0 = tx * TILE_SIZE
         const z0 = tz * TILE_SIZE
+        const patch = noise(seed + 11, Math.floor(tx / 3), Math.floor(tz / 3))
+        const damage = noise(seed, tx, tz)
+        const threshold = patch > 0.7 ? 0.42 : 0.1
+        if (damage >= threshold) continue
         const canBreak = [0.005, TILE_SIZE - 0.005].every((u) =>
           [0.005, TILE_SIZE - 0.005].every((w) => clear(x0 + u, z0 + w))
         )
-        const patch = noise(seed + 11, Math.floor(tx / 3), Math.floor(tz / 3))
-        const damage = canBreak ? noise(seed, tx, tz) : 1
-        const threshold = patch > 0.7 ? 0.42 : 0.1
+        if (!canBreak) continue
         const turns = Math.floor(noise(seed + 7, tx, tz) * 4)
         const points = (coords: number[][]) =>
           coords.map(([u, w]) => {
             for (let i = 0; i < turns; i++) [u, w] = [1 - w, u]
             return new THREE.Vector2(x0 + u * TILE_SIZE, z0 + w * TILE_SIZE)
           })
-        if (damage >= threshold) {
-          tile(
-            points([
-              [0, 0],
-              [1, 0],
-              [1, 1],
-              [0, 1],
-            ])
-          )
-          continue
-        }
-        const soil = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE, 3, 3)
-        soil.rotateX(-Math.PI / 2)
-        soil.translate(x0 + TILE_SIZE / 2, -TILE_DEPTH, z0 + TILE_SIZE / 2)
-        const positions = soil.getAttribute('position')
-        const uv = soil.getAttribute('uv')
-        for (let i = 0; i < positions.count; i++) {
-          const interior = i % 4 > 0 && i % 4 < 3 && i > 3 && i < 12
-          if (interior)
-            positions.setY(i, -TILE_DEPTH + noise(seed + i, tx, tz) * 0.014)
-          uv.setXY(i, positions.getX(i) * 1.5, positions.getZ(i) * 1.5)
-        }
-        soil.computeVertexNormals()
-        entries.push({ geo: soil, textureIndex: SOIL_TEXTURE })
+        soil.addQuad(
+          v(x0, DAMAGE_LIFT, z0),
+          v(x0 + TILE_SIZE, DAMAGE_LIFT, z0),
+          v(x0 + TILE_SIZE, DAMAGE_LIFT, z0 + TILE_SIZE),
+          v(x0, DAMAGE_LIFT, z0 + TILE_SIZE),
+          v(0, 1, 0)
+        )
         if (damage < threshold * 0.35) {
           tile(
             points([
@@ -285,7 +261,7 @@ export function masonryFloorBuilder(
               [0.36, 0.13],
               [0.13, 0.34],
             ]),
-            -0.026,
+            0.012,
             0.03
           )
         } else if (damage < threshold * 0.7) {
@@ -305,7 +281,7 @@ export function masonryFloorBuilder(
               [0.91, 0.72],
               [0.87, 0.94],
             ]),
-            -0.015,
+            0.018,
             0.04
           )
         } else {
@@ -326,7 +302,7 @@ export function masonryFloorBuilder(
               [1, 1],
               [0, 1],
             ]),
-            0.008,
+            0.02,
             0.035
           )
         }
@@ -334,7 +310,9 @@ export function masonryFloorBuilder(
     }
   }
   const finish = (target: GeoEntry[]) => {
+    if (entries.length === 0) return
     sides.finish(entries, textureIndex)
+    soil.finish(entries, SOIL_TEXTURE)
     target.push(...entries)
   }
   return { addCell, finish }

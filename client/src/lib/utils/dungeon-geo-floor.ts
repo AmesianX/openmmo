@@ -7,7 +7,10 @@ import type {
 } from '../managers/dungeonManager'
 import { addBox, quadMeshBuilder } from './dungeon-geo-primitives'
 import { buildCaveWall } from './dungeon-geo-cave'
-import { buildMasonryWall, masonryFloorBuilder } from './dungeon-geo-masonry'
+import {
+  buildMasonryWall,
+  masonryFloorDamageBuilder,
+} from './dungeon-geo-masonry'
 import { dungeonFloorClearance } from './dungeon-floor-clearance'
 import { buildDungeonFloorRubble } from './dungeon-geo-rubble'
 import { dungeonCaveSeed, dungeonCaveTheme } from './dungeon-cave-themes'
@@ -33,8 +36,7 @@ import {
 
 const WALL_RUN_GROUP_NAME = 'wallRuns'
 
-/** One straight wall run, built as its own mesh so the dungeon layer can fade
- *  just this run to a ghost when it occludes the player. */
+/** A wall run that fades when it occludes the player. */
 export interface WallRun {
   mesh: THREE.Mesh
   /** Group-local AABB; the layer adds the floor group's world position. */
@@ -45,8 +47,7 @@ export interface WallRun {
 
 export interface DungeonFloorGroup {
   group: THREE.Group
-  /** Local-space AABB of the up-shaft stairs sub-group, for the layer's
-   *  occlusion-fade test (add the group's world position to use it). */
+  /** Group-local bounds for the up-shaft occlusion test. */
   upShaftAABB: THREE.Box3
   /** Per-side wall runs (all four directions), faded individually on occlusion. */
   wallRuns: WallRun[]
@@ -93,7 +94,7 @@ export function buildDungeonFloorGroup(
   const slabs = new Map<number, ReturnType<typeof quadMeshBuilder>>()
   const masonryFloor =
     cave.id === 'masonry'
-      ? masonryFloorBuilder(
+      ? masonryFloorDamageBuilder(
           cave.floorTexture,
           caveSeed,
           dungeonFloorClearance(layout, ctx)
@@ -145,10 +146,11 @@ export function buildDungeonFloorGroup(
             v(xa, 0, z),
             n
           )
+        cap(0, v(0, 1, 0))
         if (masonryFloor && runTex === cave.floorTexture) {
           for (let column = x0; column < x; column++)
             masonryFloor.addCell(column, z)
-        } else cap(0, v(0, 1, 0))
+        }
         cap(yB, v(0, -1, 0))
         if (runN) skirtZ(z, v(0, 0, -1))
         if (runS) skirtZ(z + 1, v(0, 0, 1))
@@ -165,7 +167,6 @@ export function buildDungeonFloorGroup(
     }
   }
   for (const [tex, slab] of slabs) slab.finish(entries, tex)
-  masonryFloor?.finish(entries)
 
   if (down) {
     collectShaftStairs(entries, down, ctx, 0, -ctx.floorHeight, false, true)
@@ -173,6 +174,19 @@ export function buildDungeonFloorGroup(
 
   const group = new THREE.Group()
   addMergedMeshes(group, entries)
+  if (masonryFloor) {
+    const damageEntries: GeoEntry[] = []
+    masonryFloor.finish(damageEntries)
+    const damageGroup = new THREE.Group()
+    damageGroup.name = 'masonryFloorDamage'
+    addMergedMeshes(damageGroup, damageEntries)
+    for (const child of damageGroup.children) {
+      const mesh = child as THREE.Mesh
+      mesh.castShadow = false
+      mesh.raycast = () => {}
+    }
+    group.add(damageGroup)
+  }
   group.add(buildDungeonFloorRubble(layout, ctx, dungeonId))
 
   // Keep the up-shaft separate for occlusion fading.
@@ -189,8 +203,7 @@ export function buildDungeonFloorGroup(
   )
   const upGroup = new THREE.Group()
   upGroup.name = UP_SHAFT_GROUP_NAME
-  // Lift off the floor (SHADOW_CONTACT_LIFT); collision uses the server ramp Y, so
-  // the sub-centimetre visual shift doesn't affect it.
+  // Visual lift; collision follows the server ramp.
   upGroup.position.y = SHADOW_CONTACT_LIFT
   addMergedMeshes(upGroup, upEntries)
   group.add(upGroup)
