@@ -17,6 +17,7 @@ mod combat_audit;
 mod heroic_tales;
 
 pub const SAMPLE_INTERVAL_SECONDS: i64 = 3600;
+pub const CONCURRENT_SAMPLE_INTERVAL_SECONDS: i64 = 60;
 pub const DAY_SECONDS: i64 = 86400;
 pub const UNIQUE_PERIOD_DAYS: [u32; 5] = [1, 7, 30, 180, 365];
 
@@ -322,6 +323,7 @@ pub struct ConcurrentHistorySample {
     pub other_accounts: f64,
     pub peak_accounts: u32,
     pub peak_timestamp: i64,
+    pub peak_counts: ConcurrentCounts,
     pub sample_count: u32,
 }
 
@@ -491,19 +493,22 @@ fn metrics_routes(game: Arc<GameState>, auth: Arc<AuthService>) -> Router {
 
 pub async fn record_concurrent_sample(game: &GameState, auth: Arc<AuthService>) {
     let counts = game.concurrent_account_counts().await;
+    let now = unix_now();
+    if let Err(error) = auth_db(move || auth.record_concurrent_accounts(now, counts)).await {
+        warn!("Concurrent account snapshot failed: {error}");
+    }
+}
+
+pub async fn record_account_activity_sample(game: &GameState, auth: Arc<AuthService>) {
     let activities = game.account_activity_snapshot().await;
     let now = unix_now();
     if let Err(error) = auth_db(move || {
-        if let Err(error) = auth.record_account_activities(&activities) {
-            warn!("Account activity snapshot failed: {error}");
-        } else if let Err(error) = auth.aggregate_daily_unique_accounts(now) {
-            warn!("Daily unique account aggregation failed: {error}");
-        }
-        auth.record_concurrent_accounts(now, counts)
+        auth.record_account_activities(&activities)?;
+        auth.aggregate_daily_unique_accounts(now)
     })
     .await
     {
-        warn!("Concurrent account snapshot failed: {error}");
+        warn!("Account activity snapshot failed: {error}");
     }
 }
 
@@ -518,7 +523,7 @@ pub async fn record_hourly_metrics(game: &GameState, auth: Arc<AuthService>) {
     {
         warn!("Character metrics snapshot failed: {error}");
     }
-    record_concurrent_sample(game, auth).await;
+    record_account_activity_sample(game, auth).await;
 }
 
 fn history_interval(hours: u32) -> Option<i64> {
@@ -688,8 +693,11 @@ async fn concurrent_history(
     let counts = state.game.concurrent_account_counts().await;
     let until = unix_now();
     let from = until - i64::from(hours) * 3600;
-    let samples =
-        auth_db(move || state.auth.concurrent_account_samples(from, until, interval)).await;
+    let samples = auth_db(move || {
+        state.auth.record_concurrent_accounts(until, counts)?;
+        state.auth.concurrent_account_samples(from, until, interval)
+    })
+    .await;
     metrics_response(
         samples.map(|samples| ConcurrentHistory {
             from,
@@ -2023,6 +2031,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_history_preserves_request_time_peaks_after_disconnect() {
+        use crate::types::{new_player, CharacterClass, ClientKind, Gender, Position};
+
+        let path = crate::test_util::unique_temp_dir("concurrent_live_peak").join("game.db");
+        let auth = Arc::new(AuthService::new(path.clone()).unwrap());
+        let game = Arc::new(make_test_game_state("concurrent_live_peak"));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let session = game.register_account_session("browser", tx, &auth).await;
+        let player = new_player(
+            "browser".into(),
+            1,
+            10,
+            CharacterClass::Knight,
+            Gender::default(),
+            Position {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            0.0,
+            false,
+            ClientKind::Web,
+        );
+        game.attach_player_to_account_session("browser", session, player.id)
+            .await;
+        game.add_player(player).await;
+        let state = MetricsState {
+            game: Arc::clone(&game),
+            auth: Arc::clone(&auth),
+        };
+        let response = concurrent_history(
+            State(state.clone()),
+            Query(HistoryQuery { hours: Some(24) }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: ConcurrentHistory = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body.current.accounts, 1);
+        assert_eq!(body.samples.last().unwrap().peak_accounts, 1);
+        let peak_counts = body.current.counts;
+
+        game.end_account_session("browser", session, &auth).await;
+        record_concurrent_sample(&game, Arc::clone(&auth)).await;
+        let response = concurrent_history(
+            State(state.clone()),
+            Query(HistoryQuery { hours: Some(24) }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: ConcurrentHistory = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body.current.accounts, 0);
+        let peak = body
+            .samples
+            .iter()
+            .max_by_key(|sample| sample.peak_accounts)
+            .unwrap();
+        assert_eq!(peak.peak_accounts, 1);
+        assert_eq!(peak.peak_counts, peak_counts);
+
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .execute("DROP TABLE concurrent_account_samples", [])
+            .unwrap();
+        let response =
+            concurrent_history(State(state), Query(HistoryQuery { hours: Some(24) })).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
     async fn account_endpoints_limit_ranges_and_preserve_distinct_counts() {
         let path = crate::test_util::unique_temp_dir("metrics_endpoint").join("game.db");
         let auth = Arc::new(AuthService::new(path.clone()).unwrap());
@@ -2043,7 +2131,10 @@ mod tests {
         assert_eq!(body.until - body.from, 86400);
         assert_eq!(body.current.accounts, 0);
         assert_eq!(body.current.counts, ConcurrentCounts::default());
-        assert!(body.samples.is_empty());
+        assert_eq!(body.samples.len(), 1);
+        assert_eq!(body.samples[0].peak_accounts, 0);
+        let mut observed_minutes =
+            std::collections::HashSet::from([body.until / CONCURRENT_SAMPLE_INTERVAL_SECONDS]);
 
         auth.record_concurrent_accounts(
             unix_now() - 7200,
@@ -2062,8 +2153,6 @@ mod tests {
             },
         )
         .unwrap();
-        record_concurrent_sample(&game, Arc::clone(&auth)).await;
-
         for (hours, interval) in [
             (1, 3600),
             (6, 3600),
@@ -2081,6 +2170,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::OK);
             let body: ConcurrentHistory =
                 serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+            observed_minutes.insert(body.until / CONCURRENT_SAMPLE_INTERVAL_SECONDS);
             assert_eq!(body.until - body.from, hours * 3600);
             assert_eq!(body.sample_interval_seconds, interval);
             assert_eq!(body.current.accounts, 0);
@@ -2091,16 +2181,21 @@ mod tests {
                 - sample.other_accounts)
                 .abs()
                 < 1e-9));
+            assert!(body
+                .samples
+                .iter()
+                .all(|sample| sample.peak_counts.total() == sample.peak_accounts));
             assert_eq!(
                 body.samples
                     .iter()
                     .map(|sample| sample.sample_count)
                     .sum::<u32>(),
-                match hours {
-                    1 => 1,
-                    8760 => 3,
-                    _ => 2,
-                }
+                observed_minutes.len() as u32
+                    + match hours {
+                        1 => 0,
+                        8760 => 2,
+                        _ => 1,
+                    }
             );
             assert_eq!(
                 body.samples.iter().map(|sample| sample.peak_accounts).max(),

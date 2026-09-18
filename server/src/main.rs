@@ -845,6 +845,19 @@ async fn main() -> ExitCode {
         }
     }
 
+    let concurrent_game = Arc::clone(&game_state);
+    let concurrent_auth = Arc::clone(&auth_service);
+    background.spawn(run_ticks(
+        "concurrent metrics",
+        Duration::from_secs(metrics::CONCURRENT_SAMPLE_INTERVAL_SECONDS as u64),
+        drain_shutdown.clone(),
+        move || {
+            let game = Arc::clone(&concurrent_game);
+            let auth = Arc::clone(&concurrent_auth);
+            async move { metrics::record_concurrent_sample(&game, auth).await }
+        },
+    ));
+
     let metrics_game = Arc::clone(&game_state);
     let metrics_auth = Arc::clone(&auth_service);
     let mut metrics_shutdown = drain_shutdown.clone();
@@ -934,6 +947,7 @@ async fn main() -> ExitCode {
     drain(&mut connections, "Connection").await;
 
     game_state.persist_shutdown_snapshot(&auth_service).await;
+    metrics::record_account_activity_sample(&game_state, Arc::clone(&auth_service)).await;
     metrics::record_concurrent_sample(&game_state, Arc::clone(&auth_service)).await;
     game_state
         .tick_combat_audit(

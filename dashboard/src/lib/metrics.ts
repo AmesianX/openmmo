@@ -121,6 +121,7 @@ export interface Sample extends AccountSample, ConnectionCounts {}
 export interface HistorySample extends Sample {
   peak_accounts: number
   peak_timestamp: number
+  peak_counts: ConnectionCounts
   sample_count: number
 }
 
@@ -172,13 +173,13 @@ export interface PerAccountGoldHistory extends ChartHistory<PerAccountGoldHistor
 }
 
 export const periods = [
-  { hours: 1, label: '1시간', interval: 3600, intervalLabel: '1시간 간격' },
-  { hours: 6, label: '6시간', interval: 3600, intervalLabel: '1시간 간격' },
-  { hours: 24, label: '1일', interval: 3600, intervalLabel: '1시간 간격' },
-  { hours: 168, label: '1주일', interval: 3600, intervalLabel: '1시간 간격' },
-  { hours: 720, label: '1개월', interval: 3600, intervalLabel: '1시간 평균' },
-  { hours: 4320, label: '6개월', interval: 21600, intervalLabel: '6시간 평균' },
-  { hours: 8760, label: '1년', interval: 86400, intervalLabel: '1일 평균' },
+  { hours: 1, label: '1시간', interval: 3600, intervalLabel: '1시간 최고' },
+  { hours: 6, label: '6시간', interval: 3600, intervalLabel: '1시간 최고' },
+  { hours: 24, label: '1일', interval: 3600, intervalLabel: '1시간 최고' },
+  { hours: 168, label: '1주일', interval: 3600, intervalLabel: '1시간 최고' },
+  { hours: 720, label: '1개월', interval: 3600, intervalLabel: '1시간 최고' },
+  { hours: 4320, label: '6개월', interval: 21600, intervalLabel: '6시간 최고' },
+  { hours: 8760, label: '1년', interval: 86400, intervalLabel: '1일 최고' },
 ] as const
 
 export type Hours = typeof periods[number]['hours']
@@ -236,6 +237,7 @@ export function parseHistory(value: unknown, hours: Hours): ConcurrentHistory {
     !data.samples.every((sample, index) => sample && Number.isSafeInteger(sample.timestamp) &&
       Number.isFinite(sample.accounts) && sample.accounts >= 0 && hasValidCounts(sample, false) &&
       Number.isSafeInteger(sample.peak_accounts) && sample.peak_accounts >= sample.accounts &&
+      sample.peak_counts && hasValidCounts({ ...sample.peak_counts, accounts: sample.peak_accounts, timestamp: sample.peak_timestamp }, true) &&
       Number.isSafeInteger(sample.peak_timestamp) && sample.peak_timestamp >= sample.timestamp &&
       sample.peak_timestamp < sample.timestamp + interval && sample.peak_timestamp <= data.until &&
       Number.isSafeInteger(sample.sample_count) && sample.sample_count > 0 && sample.sample_count <= interval / 60 &&
@@ -246,11 +248,11 @@ export function parseHistory(value: unknown, hours: Hours): ConcurrentHistory {
   return data
 }
 
-export function withCurrent(history: ConcurrentHistory): ConcurrentHistory {
-  const { current, samples } = history
-  if (history.sample_interval_seconds !== 3600 || samples.at(-1)?.timestamp === current.timestamp) return history
-  const live = { ...current, peak_accounts: current.accounts, peak_timestamp: current.timestamp, sample_count: 1 }
-  return { ...history, samples: [...samples, live] }
+export function concurrentPeakHistory(history: ConcurrentHistory): ConcurrentHistory {
+  return {
+    ...history,
+    samples: history.samples.map((sample) => ({ ...sample, accounts: sample.peak_accounts, ...sample.peak_counts })),
+  }
 }
 
 export function summarize(samples: HistorySample[]) {

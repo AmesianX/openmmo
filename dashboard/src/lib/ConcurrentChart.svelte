@@ -1,10 +1,11 @@
 <script lang="ts">
   import ConnectionBreakdown from './ConnectionBreakdown.svelte'
   import HistoryChart from './HistoryChart.svelte'
-  import { connectionKinds, type ChartMarker, type ConcurrentHistory, type Sample } from './metrics'
+  import { concurrentPeakHistory, connectionKinds, formatDateTime, type ChartMarker, type ConcurrentHistory, type Sample } from './metrics'
 
   let { history, peak, markers = [] }: { history: ConcurrentHistory; peak: number | null; markers?: ChartMarker[] } = $props()
-  let visibleKinds = $derived(connectionKinds.filter((kind) => kind.key !== 'other_accounts' || history.samples.some((sample) => sample.other_accounts > 0)))
+  let peakHistory = $derived(concurrentPeakHistory(history))
+  let visibleKinds = $derived(connectionKinds.filter((kind) => kind.key !== 'other_accounts' || peakHistory.samples.some((sample) => sample.other_accounts > 0)))
 
   function stackHeight(sample: Sample, layer: number) {
     if (layer === connectionKinds.length - 1) return sample.accounts
@@ -18,7 +19,7 @@
   }
 </script>
 
-<HistoryChart {history} {peak} {markers} value={(sample) => sample.accounts} legend="평균 접속 계정 수" legendLabel="합계" valueLabel="계정 합계 (평균)">
+<HistoryChart history={peakHistory} {peak} {markers} value={(sample) => sample.accounts} legend="구간 최고 접속 계정 수" legendLabel="구간 최고 합계" valueLabel="계정 합계 (구간 최고)">
   {#snippet layers(segment, x, y)}
     {#each connectionKinds as kind, layer (kind.key)}
       {#if segment.length > 1}
@@ -30,6 +31,8 @@
   {/snippet}
   {#snippet detail(selected)}
     <ConnectionBreakdown sample={selected} />
+    <span>최고 관측: {formatDateTime(selected.peak_timestamp)} KST</span>
+    <span>{selected.sample_count.toLocaleString('ko-KR')}개 기록 기준</span>
   {/snippet}
   {#snippet legends()}
     {#each visibleKinds as kind (kind.key)}

@@ -8,8 +8,8 @@ use crate::metrics::{
     LevelLeaderboardEntry, LevelSample, LevelSeries, PerAccountGoldHistory,
     PerAccountGoldHistorySample, PerAccountGoldSample, PriceIndexHistory, PriceMeeting,
     ServerStart, ServerStarts, UniqueHistory, UniqueSample, WeaponEnchantLeaderboard,
-    WeaponEnchantLeaderboardEntry, WeaponEnchantSample, WeaponEnchantSeries, DAY_SECONDS,
-    SAMPLE_INTERVAL_SECONDS,
+    WeaponEnchantLeaderboardEntry, WeaponEnchantSample, WeaponEnchantSeries,
+    CONCURRENT_SAMPLE_INTERVAL_SECONDS, DAY_SECONDS, SAMPLE_INTERVAL_SECONDS,
 };
 use rusqlite::{params, types::FromSql, Connection, OptionalExtension};
 use std::collections::{HashMap, HashSet};
@@ -946,12 +946,13 @@ impl AuthService {
         now: i64,
         counts: ConcurrentCounts,
     ) -> Result<(), AuthError> {
-        let timestamp = now - now.rem_euclid(SAMPLE_INTERVAL_SECONDS);
+        let timestamp = now - now.rem_euclid(CONCURRENT_SAMPLE_INTERVAL_SECONDS);
         self.open_connection()?.execute(
             "INSERT INTO concurrent_account_samples (timestamp, accounts, web_accounts, agent_accounts)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(timestamp) DO UPDATE SET accounts = excluded.accounts,
-                 web_accounts = excluded.web_accounts, agent_accounts = excluded.agent_accounts",
+                 web_accounts = excluded.web_accounts, agent_accounts = excluded.agent_accounts
+             WHERE excluded.accounts > concurrent_account_samples.accounts",
             params![timestamp, counts.total(), counts.web_accounts, counts.agent_accounts],
         )?;
         Ok(())
@@ -974,13 +975,17 @@ impl AuthService {
                 WHERE timestamp >= ?1 AND timestamp <= ?2
                 GROUP BY timestamp / ?3
              )
-             SELECT MAX(bucket * ?3, ?1), accounts, peak_accounts,
+             SELECT MAX(bucket * ?3, ?1), buckets.accounts, peak_accounts,
+                    peak.timestamp, sample_count, buckets.web_accounts, buckets.agent_accounts,
+                    buckets.other_accounts, peak.web_accounts, peak.agent_accounts,
+                    peak.accounts - peak.web_accounts - peak.agent_accounts
+             FROM buckets
+             JOIN concurrent_account_samples peak ON peak.timestamp =
                     (SELECT MIN(timestamp) FROM concurrent_account_samples
                      WHERE timestamp >= MAX(bucket * ?3, ?1)
                        AND timestamp <= MIN((bucket + 1) * ?3 - 1, ?2)
-                       AND accounts = buckets.peak_accounts),
-                    sample_count, web_accounts, agent_accounts, other_accounts
-             FROM buckets ORDER BY bucket",
+                       AND accounts = buckets.peak_accounts)
+             ORDER BY bucket",
         )?;
         let rows = statement.query_map(params![from, until, interval], |row| {
             Ok(ConcurrentHistorySample {
@@ -992,6 +997,11 @@ impl AuthService {
                 web_accounts: row.get(5)?,
                 agent_accounts: row.get(6)?,
                 other_accounts: row.get(7)?,
+                peak_counts: ConcurrentCounts {
+                    web_accounts: row.get(8)?,
+                    agent_accounts: row.get(9)?,
+                    other_accounts: row.get(10)?,
+                },
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -2499,19 +2509,24 @@ mod tests {
         drop(auth);
 
         let auth = AuthService::new(path).unwrap();
-        let samples = auth.concurrent_account_samples(3600, 18000, 3600).unwrap();
+        let samples = auth.concurrent_account_samples(3600, 18500, 3600).unwrap();
         assert_eq!(
             samples,
             vec![
                 ConcurrentHistorySample {
                     timestamp: 3600,
-                    accounts: 4.0,
-                    web_accounts: 2.0,
-                    agent_accounts: 1.0,
-                    other_accounts: 1.0,
+                    accounts: 3.5,
+                    web_accounts: 1.5,
+                    agent_accounts: 1.5,
+                    other_accounts: 0.5,
                     peak_accounts: 4,
-                    peak_timestamp: 3600,
-                    sample_count: 1,
+                    peak_timestamp: 7140,
+                    peak_counts: ConcurrentCounts {
+                        web_accounts: 2,
+                        agent_accounts: 1,
+                        other_accounts: 1,
+                    },
+                    sample_count: 2,
                 },
                 ConcurrentHistorySample {
                     timestamp: 7200,
@@ -2520,7 +2535,8 @@ mod tests {
                     agent_accounts: 0.0,
                     other_accounts: 0.0,
                     peak_accounts: 0,
-                    peak_timestamp: 7200,
+                    peak_timestamp: 7260,
+                    peak_counts: ConcurrentCounts::default(),
                     sample_count: 1,
                 },
                 ConcurrentHistorySample {
@@ -2530,15 +2546,76 @@ mod tests {
                     agent_accounts: 4.0,
                     other_accounts: 0.0,
                     peak_accounts: 7,
-                    peak_timestamp: 18000,
+                    peak_timestamp: 18300,
+                    peak_counts: ConcurrentCounts {
+                        web_accounts: 3,
+                        agent_accounts: 4,
+                        other_accounts: 0,
+                    },
                     sample_count: 1,
                 },
             ]
         );
         assert_eq!(
-            auth.concurrent_account_samples(7260, 17940, 3600).unwrap(),
+            auth.concurrent_account_samples(7261, 17940, 3600).unwrap(),
             vec![]
         );
+    }
+
+    #[test]
+    fn concurrent_minute_peaks_survive_lower_readings_and_restarts() {
+        let path = crate::test_util::unique_temp_dir("concurrent_peaks").join("game.db");
+        let auth = AuthService::new(path.clone()).unwrap();
+        for (now, web_accounts, agent_accounts) in [
+            (3600, 35, 3),
+            (3610, 39, 3),
+            (3620, 10, 29),
+            (3630, 10, 32),
+            (3660, 35, 4),
+            (7200, 34, 4),
+        ] {
+            auth.record_concurrent_accounts(
+                now,
+                ConcurrentCounts {
+                    web_accounts,
+                    agent_accounts,
+                    other_accounts: 0,
+                },
+            )
+            .unwrap();
+        }
+        drop(auth);
+        let auth = AuthService::new(path).unwrap();
+        auth.record_concurrent_accounts(3670, ConcurrentCounts::default())
+            .unwrap();
+        for interval in [3600, 21600, 86400] {
+            let samples = auth
+                .concurrent_account_samples(3600, 7259, interval)
+                .unwrap();
+            assert_eq!(samples.len(), if interval == 3600 { 2 } else { 1 });
+            let peak = &samples[0];
+            assert_eq!(peak.peak_accounts, 42);
+            assert_eq!(peak.peak_timestamp, 3600);
+            assert_eq!(
+                peak.peak_counts,
+                ConcurrentCounts {
+                    web_accounts: 39,
+                    agent_accounts: 3,
+                    other_accounts: 0,
+                }
+            );
+            assert_eq!(
+                samples
+                    .iter()
+                    .map(|sample| sample.sample_count)
+                    .sum::<u32>(),
+                3
+            );
+            assert_eq!(
+                peak.accounts,
+                if interval == 3600 { 40.5 } else { 119.0 / 3.0 }
+            );
+        }
     }
 
     #[test]
@@ -2569,6 +2646,11 @@ mod tests {
                     other_accounts: 0.0,
                     peak_accounts: 6,
                     peak_timestamp: 180,
+                    peak_counts: ConcurrentCounts {
+                        web_accounts: 2,
+                        agent_accounts: 4,
+                        other_accounts: 0,
+                    },
                     sample_count: 3,
                 },
                 ConcurrentHistorySample {
@@ -2579,6 +2661,11 @@ mod tests {
                     other_accounts: 1.0,
                     peak_accounts: 3,
                     peak_timestamp: 1200,
+                    peak_counts: ConcurrentCounts {
+                        web_accounts: 1,
+                        agent_accounts: 1,
+                        other_accounts: 1,
+                    },
                     sample_count: 1,
                 },
             ]
@@ -2619,6 +2706,13 @@ mod tests {
         assert_eq!(sample.agent_accounts, 4.0 / 3.0);
         assert_eq!(sample.other_accounts, 4.0);
         assert_eq!(sample.peak_accounts, 8);
+        assert_eq!(
+            sample.peak_counts,
+            ConcurrentCounts {
+                other_accounts: 8,
+                ..Default::default()
+            }
+        );
         assert_eq!(sample.sample_count, 3);
     }
 

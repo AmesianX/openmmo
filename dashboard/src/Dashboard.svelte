@@ -23,7 +23,7 @@
   import PeriodFilter from './lib/PeriodFilter.svelte'
   import { createMetricsResource } from './lib/metricsResource.svelte'
   import { useDashboardAuth } from './lib/auth.svelte'
-  import { formatDateTime, formatTime, parseGoldHistory, parsePerAccountGoldHistory, parseHistory, parseLevelLeaderboard, parseGoldLeaderboard, parseWeaponEnchantLeaderboard, parseArmorEnchantLeaderboard, parseLandLeaderboard, parsePriceIndexHistory, parseServerStarts, parseUniqueHistory, periods, uniquePeriods, summarize, withCurrent, deployMarkers, type GoldHours, type Hours, type LeaderboardHours, type UniqueHours } from './lib/metrics'
+  import { formatDateTime, formatTime, parseGoldHistory, parsePerAccountGoldHistory, parseHistory, parseLevelLeaderboard, parseGoldLeaderboard, parseWeaponEnchantLeaderboard, parseArmorEnchantLeaderboard, parseLandLeaderboard, parsePriceIndexHistory, parseServerStarts, parseUniqueHistory, periods, uniquePeriods, summarize, deployMarkers, type GoldHours, type Hours, type LeaderboardHours, type UniqueHours } from './lib/metrics'
 
   const auth = useDashboardAuth()
   let hours = $state<Hours>(24)
@@ -73,8 +73,6 @@
   let uniqueLatest = $derived(unique.history?.samples.at(-1))
   let uniquePeak = $derived(unique.history?.samples.length ? Math.max(...unique.history.samples.map((sample) => sample.accounts)) : null)
   let summary = $derived(summarize(history?.samples ?? []))
-  let chartHistory = $derived(history && withCurrent(history))
-  let chartSummary = $derived(summarize(chartHistory?.samples ?? []))
   const count = (value: number | null | undefined) => value == null ? '—' : value.toLocaleString('ko-KR')
   const refresh = () => { resources.forEach((resource) => resource.refresh()) }
 </script>
@@ -140,13 +138,13 @@
       <PeriodFilter bind:hours options={periods.filter((period) => period.hours >= 24)} label="조회 기간" />
     </div>
     <div class="chart-meta"><span>접속 계정 수</span><span>{period.intervalLabel}</span></div>
-    {#if chartHistory && history && history.samples.length > 0}
-      <ConcurrentChart history={chartHistory} peak={chartSummary.peak} {markers} />
+    {#if history && history.samples.length > 0}
+      <ConcurrentChart {history} peak={summary.peak} {markers} />
     {:else}
       <div class="chart-empty" role="status">
         <div class="empty-illustration" aria-hidden="true"><svg viewBox="0 0 64 48" fill="none"><path d="M4 42h56M4 24h56M4 6h56" stroke="currentColor" stroke-opacity=".18" /><path d="M6 34h13l9-16 10 11 10-19 10 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></div>
         <strong>{loading ? '월드의 기록을 불러오고 있어요' : error ? '기록에 연결할 수 없어요' : '첫 번째 기록을 기다리고 있어요'}</strong>
-        <p>{loading ? '잠시만 기다려 주세요.' : error ? '연결이 복구되면 그래프가 자동으로 갱신됩니다.' : '이 기간에 수집된 기록이 아직 없습니다. 새 기록은 1시간마다 쌓입니다.'}</p>
+        <p>{loading ? '잠시만 기다려 주세요.' : error ? '연결이 복구되면 그래프가 자동으로 갱신됩니다.' : '이 기간에 수집된 기록이 아직 없습니다. 새 기록은 1분마다 쌓입니다.'}</p>
       </div>
     {/if}
     <div class="chart-footer">
@@ -230,7 +228,7 @@
     </div>
     <div class="metric-note">
       <span class="note-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.5" /><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></span>
-      <div><h3>기록된 순간을 연결합니다</h3><p>접속 지표의 최고·평균과 총 골드는 1시간 간격의 기록으로 계산합니다. 긴 기간의 그래프는 구간 평균으로 표시하며, 기록이 없는 구간은 평균에서 제외합니다. 1개월·6개월·1년은 최근 30일·180일·365일 기준입니다.</p></div>
+      <div><h3>구간별 최고 접속을 보존합니다</h3><p>접속 수는 매분 수집하며, 현재 접속 조회값도 같은 분의 최고값에 반영합니다. 접속 그래프는 구간 최고값, 기간 평균은 수집된 기록의 평균입니다. 총 골드는 매시간 수집하며 긴 기간은 구간 평균으로 표시합니다. 기록이 없는 구간은 제외하며, 1개월·6개월·1년은 최근 30일·180일·365일 기준입니다.</p></div>
     </div>
   </section>
   <footer class="site-footer"><span>OpenMMO <strong>Pulse</strong></span><span>작은 순간들이 모여, 하나의 월드가 됩니다.</span></footer>
