@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { concurrentPeakHistory, connectionParts, formatAxisTime, formatDateTime, formatGold, goldSegments, goldPeriods, kstDayStart, nearestSample, parseGoldHistory, parsePerAccountGoldHistory, parseHistory, parsePriceIndexHistory, parseServerStarts, parseUniqueHistory, periods, uniquePeriods, splitSegments, summarize, deployMarkers } from './metrics'
+import { connectionParts, formatAxisTime, formatDateTime, formatGold, goldSegments, goldPeriods, kstDayStart, nearestSample, parseGoldHistory, parsePerAccountGoldHistory, parseHistory, parsePriceIndexHistory, parseServerStarts, parseUniqueHistory, periods, uniquePeriods, splitSegments, summarize, deployMarkers } from './metrics'
 
 describe('gold display units', () => {
   it.each([
@@ -107,13 +107,12 @@ describe('hourly gold history', () => {
 })
 
 describe('concurrent account history', () => {
-  const peakCounts = (accounts: number) => ({ web_accounts: accounts, agent_accounts: 0, other_accounts: 0 })
   const webCount = (accounts: number) => ({ accounts, web_accounts: accounts, agent_accounts: 0, other_accounts: 0 })
   const samples = [
     { timestamp: 60, accounts: 0 },
     { timestamp: 120, accounts: 4 },
     { timestamp: 300, accounts: 2 },
-  ].map((sample) => ({ ...sample, ...webCount(sample.accounts), peak_accounts: sample.accounts, peak_timestamp: sample.timestamp, peak_counts: peakCounts(sample.accounts), sample_count: 1 }))
+  ].map((sample) => ({ ...sample, ...webCount(sample.accounts), peak_accounts: sample.accounts, peak_timestamp: sample.timestamp, sample_count: 1 }))
 
   it('keeps a measured zero distinct from missing data', () => {
     expect(summarize([])).toEqual({ peak: null, average: null, peakAt: null, sampleCount: 0 })
@@ -126,7 +125,7 @@ describe('concurrent account history', () => {
     const aggregated = [
       { timestamp: 599, accounts: 4, peak_accounts: 6, peak_timestamp: 599, sample_count: 3 },
       { timestamp: 1200, accounts: 3, peak_accounts: 3, peak_timestamp: 1200, sample_count: 1 },
-    ].map((sample) => ({ ...sample, ...webCount(sample.accounts), peak_counts: peakCounts(sample.peak_accounts) }))
+    ].map((sample) => ({ ...sample, ...webCount(sample.accounts) }))
     expect(summarize(aggregated)).toEqual({ peak: 6, average: 3.75, peakAt: 599, sampleCount: 4 })
     expect(splitSegments(aggregated, 600)).toEqual([[aggregated[0]], [aggregated[1]]])
   })
@@ -138,12 +137,36 @@ describe('concurrent account history', () => {
     expect(() => parseHistory({ ...data, sample_interval_seconds: interval * 2 }, hours)).toThrow()
   })
 
+  it('keeps a shutdown zero and restart in the same minute, with a separate earlier peak', () => {
+    const observed = [
+      { timestamp: 3620, ...webCount(0), peak_accounts: 0, peak_timestamp: 3620, sample_count: 1 },
+      { timestamp: 3630, ...webCount(3), peak_accounts: 42, peak_timestamp: 3605, sample_count: 1 },
+      { timestamp: 3665, ...webCount(8), peak_accounts: 8, peak_timestamp: 3665, sample_count: 1 },
+    ]
+    const data = { from: 0, until: 86400, sample_interval_seconds: 60,
+      current: { timestamp: 86400, ...webCount(0) }, samples: observed }
+    expect(parseHistory(data, 24).samples.map((sample) => sample.accounts)).toEqual([0, 3, 8])
+    expect(splitSegments(observed, 60)).toEqual([observed])
+    expect(summarize(observed)).toEqual({ peak: 42, average: 11 / 3, peakAt: 3605, sampleCount: 3 })
+    for (const invalid of [{ peak_timestamp: 3599 }, { peak_timestamp: 3660 }, { sample_count: 2 }]) {
+      expect(() => parseHistory({ ...data, samples: [{ ...observed[1], ...invalid }] }, 24)).toThrow()
+    }
+  })
+
+  it.each(periods.filter(({ hours }) => hours > 24))('keeps the $label graph average distinct from its peak', ({ hours, interval }) => {
+    const sample = { timestamp: 0, ...webCount(11 / 3), peak_accounts: 42, peak_timestamp: 5, sample_count: 3 }
+    const data = { from: 0, until: hours * 3600, sample_interval_seconds: interval,
+      current: { timestamp: hours * 3600, ...webCount(0) }, samples: [sample] }
+    expect(parseHistory(data, hours).samples[0].accounts).toBe(11 / 3)
+    expect(summarize(data.samples)).toEqual({ peak: 42, average: 11 / 3, peakAt: 5, sampleCount: 3 })
+  })
+
   it('validates fractional averages and rejects invalid aggregate statistics', () => {
-    const sample = { timestamp: 0, ...webCount(1.5), peak_accounts: 3, peak_timestamp: 60, peak_counts: peakCounts(3), sample_count: 2 }
+    const sample = { timestamp: 0, ...webCount(1.5), peak_accounts: 3, peak_timestamp: 60, sample_count: 2 }
     const data = { from: 0, until: 168 * 3600, sample_interval_seconds: 3600,
       current: { timestamp: 168 * 3600, ...webCount(2) }, samples: [sample] }
     expect(parseHistory(data, 168)).toEqual(data)
-    for (const invalid of [{ accounts: NaN }, { peak_accounts: 1 }, { peak_timestamp: 3600 }, { sample_count: 0 }, { sample_count: 61 }]) {
+    for (const invalid of [{ accounts: NaN }, { peak_accounts: 1 }, { peak_timestamp: 3600 }, { sample_count: 0 }, { sample_count: 3601 }]) {
       expect(() => parseHistory({ ...data, samples: [{ ...sample, ...invalid }] }, 168)).toThrow()
     }
   })
@@ -166,7 +189,7 @@ describe('concurrent account history', () => {
   })
 
   it('rejects malformed, duplicate and out-of-window data', () => {
-    const data = { from: 0, until: 3600, sample_interval_seconds: 3600,
+    const data = { from: 0, until: 3600, sample_interval_seconds: 60,
       current: { timestamp: 3600, ...webCount(2) }, samples: samples.slice(0, 2) }
     expect(parseHistory(data, 1)).toEqual(data)
     expect(() => parseHistory(data, 24)).toThrow()
@@ -184,20 +207,17 @@ describe('concurrent account history', () => {
 
   it('rejects component counts that disagree with the total or have invalid values', () => {
     const current = { timestamp: 3600, accounts: 3, web_accounts: 1, agent_accounts: 2, other_accounts: 0 }
-    const data = { from: 0, until: 3600, sample_interval_seconds: 3600, current, samples: samples.slice(0, 2) }
+    const data = { from: 0, until: 3600, sample_interval_seconds: 60, current, samples: samples.slice(0, 2) }
     expect(parseHistory(data, 1)).toEqual(data)
     for (const invalid of [{ web_accounts: -1 }, { agent_accounts: NaN }, { other_accounts: undefined }, { web_accounts: 2 }, { web_accounts: 0.5, agent_accounts: 2.5 }]) {
       expect(() => parseHistory({ ...data, current: { ...current, ...invalid } }, 1)).toThrow()
     }
     expect(() => parseHistory({ ...data, samples: [{ ...samples[1], agent_accounts: 1 }] }, 1)).toThrow()
-    for (const peak_counts of [undefined, peakCounts(3), peakCounts(-1), peakCounts(4.5), { ...peakCounts(4), agent_accounts: NaN }]) {
-      expect(() => parseHistory({ ...data, samples: [{ ...samples[1], peak_counts }] }, 1)).toThrow()
-    }
   })
 
   it('accepts fractional aggregate components without changing the total or weighting', () => {
     const sample = { timestamp: 0, accounts: 6, web_accounts: 2 / 3, agent_accounts: 4 / 3, other_accounts: 4,
-      peak_accounts: 8, peak_timestamp: 60, peak_counts: { web_accounts: 0, agent_accounts: 0, other_accounts: 8 }, sample_count: 3 }
+      peak_accounts: 8, peak_timestamp: 60, sample_count: 3 }
     const data = { from: 0, until: 168 * 3600, sample_interval_seconds: 3600,
       current: { timestamp: 168 * 3600, ...webCount(0) }, samples: [sample] }
     expect(parseHistory(data, 168)).toEqual(data)
@@ -273,29 +293,6 @@ describe('price index history', () => {
     expect(() => parsePriceIndexHistory({ ...data, meetings: [meeting(3600, 100, 83)] }, 168)).toThrow()
     expect(() => parsePriceIndexHistory({ ...data, meetings: [meeting(3600, 90, 83), meeting(400000, 90, 75)] }, 168)).toThrow()
     expect(() => parsePriceIndexHistory({ ...data, current_index_percent: 0 }, 168)).toThrow()
-  })
-})
-
-describe('concurrent peak chart', () => {
-  const peak_counts = { web_accounts: 39, agent_accounts: 3, other_accounts: 0 }
-  const sample = { timestamp: 0, accounts: 40.5, web_accounts: 24.5, agent_accounts: 16, other_accounts: 0, peak_accounts: 42, peak_timestamp: 600, peak_counts, sample_count: 2 }
-  const current = { timestamp: 900, accounts: 39, web_accounts: 10, agent_accounts: 29, other_accounts: 0 }
-
-  it.each(periods)('plots the saved peak and its composition in the $label range after current traffic drops', ({ interval }) => {
-    const history = { from: 0, until: 900, sample_interval_seconds: interval, current, samples: [sample] }
-    const chart = concurrentPeakHistory(history)
-    expect(chart.samples).toEqual([{ ...sample, accounts: 42, ...peak_counts }])
-    expect(connectionParts(chart.samples[0]).map((part) => part.accounts)).toEqual([39, 3, 0])
-    expect(history.samples[0].accounts).toBe(40.5)
-    expect(summarize(history.samples)).toEqual({ peak: 42, average: 40.5, peakAt: 600, sampleCount: 2 })
-  })
-
-  it('preserves missing intervals and measured zeros', () => {
-    const zero = { timestamp: 7200, accounts: 0, web_accounts: 0, agent_accounts: 0, other_accounts: 0, peak_accounts: 0, peak_timestamp: 7200, peak_counts: { web_accounts: 0, agent_accounts: 0, other_accounts: 0 }, sample_count: 1 }
-    const history = { from: 0, until: 7200, sample_interval_seconds: 3600, current: { ...current, timestamp: 7200 }, samples: [sample, zero] }
-    const chart = concurrentPeakHistory(history)
-    expect(splitSegments(chart.samples, 3600)).toEqual([[chart.samples[0]], [zero]])
-    expect(concurrentPeakHistory({ ...history, samples: [] }).samples).toEqual([])
   })
 })
 

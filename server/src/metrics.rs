@@ -323,7 +323,6 @@ pub struct ConcurrentHistorySample {
     pub other_accounts: f64,
     pub peak_accounts: u32,
     pub peak_timestamp: i64,
-    pub peak_counts: ConcurrentCounts,
     pub sample_count: u32,
 }
 
@@ -499,6 +498,13 @@ pub async fn record_concurrent_sample(game: &GameState, auth: Arc<AuthService>) 
     }
 }
 
+pub async fn record_concurrent_shutdown(auth: Arc<AuthService>) {
+    let now = unix_now();
+    if let Err(error) = auth_db(move || auth.record_concurrent_shutdown(now)).await {
+        warn!("Concurrent account shutdown snapshot failed: {error}");
+    }
+}
+
 pub async fn record_account_activity_sample(game: &GameState, auth: Arc<AuthService>) {
     let activities = game.account_activity_snapshot().await;
     let now = unix_now();
@@ -528,7 +534,8 @@ pub async fn record_hourly_metrics(game: &GameState, auth: Arc<AuthService>) {
 
 fn history_interval(hours: u32) -> Option<i64> {
     match hours {
-        1 | 6 | 24 | 168 | 720 => Some(SAMPLE_INTERVAL_SECONDS),
+        1 | 6 | 24 => Some(CONCURRENT_SAMPLE_INTERVAL_SECONDS),
+        168 | 720 => Some(SAMPLE_INTERVAL_SECONDS),
         4320 => Some(21600),
         8760 => Some(86400),
         _ => None,
@@ -2081,9 +2088,9 @@ mod tests {
         .unwrap();
         assert_eq!(body.current.accounts, 1);
         assert_eq!(body.samples.last().unwrap().peak_accounts, 1);
-        let peak_counts = body.current.counts;
 
         game.end_account_session("browser", session, &auth).await;
+        record_concurrent_shutdown(Arc::clone(&auth)).await;
         record_concurrent_sample(&game, Arc::clone(&auth)).await;
         let response = concurrent_history(
             State(state.clone()),
@@ -2098,13 +2105,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body.current.accounts, 0);
+        assert_eq!(body.samples.last().unwrap().accounts, 0.0);
         let peak = body
             .samples
             .iter()
             .max_by_key(|sample| sample.peak_accounts)
             .unwrap();
         assert_eq!(peak.peak_accounts, 1);
-        assert_eq!(peak.peak_counts, peak_counts);
 
         rusqlite::Connection::open(path)
             .unwrap()
@@ -2160,9 +2167,9 @@ mod tests {
         )
         .unwrap();
         for (hours, interval) in [
-            (1, 3600),
-            (6, 3600),
-            (24, 3600),
+            (1, 60),
+            (6, 60),
+            (24, 60),
             (168, 3600),
             (720, 3600),
             (4320, 21600),
@@ -2187,10 +2194,6 @@ mod tests {
                 - sample.other_accounts)
                 .abs()
                 < 1e-9));
-            assert!(body
-                .samples
-                .iter()
-                .all(|sample| sample.peak_counts.total() == sample.peak_accounts));
             assert_eq!(
                 body.samples
                     .iter()

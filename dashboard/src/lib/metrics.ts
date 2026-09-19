@@ -121,7 +121,6 @@ export interface Sample extends AccountSample, ConnectionCounts {}
 export interface HistorySample extends Sample {
   peak_accounts: number
   peak_timestamp: number
-  peak_counts: ConnectionCounts
   sample_count: number
 }
 
@@ -173,13 +172,13 @@ export interface PerAccountGoldHistory extends ChartHistory<PerAccountGoldHistor
 }
 
 export const periods = [
-  { hours: 1, label: '1시간', interval: 3600, intervalLabel: '1시간 최고' },
-  { hours: 6, label: '6시간', interval: 3600, intervalLabel: '1시간 최고' },
-  { hours: 24, label: '1일', interval: 3600, intervalLabel: '1시간 최고' },
-  { hours: 168, label: '1주일', interval: 3600, intervalLabel: '1시간 최고' },
-  { hours: 720, label: '1개월', interval: 3600, intervalLabel: '1시간 최고' },
-  { hours: 4320, label: '6개월', interval: 21600, intervalLabel: '6시간 최고' },
-  { hours: 8760, label: '1년', interval: 86400, intervalLabel: '1일 최고' },
+  { hours: 1, label: '1시간', interval: 60, intervalLabel: '1분 간격' },
+  { hours: 6, label: '6시간', interval: 60, intervalLabel: '1분 간격' },
+  { hours: 24, label: '1일', interval: 60, intervalLabel: '1분 간격' },
+  { hours: 168, label: '1주일', interval: 3600, intervalLabel: '1시간 평균' },
+  { hours: 720, label: '1개월', interval: 3600, intervalLabel: '1시간 평균' },
+  { hours: 4320, label: '6개월', interval: 21600, intervalLabel: '6시간 평균' },
+  { hours: 8760, label: '1년', interval: 86400, intervalLabel: '1일 평균' },
 ] as const
 
 export type Hours = typeof periods[number]['hours']
@@ -230,29 +229,22 @@ export function parseHistory(value: unknown, hours: Hours): ConcurrentHistory {
   if (!value || typeof value !== 'object') throw new Error('Invalid metrics response')
   const data = value as ConcurrentHistory
   const interval = periods.find((period) => period.hours === hours)!.interval
+  const maxPoints = interval === 60 ? hours * 3600 + 1 : Math.ceil(hours * 3600 / interval) + 1
   if (!Number.isSafeInteger(data.from) || !Number.isSafeInteger(data.until) ||
     data.until - data.from !== hours * 3600 || data.sample_interval_seconds !== interval ||
     !isSample(data.current) || data.current.timestamp !== data.until ||
-    !Array.isArray(data.samples) || data.samples.length > Math.ceil(hours * 3600 / interval) + 1 ||
+    !Array.isArray(data.samples) || data.samples.length > maxPoints ||
     !data.samples.every((sample, index) => sample && Number.isSafeInteger(sample.timestamp) &&
       Number.isFinite(sample.accounts) && sample.accounts >= 0 && hasValidCounts(sample, false) &&
       Number.isSafeInteger(sample.peak_accounts) && sample.peak_accounts >= sample.accounts &&
-      sample.peak_counts && hasValidCounts({ ...sample.peak_counts, accounts: sample.peak_accounts, timestamp: sample.peak_timestamp }, true) &&
-      Number.isSafeInteger(sample.peak_timestamp) && sample.peak_timestamp >= sample.timestamp &&
-      sample.peak_timestamp < sample.timestamp + interval && sample.peak_timestamp <= data.until &&
-      Number.isSafeInteger(sample.sample_count) && sample.sample_count > 0 && sample.sample_count <= interval / 60 &&
+      Number.isSafeInteger(sample.peak_timestamp) && sample.peak_timestamp >= Math.max(data.from, Math.floor(sample.timestamp / interval) * interval) &&
+      sample.peak_timestamp < (Math.floor(sample.timestamp / interval) + 1) * interval && sample.peak_timestamp <= data.until &&
+      Number.isSafeInteger(sample.sample_count) && sample.sample_count > 0 && sample.sample_count <= (interval === 60 ? 1 : interval) &&
       sample.timestamp >= data.from && sample.timestamp <= data.until &&
       (index === 0 || sample.timestamp > data.samples[index - 1].timestamp))) {
     throw new Error('Invalid metrics response')
   }
   return data
-}
-
-export function concurrentPeakHistory(history: ConcurrentHistory): ConcurrentHistory {
-  return {
-    ...history,
-    samples: history.samples.map((sample) => ({ ...sample, accounts: sample.peak_accounts, ...sample.peak_counts })),
-  }
 }
 
 export function summarize(samples: HistorySample[]) {

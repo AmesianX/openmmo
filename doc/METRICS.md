@@ -66,15 +66,17 @@ DB에 복제하거나 원장에 쓰지 않는다. 대시보드는 매시간 또�
 - 접속 핸드셰이크의 `ClientKind::Web`은 웹 접속(초록), `Cli`는 외부 에이전트(보라), `Other`·`Unknown`은 기타·미분류(회색)로 표시합니다. 클라이언트가 보고한 프로그램 종류 기준이며 실제 조작자가 사람인지 AI인지는 판별하지 않습니다.
 - 현재 접속 카드와 그래프 툴팁은 합계 및 유형별 계정 수·비율을 표시합니다. 그래프는 유형별 누적 영역과 합계 선으로 표시하며, 기간 최고·평균 카드의 합계 계산은 유지합니다.
 - 접속 종료가 서버에 반영되면 제외합니다. 네트워크 단절을 감지하기 전에는 세션이 잠시 집계에 남을 수 있습니다.
-- `current`는 API 요청 시점의 접속 수입니다. 이 값도 이력에 저장하므로 현재 접속 카드에 표시된 최고값은 이후 접속 수가 줄어도 남습니다. 그래프는 각 구간의 최고값을 표시하며, 진행 중인 구간도 매분 갱신합니다.
+- `current`는 API 요청 시점의 접속 수입니다. 이 값도 이력에 저장하며, 같은 분의 최고값은 기간 최고 카드용으로 별도 보존합니다. 최근 1일 그래프는 분별 마지막 관측값과 정상 종료의 0명 기록을, 더 긴 기간은 구간 평균을 표시합니다. 긴 기간 그래프에는 최고·최저값이나 최고값 보조선을 표시하지 않습니다.
 
 이 지표는 일정 기간 동안 접속한 서로 다른 계정 수인 DAU/WAU/MAU와 다릅니다. 대시보드 조회 기간은 최근 1일, 1주일, 1개월, 6개월, 1년이며 기본값은 1일(최근 24시간)입니다. 최고·평균은 선택한 기간 안에서 실제로 수집한 표본만 사용합니다. 1개월·6개월·1년은 각각 최근 30일·180일·365일입니다. 기록이 없으면 최고·평균을 `—`로 표시하고, 실제 0명인 표본은 `0`으로 표시합니다.
 
 ## 수집과 저장
 
-게임 서버가 REST API를 연 뒤 즉시 한 번, 이후 60초마다 접속 수를 읽어 기존 계정 SQLite DB의 `concurrent_account_samples`에 저장합니다. 동시 접속 API 요청 시의 관측값과 정상 종료 시의 값도 저장합니다. 기본 키는 관측 시각을 분 단위로 내린 Unix 초입니다. 같은 분에 여러 번 관측하면 합계가 가장 큰 관측값과 그때의 유형별 인원을 보존하며, 동률이면 먼저 저장한 값을 유지합니다. 재시작·종료 시의 낮은 값으로 최고값을 덮어쓰지 않습니다.
+게임 서버가 REST API를 연 뒤 즉시 한 번, 이후 60초마다 접속 수를 읽어 기존 계정 SQLite DB의 `concurrent_account_samples`에 저장합니다. 동시 접속 API 요청 시의 관측값도 저장합니다. 기본 키는 관측 시각을 분 단위로 내린 Unix 초입니다. 같은 분에 여러 번 관측하면 마지막 관측값과 그때의 유형별 인원을 보관하며 `observed_at`에 실제 관측 초를 저장합니다. 늦게 완료된 과거 관측은 최신 값을 덮어쓰지 않습니다. `peak_accounts`와 `peak_timestamp`에는 같은 분의 최고 합계와 최초 관측 초를 별도 보존합니다.
 
-스키마는 `AuthService` 초기화에서 자동 생성되고 기존 계정·캐릭터 데이터를 변경하지 않습니다. 서버 재시작 후에도 기록이 유지됩니다. 현재는 기록을 자동 삭제하지 않으며, 새 기록은 하루 최대 1,440행입니다. 기존 시간·분 단위 이력도 보존합니다. 기간 평균은 저장된 분별 관측 최고값의 평균이며, 과거 기록과 섞인 기간은 실제 저장된 표본 수로 가중 계산합니다.
+정상 종료 시 연결을 모두 정리한 뒤 `concurrent_account_shutdowns`에 종료 시각을 별도로 기록합니다. 조회 시 해당 시각의 0명 관측으로 합칩니다. 같은 분 안에 서버가 재시작되고 접속자가 다시 들어와도 종료의 0명 기록은 남습니다. 종료와 일반 관측이 같은 초이면 그래프에는 0명을 표시하고 최고값은 보존합니다. 비정상 종료는 종료 기록을 남기지 못할 수 있습니다.
+
+스키마는 `AuthService` 초기화에서 자동 생성·확장되고 기존 계정·캐릭터 데이터를 변경하지 않습니다. 서버 재시작 후에도 기록이 유지됩니다. 새 분별 기록은 하루 최대 1,440행이고 정상 종료 기록만 추가됩니다. 24시간이 지나도 원본을 삭제하거나 시간별 기록으로 대체하지 않으며, 긴 기간을 조회할 때만 집계합니다. 기존 시간·분 단위 이력은 당시 값과 기록 시각을 그대로 사용합니다. 기간 평균은 저장된 분별 마지막 관측값과 종료의 0명 기록을 표본 수로 가중 계산하며, 실제 시간 길이로 가중한 평균은 아닙니다.
 
 `web_accounts`와 `agent_accounts` 열은 자동 추가되며, 이전 합계 기록은 두 열이 `0`인 채 보존됩니다. 기타·미분류는 `accounts - web_accounts - agent_accounts`입니다. 과거 비율을 추정해 채우지 않으며, 새 서버에서 수집하는 기록부터 유형별 구성이 저장됩니다.
 
@@ -90,15 +92,17 @@ GET /api/metrics/concurrent?hours=24
 
 | 조회 기간 | hours | 그래프 간격 |
 | --- | ---: | --- |
-| 1시간 / 6시간 / 24시간 | 1 / 6 / 24 | 1시간 최고 |
-| 1주일 | 168 | 1시간 최고 |
-| 1개월 (30일) | 720 | 1시간 최고 |
-| 6개월 (180일) | 4320 | 6시간 최고 |
-| 1년 (365일) | 8760 | 1일 최고 |
+| 1시간 / 6시간 / 24시간 | 1 / 6 / 24 | 1분 관측값 + 정상 종료의 0명 |
+| 1주일 | 168 | 1시간 평균 |
+| 1개월 (30일) | 720 | 1시간 평균 |
+| 6개월 (180일) | 4320 | 6시간 평균 |
+| 1년 (365일) | 8760 | 1일 평균 |
 
-`sample_interval_seconds`는 그래프 집계 간격입니다. 구간은 Unix 초 기준으로 정렬하며, 첫 구간의 시작이 조회 범위보다 앞서면 `from`으로 표시합니다. 각 구간의 `accounts`는 저장된 표본의 평균, `sample_count`는 표본 수, `peak_accounts`와 `peak_timestamp`는 원본 최고값과 최초 관측 분입니다. 그래프는 `peak_accounts`를 그리며, 기간 평균 카드는 `accounts`를 표본 수로 가중 계산합니다. 연간 분별 기록은 최대 525,600행이며 약 365개 일별 최고 지점으로 반환합니다.
+`sample_interval_seconds`는 그래프 표시 간격입니다. 60초일 때 각 지점은 분별 마지막 관측 또는 정상 종료의 0명이고 `timestamp`는 실제 관측 초, `sample_count`는 1입니다. 같은 분에도 종료 시각의 지점이 추가될 수 있습니다. 긴 기간은 Unix 초 기준 구간으로 묶고 첫 구간의 시작이 조회 범위보다 앞서면 `from`으로 표시합니다. 각 구간의 `accounts`는 저장된 표본의 평균, `sample_count`는 표본 수입니다. 그래프는 모든 기간에서 `accounts`를 그립니다. 정상 종료의 0명도 긴 기간에서는 평균에 포함하므로 그래프가 반드시 0까지 내려가지는 않습니다.
 
-`current`와 `samples`는 `web_accounts`, `agent_accounts`, `other_accounts`를 포함하며 세 값의 합은 `accounts`입니다. 구간의 유형별 평균은 같은 표본 수로 계산합니다. 각 표본의 `peak_counts`에는 최고 합계가 관측된 순간의 세 유형별 인원이 들어 있으며 합은 `peak_accounts`입니다. 그래프의 누적 영역과 툴팁은 이 인원과 비율을 표시합니다. 유형마다 따로 최고값을 골라 합산하지 않습니다. 접속 합계가 `0`이면 모든 비율을 `0%`로 표시합니다.
+`peak_accounts`와 `peak_timestamp`는 기간 최고 카드용 최고값과 최초 관측 초입니다. 분별 마지막 관측보다 앞선 같은 분의 시각일 수 있습니다. 기간 평균 카드는 `accounts`를 표본 수로 가중 계산합니다. 연간 분별 기록 최대 525,600행과 종료 기록은 약 365개 일평균 지점으로 반환하며, 원본은 그대로 보관합니다.
+
+`current`와 `samples`는 `web_accounts`, `agent_accounts`, `other_accounts`를 포함하며 세 값의 합은 `accounts`입니다. 최근 1일은 실제 유형별 인원, 긴 기간은 같은 표본 수로 계산한 유형별 평균을 누적 영역과 툴팁에 표시합니다. 접속 합계가 `0`이면 모든 비율을 `0%`로 표시합니다.
 
 응답 예시:
 
@@ -106,12 +110,12 @@ GET /api/metrics/concurrent?hours=24
 {
   "from": 1699913600,
   "until": 1700000000,
-  "sample_interval_seconds": 3600,
+  "sample_interval_seconds": 60,
   "current": { "timestamp": 1700000000, "accounts": 12, "web_accounts": 8, "agent_accounts": 4, "other_accounts": 0 },
   "samples": [
-    { "timestamp": 1699992000, "accounts": 38, "web_accounts": 35, "agent_accounts": 3, "other_accounts": 0, "peak_accounts": 42, "peak_timestamp": 1699992600, "peak_counts": { "web_accounts": 39, "agent_accounts": 3, "other_accounts": 0 }, "sample_count": 60 },
-    { "timestamp": 1699995600, "accounts": 12, "web_accounts": 8, "agent_accounts": 4, "other_accounts": 0, "peak_accounts": 15, "peak_timestamp": 1699996200, "peak_counts": { "web_accounts": 10, "agent_accounts": 5, "other_accounts": 0 }, "sample_count": 60 },
-    { "timestamp": 1699999200, "accounts": 11, "web_accounts": 7, "agent_accounts": 4, "other_accounts": 0, "peak_accounts": 12, "peak_timestamp": 1699999980, "peak_counts": { "web_accounts": 8, "agent_accounts": 4, "other_accounts": 0 }, "sample_count": 14 }
+    { "timestamp": 1699999865, "accounts": 39, "web_accounts": 36, "agent_accounts": 3, "other_accounts": 0, "peak_accounts": 42, "peak_timestamp": 1699999860, "sample_count": 1 },
+    { "timestamp": 1699999880, "accounts": 0, "web_accounts": 0, "agent_accounts": 0, "other_accounts": 0, "peak_accounts": 0, "peak_timestamp": 1699999880, "sample_count": 1 },
+    { "timestamp": 1700000000, "accounts": 12, "web_accounts": 8, "agent_accounts": 4, "other_accounts": 0, "peak_accounts": 12, "peak_timestamp": 1700000000, "sample_count": 1 }
   ]
 }
 ```

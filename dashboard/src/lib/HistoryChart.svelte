@@ -35,7 +35,7 @@
   let plotHeight = $derived(height - top - bottom)
   let { floor, ceiling, ticks } = $derived.by(() => {
     if (!fitAxis) {
-      const step = axisStep(peak ?? 0)
+      const step = axisStep(peak ?? Math.max(0, ...history.samples.map(value)))
       return { floor: 0, ceiling: step * 4, ticks: [0, 1, 2, 3, 4].map((tick) => tick * step) }
     }
     const values = history.samples.map(value)

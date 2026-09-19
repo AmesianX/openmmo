@@ -944,7 +944,7 @@ async fn main() -> ExitCode {
 
     game_state.persist_shutdown_snapshot(&auth_service).await;
     metrics::record_account_activity_sample(&game_state, Arc::clone(&auth_service)).await;
-    metrics::record_concurrent_sample(&game_state, Arc::clone(&auth_service)).await;
+    metrics::record_concurrent_shutdown(Arc::clone(&auth_service)).await;
     game_state
         .tick_combat_audit(
             args.state_dir.clone(),

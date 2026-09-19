@@ -1,11 +1,11 @@
 <script lang="ts">
   import ConnectionBreakdown from './ConnectionBreakdown.svelte'
   import HistoryChart from './HistoryChart.svelte'
-  import { concurrentPeakHistory, connectionKinds, formatDateTime, type ChartMarker, type ConcurrentHistory, type Sample } from './metrics'
+  import { connectionKinds, type ChartMarker, type ConcurrentHistory, type Sample } from './metrics'
 
   let { history, peak, markers = [] }: { history: ConcurrentHistory; peak: number | null; markers?: ChartMarker[] } = $props()
-  let peakHistory = $derived(concurrentPeakHistory(history))
-  let visibleKinds = $derived(connectionKinds.filter((kind) => kind.key !== 'other_accounts' || peakHistory.samples.some((sample) => sample.other_accounts > 0)))
+  let averaged = $derived(history.sample_interval_seconds > 60)
+  let visibleKinds = $derived(connectionKinds.filter((kind) => kind.key !== 'other_accounts' || history.samples.some((sample) => sample.other_accounts > 0)))
 
   function stackHeight(sample: Sample, layer: number) {
     if (layer === connectionKinds.length - 1) return sample.accounts
@@ -19,7 +19,7 @@
   }
 </script>
 
-<HistoryChart history={peakHistory} {peak} {markers} value={(sample) => sample.accounts} legend="구간 최고 접속 계정 수" legendLabel="구간 최고 합계" valueLabel="계정 합계 (구간 최고)">
+<HistoryChart {history} peak={averaged ? null : peak} {markers} value={(sample) => sample.accounts} legend={averaged ? '평균 접속 계정 수' : '접속 계정 수'} legendLabel={averaged ? '평균 합계' : '합계'} valueLabel={averaged ? '계정 합계 (평균)' : '계정 합계'}>
   {#snippet layers(segment, x, y)}
     {#each connectionKinds as kind, layer (kind.key)}
       {#if segment.length > 1}
@@ -31,8 +31,7 @@
   {/snippet}
   {#snippet detail(selected)}
     <ConnectionBreakdown sample={selected} />
-    <span>최고 관측: {formatDateTime(selected.peak_timestamp)} KST</span>
-    <span>{selected.sample_count.toLocaleString('ko-KR')}개 기록 기준</span>
+    {#if averaged}<span>{selected.sample_count.toLocaleString('ko-KR')}개 기록의 평균</span>{/if}
   {/snippet}
   {#snippet legends()}
     {#each visibleKinds as kind (kind.key)}

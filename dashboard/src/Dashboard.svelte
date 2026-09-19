@@ -228,7 +228,7 @@
     </div>
     <div class="metric-note">
       <span class="note-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.5" /><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></span>
-      <div><h3>구간별 최고 접속을 보존합니다</h3><p>접속 수는 매분 수집하며, 현재 접속 조회값도 같은 분의 최고값에 반영합니다. 접속 그래프는 구간 최고값, 기간 평균은 수집된 기록의 평균입니다. 총 골드는 매시간 수집하며 긴 기간은 구간 평균으로 표시합니다. 기록이 없는 구간은 제외하며, 1개월·6개월·1년은 최근 30일·180일·365일 기준입니다.</p></div>
+      <div><h3>분별 기록을 보관합니다</h3><p>접속 수는 매분 수집하며, 최근 1일은 분별 관측값과 정상 종료 시의 0명을 표시합니다. 긴 기간은 구간 평균으로 표시하고, 기간 최고는 별도로 보존합니다. 분별 원본은 계속 보관하며 기록이 없는 구간은 평균에서 제외합니다. 총 골드는 매시간 수집하며, 1개월·6개월·1년은 최근 30일·180일·365일 기준입니다.</p></div>
     </div>
   </section>
   <footer class="site-footer"><span>OpenMMO <strong>Pulse</strong></span><span>작은 순간들이 모여, 하나의 월드가 됩니다.</span></footer>
