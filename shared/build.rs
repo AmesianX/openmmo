@@ -1,14 +1,13 @@
-//! Fingerprints the dungeon layout generator: layouts never travel the wire
-//! (both sides generate them from the entrance id), so a client built before a
-//! generator change draws a maze the server does not have. See the layout
-//! fingerprint section of doc/REMOTE_AGENT_CLIENT.md.
+//! Generates game data and fingerprints deterministic dungeon layouts.
 
 include!("src/fnv.rs");
+include!("../tools/cargo-build-data.rs");
 
 /// Excluded so a test-only edit does not reload the whole fleet.
 const SKIP: &str = "tests.rs";
 
 fn main() {
+    generate_data_json().expect("failed to generate data JSON from CSV");
     let mut inputs = vec![
         std::path::PathBuf::from("../data-src/dungeons.csv"),
         std::path::PathBuf::from("../data-src/monsters.csv"),

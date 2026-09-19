@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import {
     landscapingMode,
     landscapingPending,
@@ -24,9 +25,20 @@
   } from '../stores/estateStorageStore'
   import { inventoryStore } from '../stores/inventoryStore'
   import {
+    ESTATE_FURNITURE_HEIGHT_STEP,
+    estateFurniturePlacementHeight,
     estateFurniturePlacementRotation,
+    setEstateFurniturePlacementHeight,
+    adjustEstateFurniturePlacementHeight,
     rotateEstateFurniturePlacement,
     selectedEstateFurniture,
+    estateFurnitureCatalogOpen,
+    showEstateFurnitureCatalog,
+    estateFurnitureSelectionMode,
+    estateFurnitureEditorActive,
+    startEstateFurnitureSelection,
+    beginEstateFurnitureRecovery,
+    beginEstateFurniturePlacementSave,
   } from '../stores/estateFurniturePlacementStore'
   import { estateStorageDefs } from '../data/estateFurnitureDefs'
   import { getItemDef, itemDisplayName } from '../data/itemDefs'
@@ -38,11 +50,20 @@
   import HousePlacementPanel from './HousePlacementPanel.svelte'
   import SplatBrushPanel from './map-editor/SplatBrushPanel.svelte'
   import { draggablePanel } from '../actions/draggablePanel'
+  import { isTypingTarget } from '../utils/dom'
 
   type EditorTab = Exclude<LandscapingTool, 'Fence'> | 'Objects'
 
   let panelElement = $state<HTMLDivElement>()
   const selectedFurnitureId = $derived($selectedEstateFurniture?.id)
+  const selectedSignId = $derived(
+    estateStorageDefs.get($selectedEstateFurniture?.item_def_id ?? '')
+      ?.textLabel
+      ? selectedFurnitureId
+      : undefined
+  )
+  const savedSignText = $derived($selectedEstateFurniture?.text ?? '')
+  let signText = $derived(selectedSignId === undefined ? '' : savedSignText)
   $effect(() => {
     if (selectedFurnitureId !== undefined && panelElement)
       panelElement.scrollTop = 0
@@ -51,12 +72,12 @@
   const tabs: EditorTab[] = ['Ground', 'Road', 'Objects', 'House']
   const editorOpen = $derived(
     $landscapingMode !== null ||
-      $estateChestMode !== null ||
-      $selectedEstateFurniture !== null
+      $estateFurnitureEditorActive ||
+      $estateFurnitureCatalogOpen
   )
   const activeTab = $derived<EditorTab>(
-    $estateChestMode ||
-      $selectedEstateFurniture ||
+    $estateFurnitureEditorActive ||
+      $estateFurnitureCatalogOpen ||
       $landscapingMode?.tool === 'Fence'
       ? 'Objects'
       : ($landscapingMode?.tool ?? 'Objects')
@@ -66,33 +87,53 @@
     estateStorageDefs.get($estateChestMode?.item_def_id ?? '')?.rotationStep ??
       90
   )
+  const maxHeightOffset = $derived(
+    estateStorageDefs.get($estateChestMode?.item_def_id ?? '')
+      ?.maxHeightOffset ?? 0
+  )
   const storageObjects = $derived(
-    [...estateStorageDefs.values()].map((definition) => {
-      const items = $inventoryStore.bag.filter(
-        (item) => item.item_def_id === definition.itemDefId
-      )
-      return {
-        definition: getItemDef(definition.itemDefId),
-        itemDefId: definition.itemDefId,
-        instanceId: items[0]?.instance_id,
-        quantity: items.reduce((total, item) => total + item.quantity, 0),
-      }
-    })
+    [...estateStorageDefs.values()]
+      .map((definition) => {
+        const items = $inventoryStore.bag.filter(
+          (item) => item.item_def_id === definition.itemDefId
+        )
+        return {
+          definition: getItemDef(definition.itemDefId),
+          itemDefId: definition.itemDefId,
+          instanceId: items[0]?.instance_id,
+          quantity: items.reduce((total, item) => total + item.quantity, 0),
+        }
+      })
+      .filter((object) => object.quantity > 0)
   )
 
   function selectTab(tab: EditorTab) {
     if (tab === activeTab || $estateChestPending) return
     if (tab === 'Objects') {
-      selectFence()
+      showObjects()
       return
     }
     if (tab !== 'House') {
       stopHouseInteraction()
     }
-    if ($estateChestMode || $selectedEstateFurniture) {
+    if ($estateFurnitureEditorActive || $estateFurnitureCatalogOpen) {
       stopEstateChestMode()
       networkManager.sendStartLandscapingMode(tab)
     } else selectLandscapingTool(tab)
+  }
+
+  function showObjects() {
+    if ($estateChestPending) return
+    stopHouseInteraction()
+    stopFenceMode()
+    showEstateFurnitureCatalog()
+  }
+
+  function selectObjects() {
+    if ($estateChestPending) return
+    stopHouseInteraction()
+    stopFenceMode()
+    startEstateFurnitureSelection()
   }
 
   function selectFence() {
@@ -112,14 +153,26 @@
     networkManager.sendUseItem(instanceId)
   }
 
-  function editSelected(action: 'move' | 'recover') {
-    const selected = $selectedEstateFurniture
-    if (!selected || $estateChestPending) return
-    estateChestPending.set(true)
-    estateChestError.set(null)
-    if (action === 'move')
-      networkManager.sendStartEstateFurnitureMove(selected.id)
-    else networkManager.sendRecoverEstateChest(selected.id)
+  function recoverSelected() {
+    const furnitureId = beginEstateFurnitureRecovery()
+    if (furnitureId !== null) networkManager.sendRecoverEstateChest(furnitureId)
+  }
+
+  function saveSignText() {
+    if (
+      selectedSignId === undefined ||
+      $estateChestMode?.kind !== 'move' ||
+      !beginEstateFurniturePlacementSave()
+    )
+      return
+    networkManager.sendSetEstateFurnitureText(selectedSignId, signText.trim())
+  }
+
+  function adjustHeightWithWheel(event: WheelEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.deltaY !== 0)
+      adjustEstateFurniturePlacementHeight(event.deltaY < 0 ? 1 : -1)
   }
 
   function close() {
@@ -128,28 +181,52 @@
     stopFenceMode()
     stopEstateChestMode()
   }
+
+  onMount(() => {
+    const blockInactiveEnter = (event: KeyboardEvent) => {
+      if (
+        (event.code !== 'Enter' && event.code !== 'NumpadEnter') ||
+        $estateChestMode ||
+        (!$estateFurnitureSelectionMode &&
+          !$selectedEstateFurniture &&
+          !($estateFurnitureCatalogOpen && event.repeat)) ||
+        (isTypingTarget(event.target) &&
+          !(
+            event.target instanceof HTMLInputElement &&
+            event.target.type === 'range'
+          ))
+      )
+        return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+    window.addEventListener('keydown', blockInactiveEnter, true)
+    return () => window.removeEventListener('keydown', blockInactiveEnter, true)
+  })
 </script>
 
 {#if editorOpen}
-  {@const status =
-    $estateChestMode || $selectedEstateFurniture
-      ? $estateChestPending
-        ? 'Saving…'
-        : ($estateChestError ??
-          ($estateChestMode
-            ? 'Point inside your estate and click to place'
-            : 'Choose Move or Recover for the selected furniture'))
-      : $landscapingMode?.tool === 'House'
-        ? null
-        : $landscapingMode?.tool === 'Fence'
-          ? $fencePending
-            ? 'Saving…'
-            : ($fenceError ?? $fenceTarget?.reason)
-          : $landscapingPending
-            ? 'Saving…'
-            : ($landscapingError ?? $landscapingHint)}
+  {@const status = $estateFurnitureEditorActive
+    ? $estateChestPending
+      ? 'Working…'
+      : ($estateChestError ??
+        ($estateChestMode
+          ? 'Point inside your estate and click to place'
+          : $selectedEstateFurniture
+            ? 'Select the furniture again to move or rotate it'
+            : 'Left-click nearby furniture to move or rotate it'))
+    : $landscapingMode?.tool === 'House'
+      ? null
+      : $landscapingMode?.tool === 'Fence'
+        ? $fencePending
+          ? 'Saving…'
+          : ($fenceError ?? $fenceTarget?.reason)
+        : $landscapingPending
+          ? 'Saving…'
+          : ($landscapingError ?? $landscapingHint)}
   <div
     class="landscaping-panel"
+    class:objects-panel={activeTab === 'Objects'}
     bind:this={panelElement}
     use:draggablePanel={'landscaping'}
   >
@@ -182,40 +259,67 @@
       <HousePlacementPanel />
     {:else if activeTab === 'Objects'}
       <div class="object-content">
+        <button
+          class="select-objects"
+          class:active={$estateFurnitureSelectionMode}
+          aria-pressed={$estateFurnitureSelectionMode}
+          disabled={$estateChestPending}
+          title="Select placed furniture to move, rotate, or recover"
+          onclick={selectObjects}>Select</button
+        >
+        {#if $estateFurnitureSelectionMode && !$selectedEstateFurniture}
+          <small
+            >Left-click furniture on this floor to start moving or rotating it.
+            Esc closes the editor.</small
+          >
+          <button disabled={$estateChestPending} onclick={showObjects}
+            >Done</button
+          >
+        {/if}
         {#if $selectedEstateFurniture}
+          {@const selectedDefinition = getItemDef(
+            $selectedEstateFurniture.item_def_id
+          )}
           <div class="selected-furniture">
-            <strong
-              >{itemDisplayName($selectedEstateFurniture.item_def_id)}</strong
-            >
-            {#if $estateChestMode?.kind === 'move'}
-              <small>Choose a new position. Esc cancels the move.</small>
-              <button
-                disabled={$estateChestPending}
-                onclick={stopEstateChestMode}>Cancel move</button
+            <div class="selected-furniture-name">
+              {#if selectedDefinition}
+                <img src="/items/{selectedDefinition.icon}" alt="" />
+              {/if}
+              <strong
+                >{itemDisplayName($selectedEstateFurniture.item_def_id)}</strong
               >
-            {:else}
-              <div class="furniture-actions">
-                <button
+            </div>
+            {#if $estateChestMode?.kind === 'move'}
+              <small>Left-click or Enter to save each adjustment.</small>
+            {/if}
+            {#if selectedSignId !== undefined}
+              <div class="sign-text-controls">
+                <label for="estate-sign-text">Sign text</label>
+                <textarea
+                  id="estate-sign-text"
+                  bind:value={signText}
+                  maxlength="120"
+                  rows="3"
                   disabled={$estateChestPending}
-                  onclick={() => editSelected('move')}>Move</button
-                >
+                  onkeydown={(event) => event.stopPropagation()}></textarea>
                 <button
-                  disabled={$estateChestPending}
-                  onclick={() => editSelected('recover')}>Recover</button
-                >
-                <button
-                  disabled={$estateChestPending}
-                  onclick={stopEstateChestMode}>Cancel</button
+                  disabled={$estateChestPending ||
+                    $estateChestMode?.kind !== 'move' ||
+                    signText.trim() === savedSignText}
+                  onclick={saveSignText}>Save text</button
                 >
               </div>
-              <small
-                >Move keeps stored items and sign text. Empty storage before
-                recovering.</small
-              >
             {/if}
+            <div class="furniture-actions">
+              <button disabled={$estateChestPending} onclick={recoverSelected}
+                >Recover</button
+              >
+              <button disabled={$estateChestPending} onclick={showObjects}
+                >Done</button
+              >
+            </div>
           </div>
         {/if}
-        <strong>Placeable Objects</strong>
         {#if $estateChestMode}
           <div class="rotation-controls">
             <button
@@ -225,7 +329,7 @@
               onclick={() => rotateEstateFurniturePlacement(-1)}
               >↶ {rotationStep}°</button
             >
-            <span>Rotation {$estateFurniturePlacementRotation.degrees}°</span>
+            <span>Rotation: {$estateFurniturePlacementRotation.degrees}°</span>
             <button
               disabled={$estateChestPending}
               aria-label="Rotate right {rotationStep} degrees"
@@ -234,40 +338,67 @@
               >↷ {rotationStep}°</button
             >
           </div>
+          {#if maxHeightOffset > 0}
+            <div class="height-controls">
+              <label for="estate-furniture-height">Height (Y)</label>
+              <output for="estate-furniture-height"
+                >{($estateFurniturePlacementHeight.offset ?? 0).toFixed(2)} m</output
+              >
+              <input
+                id="estate-furniture-height"
+                type="range"
+                min="0"
+                max={maxHeightOffset}
+                step={ESTATE_FURNITURE_HEIGHT_STEP}
+                value={$estateFurniturePlacementHeight.offset ?? 0}
+                disabled={$estateChestPending}
+                title="Height above the floor. Scroll here or in the scene to adjust."
+                oninput={(event) =>
+                  setEstateFurniturePlacementHeight(
+                    event.currentTarget.valueAsNumber
+                  )}
+                onwheel={adjustHeightWithWheel}
+              />
+              <small>Above floor · Mouse wheel adjusts height</small>
+            </div>
+          {/if}
         {/if}
-        <div class="object-list">
-          <button
-            class="object-row"
-            class:active={$fenceMode !== null}
-            title={$fenceCount
-              ? 'Place or recover fences'
-              : 'Select to recover placed fences'}
-            onclick={selectFence}
-          >
-            {#if fenceDefinition}
-              <img src="/items/{fenceDefinition.icon}" alt="" />
-            {/if}
-            <span>{itemDisplayName('wooden_fence')}</span>
-            <small>×{$fenceCount}</small>
-          </button>
-          {#each storageObjects as object (object.itemDefId)}
+        {#if !$estateFurnitureSelectionMode && !$selectedEstateFurniture}
+          <strong>Placeable Objects</strong>
+          <div class="object-list">
             <button
               class="object-row"
-              class:active={$estateChestMode?.item_def_id === object.itemDefId}
-              disabled={object.instanceId === undefined || $estateChestPending}
-              title={object.quantity
-                ? `Place ${itemDisplayName(object.itemDefId)}`
-                : 'None in your bag'}
-              onclick={() => selectStorage(object.instanceId)}
+              class:active={$fenceMode !== null}
+              title={$fenceCount
+                ? 'Place or recover fences'
+                : 'Select to recover placed fences'}
+              onclick={selectFence}
             >
-              {#if object.definition}
-                <img src="/items/{object.definition.icon}" alt="" />
+              {#if fenceDefinition}
+                <img src="/items/{fenceDefinition.icon}" alt="" />
               {/if}
-              <span>{itemDisplayName(object.itemDefId)}</span>
-              <small>×{object.quantity}</small>
+              <span>{itemDisplayName('wooden_fence')}</span>
+              <small>×{$fenceCount}</small>
             </button>
-          {/each}
-        </div>
+            {#each storageObjects as object (object.itemDefId)}
+              <button
+                class="object-row"
+                class:active={$estateChestMode?.item_def_id ===
+                  object.itemDefId}
+                disabled={object.instanceId === undefined ||
+                  $estateChestPending}
+                title={`Place ${itemDisplayName(object.itemDefId)}`}
+                onclick={() => selectStorage(object.instanceId)}
+              >
+                {#if object.definition}
+                  <img src="/items/{object.definition.icon}" alt="" />
+                {/if}
+                <span>{itemDisplayName(object.itemDefId)}</span>
+                <small>×{object.quantity}</small>
+              </button>
+            {/each}
+          </div>
+        {/if}
         {#if $isAdminUser && $fenceMode}
           <label class="zone-toggle">
             <input type="checkbox" bind:checked={$showFenceNoSpawnZones} />
@@ -276,20 +407,18 @@
         {/if}
         {#if $estateChestMode}
           <small
-            >{$playerVisualFloorLevel + 1}F · Left-click to place · Right-click
-            to move · R / Shift + R or mouse wheel rotates {rotationStep}° ·
-            Shift + wheel adjusts decoration height · Right-click placed
-            furniture to move or recover · Esc to finish</small
+            >{$playerVisualFloorLevel + 1}F · {$estateChestMode.kind === 'move'
+              ? 'Left-click or Enter to save'
+              : 'Left-click or Enter to place'} · ↑ / ↓ north / south · ← / → west
+            / east (5 cm) · R / Shift + R rotates {rotationStep}° · Mouse wheel
+            adjusts decoration height · Ctrl + wheel in the scene zooms the
+            camera · Select to choose another object · Esc to finish</small
           >
         {:else if $fenceMode}
-          <small
-            >Left-click to place or recover · Right-click to move · Esc to
-            finish</small
-          >
+          <small>Left-click to place or recover · Esc to finish</small>
         {/if}
-        {#if !$estateChestMode}
-          <small
-            >Right-click placed furniture nearby to move or recover it.</small
+        {#if !$estateChestMode && !$estateFurnitureSelectionMode}
+          <small>Use Select, then left-click placed furniture to edit it.</small
           >
         {/if}
       </div>
@@ -322,6 +451,9 @@
     background: #211c16ed;
     color: #f3e8d2;
     pointer-events: auto;
+  }
+  .landscaping-panel.objects-panel {
+    width: 360px;
   }
   .landscaping-panel::-webkit-scrollbar {
     width: 6px;
@@ -412,15 +544,21 @@
   .object-content,
   .paint-status {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
     padding: 12px 16px;
     font-family: 'Courier New', monospace;
     font-size: 12px;
+    overflow-wrap: anywhere;
   }
   .object-list {
     display: grid;
+    grid-auto-rows: minmax(42px, max-content);
     gap: 5px;
-    min-width: 280px;
+    min-width: 0;
+    max-height: 324px;
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
   .selected-furniture {
     display: grid;
@@ -434,9 +572,37 @@
     max-width: 300px;
     color: #aaa;
   }
+  .selected-furniture-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .selected-furniture-name img {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
   .furniture-actions {
     display: flex;
     gap: 6px;
+  }
+  .sign-text-controls {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+  .sign-text-controls textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    resize: vertical;
+    padding: 6px;
+    border: 1px solid #766247;
+    border-radius: 4px;
+    background: #211c16;
+    color: inherit;
+    font: inherit;
   }
   .rotation-controls {
     display: flex;
@@ -446,13 +612,32 @@
   }
   .object-row {
     display: grid;
-    grid-template-columns: 28px 1fr auto;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
     padding: 6px 8px;
     text-align: left;
   }
-  .object-row.active {
+  .height-controls {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+  }
+  .height-controls input,
+  .height-controls small {
+    grid-column: 1 / -1;
+  }
+  .height-controls input {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    accent-color: #e2b93b;
+  }
+  .height-controls small {
+    color: #aaa;
+  }
+  .object-row.active,
+  .select-objects.active {
     border-color: #e2b93b;
     background: rgba(226, 185, 59, 0.2);
   }

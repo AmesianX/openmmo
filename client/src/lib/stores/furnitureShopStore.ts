@@ -1,6 +1,5 @@
 import { derived, get, writable } from 'svelte/store'
 import shop from '../../../../data/furniture_shop.json'
-import type { EstateChest } from '../network/networkTypes'
 
 export { shop as furnitureShop }
 export type FurnitureProduct = (typeof shop.products)[number]
@@ -14,7 +13,6 @@ export const furnitureCheckoutOpen = writable(false)
 export const furnitureAtCheckout = writable(false)
 export const furniturePurchasePending = writable(false)
 export const furnitureShopError = writable<string | null>(null)
-export const estateSignEditor = writable<EstateChest | null>(null)
 export const furnitureBasketTotal = derived(furnitureBasket, (lines) =>
   lines.reduce(
     (total, line) =>
@@ -69,5 +67,4 @@ export function resetFurnitureShop() {
   furniturePurchasePending.set(false)
   furnitureAtCheckout.set(false)
   furnitureShopHover.set(null)
-  estateSignEditor.set(null)
 }

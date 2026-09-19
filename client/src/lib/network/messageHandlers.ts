@@ -559,6 +559,7 @@ import { worldView, type WorldUpdate } from './worldView'
 import {
   selectedEstateFurniture,
   startEstateFurniturePlacement,
+  applyEstateFurnitureEditResult,
 } from '../stores/estateFurniturePlacementStore'
 import { getEstateStorageDef } from '../data/estateFurnitureDefs'
 import type { EstateChest } from './networkTypes'
@@ -567,7 +568,6 @@ import {
   furniturePurchasePending,
   furnitureShopError,
   clearFurnitureBasket,
-  estateSignEditor,
 } from '../stores/furnitureShopStore'
 import { getTerrainApiUrl } from '../utils/networkUtils'
 
@@ -1727,12 +1727,7 @@ export function handleServerMessage(
       }
       break
     case 'EstateChestEditResult':
-      estateChestPending.set(false)
-      estateChestError.set(data.error ?? null)
-      if (!data.error) {
-        stopEstateChestMode()
-        estateSignEditor.set(null)
-      }
+      applyEstateFurnitureEditResult(data.error ?? null)
       break
     case 'FurniturePurchaseResult':
       furniturePurchasePending.set(false)

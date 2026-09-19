@@ -11,10 +11,14 @@
     estateFurnitureInteractionData,
   } from '../../utils/estateFurnitureModels'
   import { buildShopSignText, getShopSignStyle } from '../../utils/shop-sign'
-  import { estateSignEditor } from '../../stores/furnitureShopStore'
-  import { selectedEstateFurniture } from '../../stores/estateFurniturePlacementStore'
-  import { stopFenceMode } from '../../stores/fenceStore'
-  import { stopHouseInteraction } from '../../stores/housePlacementStore'
+  import {
+    estateFurnitureSelectionMode,
+    estateFurnitureEditorActive,
+    estateFurnitureCatalogOpen,
+    selectEstateFurniture,
+    beginEstateFurniturePlacementSave,
+  } from '../../stores/estateFurniturePlacementStore'
+  import { isTypingTarget } from '../../utils/dom'
   import {
     TorchFireParticles,
     CampfireFireParticles,
@@ -73,6 +77,8 @@
   let lastChests: Map<number, EstateChest> | null = null
   let lastWrapX = Infinity
   let lastFloorLevel = Infinity
+  let lastMovingFurnitureId: number | undefined
+  let placementLayer = $state<GameSceneEstateFurniturePlacementLayer>()
   let disposed = false
   let lastOpened: number | null = null
   const visuals = new SvelteMap<number, THREE.Group>()
@@ -80,14 +86,17 @@
   const loadingModels = new SvelteSet<string>()
   const failedModels = new SvelteSet<string>()
   const signTexts = new SvelteMap<string, THREE.Mesh>()
+  const savedPositionMaterials: THREE.Material[] = []
   const fires: FireParticles[] = []
   const firePositions: THREE.Vector3[] = []
   const torchPositions: THREE.Vector3[] = []
   export function getFirePositions() {
-    return firePositions
+    const preview = placementLayer?.getFirePositions()
+    return preview?.length ? [...firePositions, ...preview] : firePositions
   }
   export function getTorchPositions() {
-    return torchPositions
+    const preview = placementLayer?.getTorchPositions()
+    return preview?.length ? [...torchPositions, ...preview] : torchPositions
   }
   export function getGroup() {
     return chestGroup
@@ -143,6 +152,7 @@
   function makeVisual(chest: EstateChest) {
     const source = sources.get(chest.item_def_id)
     if (!source || !player) return
+    const moving = chest.id === movingFurnitureId
     const visual = source.scene.clone(true)
     const definition = getEstateStorageDef(chest.item_def_id)
     const model = furnitureModelDefinition(definition?.modelId)
@@ -166,7 +176,7 @@
       chest.position.z
     )
     visual.rotation.y = THREE.MathUtils.degToRad(chest.rotation_deg)
-    if (model?.fire) {
+    if (model?.fire && !moving) {
       const fire =
         model.fireKind === 'torch'
           ? new TorchFireParticles()
@@ -187,14 +197,36 @@
     }
     visual.traverse((object) => {
       if (object instanceof THREE.Mesh) {
-        object.castShadow = true
-        object.receiveShadow = true
+        const shadows = !moving && !object.userData.isSignText
+        object.castShadow = shadows
+        object.receiveShadow = shadows
+        if (moving) {
+          const sources = Array.isArray(object.material)
+            ? object.material
+            : [object.material]
+          const materials = sources.map((source) => {
+            const material = source.clone()
+            material.transparent = true
+            material.opacity *= 0.35
+            material.depthWrite = false
+            savedPositionMaterials.push(material)
+            return material
+          })
+          object.material = Array.isArray(object.material)
+            ? materials
+            : materials[0]
+        }
       }
     })
     chestGroup.add(visual)
     visuals.set(chest.id, visual)
     if (source.clips.length)
       mixers.set(chest.id, new THREE.AnimationMixer(visual))
+  }
+
+  function clearSavedPositionMaterials() {
+    for (const material of savedPositionMaterials) material.dispose()
+    savedPositionMaterials.length = 0
   }
 
   function rebuild() {
@@ -205,13 +237,16 @@
       !player ||
       (current === lastChests &&
         floorLevel === lastFloorLevel &&
+        movingFurnitureId === lastMovingFurnitureId &&
         Math.abs(player.position.x - lastWrapX) < 100)
     )
       return
     lastChests = current
     lastWrapX = player.position.x
     lastFloorLevel = floorLevel
+    lastMovingFurnitureId = movingFurnitureId
     chestGroup.clear()
+    clearSavedPositionMaterials()
     for (const fire of fires) {
       group.remove(fire.group)
       fire.dispose()
@@ -229,8 +264,7 @@
   function place(placement: EstateFurniturePlacement) {
     const mode = get(estateChestMode)
     if (!mode || !getEstateStorageDef(mode.item_def_id)) return
-    estateChestPending.set(true)
-    estateChestError.set(null)
+    if (!beginEstateFurniturePlacementSave()) return
     if (mode.kind === 'move') {
       networkManager.sendMoveEstateFurniture(
         mode.furniture.id,
@@ -322,25 +356,35 @@
       if (
         get(estateChestMode) ||
         !player ||
-        (event.button !== 0 && event.button !== 2) ||
+        event.button !== 0 ||
         get(cameraRotationEnabled) ||
         get(mapEditorMode) ||
         get(housingEditorMode) ||
         get(currentDungeonDepth) > 0
       )
         return
+      const selecting = get(estateFurnitureSelectionMode)
+      if (selecting) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (get(estateChestPending)) return
+      }
       setPointer(event.clientX, event.clientY)
       const hit = raycaster.intersectObject(chestGroup, true)[0]
       const chest = hit && chestFromHit(hit)
       if (
-        event.button === 0 &&
+        !selecting &&
         chest &&
         estateFurnitureInteractionData(chest).objectInteraction
       )
         return
+      if (!chest || chest.floor_level !== get(playerVisualFloorLevel)) {
+        if (selecting)
+          estateChestError.set('Click furniture on the current floor.')
+        return
+      }
       if (
-        !chest ||
-        chest.floor_level !== get(playerVisualFloorLevel) ||
+        !selecting &&
         Math.hypot(
           unwrapWorldXNear(player.position.x, chest.position.x) -
             player.position.x,
@@ -351,24 +395,32 @@
       event.preventDefault()
       event.stopImmediatePropagation()
       const definition = getEstateStorageDef(chest.item_def_id)
-      if (event.button === 2) {
-        if (get(estateChestPending)) return
-        stopFenceMode()
-        stopHouseInteraction()
-        stopEstateChestMode()
+      if (selecting) {
         openEstateChest.set(null)
-        estateSignEditor.set(null)
-        selectedEstateFurniture.set(chest)
-      } else if (definition?.textLabel) {
-        estateChestError.set(null)
-        estateSignEditor.set(chest)
+        if (selectEstateFurniture(chest))
+          networkManager.sendStartEstateFurnitureMove(chest.id)
       } else if (definition?.capacityKg)
         networkManager.sendOpenEstateChest(chest.id)
     }
+    const escape = (event: KeyboardEvent) => {
+      if (
+        event.code !== 'Escape' ||
+        isTypingTarget(event.target) ||
+        get(estateChestMode) ||
+        (!get(estateFurnitureEditorActive) && !get(estateFurnitureCatalogOpen))
+      )
+        return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (!get(estateChestPending)) stopEstateChestMode()
+    }
     canvas.addEventListener('mousedown', click, true)
+    window.addEventListener('keydown', escape, true)
     return () => {
       disposed = true
       canvas.removeEventListener('mousedown', click, true)
+      window.removeEventListener('keydown', escape, true)
+      clearSavedPositionMaterials()
       for (const fire of fires) fire.dispose()
       for (const text of signTexts.values()) {
         text.geometry.dispose()
@@ -415,6 +467,7 @@
 {#if placementDefinition}
   {#key `${placementDefinition.itemDefId}:${movingFurnitureId ?? 'new'}`}
     <GameSceneEstateFurniturePlacementLayer
+      bind:this={placementLayer}
       definition={placementDefinition}
       plots={$estateChestMode?.plots ?? []}
       pending={$estateChestPending}

@@ -140,7 +140,9 @@ impl GameState {
         player_id: &PlayerId,
         furniture_id: i64,
     ) -> Result<EstateChest, &'static str> {
-        let furniture = self.accessible_chest(player_id, furniture_id).await?;
+        let furniture = self
+            .furniture_on_player_floor(player_id, furniture_id)
+            .await?;
         let owner_id = self
             .player_characters
             .read()
@@ -691,7 +693,7 @@ impl GameState {
         Ok((position, snapped_rotation))
     }
 
-    async fn accessible_chest(
+    async fn furniture_on_player_floor(
         &self,
         player_id: &PlayerId,
         chest_id: i64,
@@ -703,9 +705,21 @@ impl GameState {
             .get(chest_id)
             .cloned()
             .ok_or("That furnishing is not here.")?;
-        if chest.floor_level != player.floor_level
-            || chest.position.dist_xz_sq(&player.position) > INTERACTION_RANGE.powi(2)
-        {
+        if chest.floor_level != player.floor_level {
+            return Err("Select furniture on the current floor.");
+        }
+        Ok(chest)
+    }
+
+    async fn accessible_chest(
+        &self,
+        player_id: &PlayerId,
+        chest_id: i64,
+    ) -> Result<EstateChest, &'static str> {
+        let chest = self.furniture_on_player_floor(player_id, chest_id).await?;
+        let players = self.players.read().await;
+        let player = players.get(player_id).ok_or("Character not found.")?;
+        if chest.position.dist_xz_sq(&player.position) > INTERACTION_RANGE.powi(2) {
             return Err("Move closer to the furniture.");
         }
         Ok(chest)
@@ -789,7 +803,9 @@ impl GameState {
             return Err("Sign text must be at most 120 characters.");
         }
         let _persistence = self.persistence_lock.lock().await;
-        let mut furniture = self.accessible_chest(player_id, furniture_id).await?;
+        let mut furniture = self
+            .furniture_on_player_floor(player_id, furniture_id)
+            .await?;
         if !estate_storage_def(&furniture.item_def_id).is_some_and(|d| d.text_label) {
             return Err("This furniture has no text label.");
         }
@@ -1114,7 +1130,7 @@ impl GameState {
         chest_id: i64,
         auth: &AuthService,
     ) -> Result<(), &'static str> {
-        let chest = self.accessible_chest(player_id, chest_id).await?;
+        let chest = self.furniture_on_player_floor(player_id, chest_id).await?;
         let definition = estate_storage_def(&chest.item_def_id)
             .ok_or("This storage chest has an unknown type.")?;
         let max_weight = self.max_carry_weight(player_id).await;

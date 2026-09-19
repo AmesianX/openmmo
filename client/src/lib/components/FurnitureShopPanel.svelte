@@ -8,18 +8,12 @@
     furniturePurchasePending,
     furnitureShopError,
     clearFurnitureBasket,
-    estateSignEditor,
   } from '../stores/furnitureShopStore'
-  import {
-    estateChestError,
-    estateChestPending,
-  } from '../stores/estateStorageStore'
   import { playerGold } from '../stores/inventoryStore'
   import { itemDisplayName } from '../data/itemDefs'
   import { networkManager } from '../network/socket'
   import FurnitureBasket from './FurnitureBasket.svelte'
   import GoldAmount from './GoldAmount.svelte'
-  let signText = $derived($estateSignEditor?.text ?? '')
 
   function checkout() {
     if ($furniturePurchasePending || !$furnitureAtCheckout) return
@@ -33,12 +27,6 @@
       $playerGold,
       $furnitureBasketTotal
     )
-  }
-  function saveSign() {
-    if (!$estateSignEditor || $estateChestPending) return
-    estateChestPending.set(true)
-    estateChestError.set(null)
-    networkManager.sendSetEstateFurnitureText($estateSignEditor.id, signText)
   }
 </script>
 
@@ -88,31 +76,14 @@
     {#if $furnitureShopError}<p role="status">{$furnitureShopError}</p>{/if}
   </div>
 {/if}
-{#if $estateSignEditor}
-  <div class="sign-panel">
-    <label
-      >Sign text<textarea bind:value={signText} maxlength="120" rows="3"
-      ></textarea></label
-    >
-    <button disabled={$estateChestPending} onclick={saveSign}>Save</button>
-    <button
-      disabled={$estateChestPending}
-      onclick={() => estateSignEditor.set(null)}>Cancel</button
-    >
-    {#if $estateChestError}<p role="status">{$estateChestError}</p>{/if}
-  </div>
-{/if}
 
 <style>
-  .shop-panel,
-  .sign-panel {
+  .shop-panel {
     position: fixed;
     z-index: 150;
     right: 20px;
     bottom: 100px;
     width: 330px;
-  }
-  .shop-panel {
     backdrop-filter: blur(4px);
     padding: 10px;
     border: 1px solid rgba(255, 255, 255, 0.18);
@@ -122,16 +93,6 @@
     font-family: 'Courier New', monospace;
     font-size: 12px;
     max-width: calc(100vw - 64px);
-  }
-  .sign-panel {
-    right: calc(50% - 170px);
-    bottom: 30%;
-    padding: 16px;
-    background: #20251ff2;
-    color: #f6e7c1;
-    border: 1px solid #aa945b;
-    border-radius: 8px;
-    font-size: 13px;
   }
   small {
     display: block;
@@ -170,11 +131,5 @@
   }
   .shop-panel [role='status'] {
     color: #f0b8b8;
-  }
-  textarea {
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    margin-top: 8px;
   }
 </style>

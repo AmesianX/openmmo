@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { landscapingMode } from '../stores/landscapingStore'
-  import { estateFurniturePlacementMode } from '../stores/estateFurniturePlacementStore'
+  import {
+    estateFurnitureEditorActive,
+    estateFurniturePlacementMode,
+    estateFurnitureSelectionMode,
+  } from '../stores/estateFurniturePlacementStore'
   import { useThrelte } from '@threlte/core'
   import * as THREE from 'three'
   import {
@@ -2199,8 +2203,7 @@
 
   function processClickIntent(event: MouseEvent): ClickIntent {
     const groundOnly =
-      get(landscapingMode) !== null ||
-      get(estateFurniturePlacementMode) !== null
+      get(landscapingMode) !== null || get(estateFurnitureEditorActive)
     const intent = inputHandler.processCanvasClick(event, {
       groundOnly,
       camera,
@@ -2290,7 +2293,7 @@
       $mapEditorMode ||
       $housingEditorMode ||
       get(landscapingMode) !== null ||
-      get(estateFurniturePlacementMode) !== null
+      get(estateFurnitureEditorActive)
     if (event.button === 2 && !editorMode) {
       handleNpcContextMenu(event)
       return
@@ -2500,7 +2503,7 @@
   }
 
   function runHover(event: MouseEvent) {
-    if (get(landscapingMode) || get(estateFurniturePlacementMode)) {
+    if (get(landscapingMode) || get(estateFurnitureEditorActive)) {
       clearHover()
       return
     }
@@ -2615,6 +2618,8 @@
       landscapingMode.subscribe(enterPlacementMode)
     const unsubscribeFurnitureMode =
       estateFurniturePlacementMode.subscribe(enterPlacementMode)
+    const unsubscribeFurnitureSelection =
+      estateFurnitureSelectionMode.subscribe(enterPlacementMode)
     preloadSwordHitSound()
     preloadSwordMissSound()
     preloadMonsterDeathSounds()
@@ -2664,6 +2669,7 @@
       removeInputListeners()
       unsubscribeLandscapingMode()
       unsubscribeFurnitureMode()
+      unsubscribeFurnitureSelection()
       canvas.removeEventListener('pointermove', handlePointerHover)
       canvas.removeEventListener('pointerleave', handlePointerLeave)
       clearHover()

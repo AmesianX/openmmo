@@ -6,17 +6,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-fn main() {
-    if let Err(err) = generate_data_json() {
-        panic!("failed to generate data JSON from CSV: {err}");
-    }
-    git_hash();
-}
-
-/// Release builds (what prod deploys) rebuild on every commit so the hash is
-/// exact; dev builds keep the hash they were born with to avoid recompiling
-/// after each commit.
-fn git_hash() {
+/// Refresh the commit hash on every release build.
+pub fn git_hash() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../tools/cargo-build-data.rs");
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .args(args)
@@ -34,7 +27,7 @@ fn git_hash() {
     println!("cargo:rustc-env=GIT_HASH={hash}");
 }
 
-fn generate_data_json() -> Result<(), Box<dyn Error>> {
+pub fn generate_data_json() -> Result<(), Box<dyn Error>> {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let repo_root = manifest_dir
         .parent()

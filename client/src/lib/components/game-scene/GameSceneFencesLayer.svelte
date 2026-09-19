@@ -23,6 +23,7 @@
   } from '../../stores/debugStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
   import { landscapingMode } from '../../stores/landscapingStore'
+  import { estateFurnitureEditorActive } from '../../stores/estateFurniturePlacementStore'
   import { playerTrade } from '../../stores/playerTradeStore'
   import { playerVisualFloorLevel } from '../../stores/housingStore'
   import {
@@ -235,7 +236,7 @@
       hidePreview()
     }
     const click = (event: MouseEvent) => {
-      if (get(cameraRotationEnabled)) return
+      if (get(cameraRotationEnabled) || get(estateFurnitureEditorActive)) return
       if (get(landscapingMode) && !get(fenceMode)) return
       if (!get(fenceMode)) {
         if (

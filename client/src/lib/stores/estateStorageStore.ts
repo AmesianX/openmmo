@@ -10,6 +10,7 @@ import {
   estateFurniturePlacementPending,
   stopEstateFurniturePlacement,
   selectedEstateFurniture,
+  estateFurnitureSelectionMode,
 } from './estateFurniturePlacementStore'
 
 export { estateChests }
@@ -68,6 +69,14 @@ export function applyEstateChestVisibility(
   if (selected) {
     const updated = next.get(selected.id)
     if (updated) selectedEstateFurniture.set(updated)
+    else if (get(estateFurnitureSelectionMode))
+      selectedEstateFurniture.set(null)
+    else stopEstateFurniturePlacement()
+  }
+  const mode = get(estateFurniturePlacementMode)
+  if (mode?.kind === 'move') {
+    const furniture = next.get(mode.furniture.id)
+    if (furniture) estateFurniturePlacementMode.set({ ...mode, furniture })
     else stopEstateFurniturePlacement()
   }
   const opened = get(openEstateChest)

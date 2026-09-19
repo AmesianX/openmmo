@@ -3,7 +3,16 @@
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
   import * as THREE from 'three'
-  import { loadEstateFurnitureModel } from '../../utils/estateFurnitureModels'
+  import {
+    loadEstateFurnitureModel,
+    furnitureModelDefinition,
+  } from '../../utils/estateFurnitureModels'
+  import { buildShopSignText, getShopSignStyle } from '../../utils/shop-sign'
+  import {
+    TorchFireParticles,
+    CampfireFireParticles,
+    type FireParticles,
+  } from '../../effects/fire-particles'
   import {
     cameraRotationEnabled,
     housingEditorMode,
@@ -11,7 +20,11 @@
   } from '../../stores/debugStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
   import {
+    estateFurniturePlacementMode,
     estateFurniturePlacementRotation,
+    estateFurniturePlacementHeight,
+    initializeEstateFurniturePlacementHeight,
+    adjustEstateFurniturePlacementHeight,
     rotateEstateFurniturePlacement,
   } from '../../stores/estateFurniturePlacementStore'
   import { isTypingTarget } from '../../utils/dom'
@@ -31,7 +44,11 @@
     type EstatePlot,
     type FurnitureFootprintPose,
   } from '../../terrain/estatePlacement'
-  import { wrapWorldX } from '../../terrain/world-wrap'
+  import {
+    EstateFurniturePlacementCursor,
+    isFurnitureNudgeKey,
+  } from '../../terrain/estateFurniturePlacementCursor'
+  import { unwrapWorldXNear, wrapWorldX } from '../../terrain/world-wrap'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
   import { housingManager } from '../../managers/housingManager'
   import { playerInsideHouseId } from '../../stores/housingStore'
@@ -92,13 +109,35 @@
   group.add(grid.object)
 
   let ghost: THREE.Group | null = null
-  let cursor: { x: number; y: number } | null = null
-  let heightOffset = 0
+  const originalColors: {
+    material: THREE.MeshStandardMaterial
+    color: THREE.Color
+  }[] = []
+  const invalidColor = new THREE.Color('#ef5b5b')
+  const firePosition = new THREE.Vector3()
+  let fire: FireParticles | null = null
+  let fireOffset: THREE.Vector3 | null = null
+  let torchFire = false
+  let signText: THREE.Mesh | null = null
+  let renderedSignText: string | undefined
+  const cursor = new EstateFurniturePlacementCursor()
   let preview: EstateFurniturePlacement | null = null
   let previewValid = false
   let lastGridFloor = Infinity
   let lastGridHouseId: string | null = null
   let disposed = false
+
+  export function getFirePositions() {
+    return fire && !torchFire && ghost?.visible && group.visible
+      ? [firePosition]
+      : []
+  }
+
+  export function getTorchPositions() {
+    return fire && torchFire && ghost?.visible && group.visible
+      ? [firePosition]
+      : []
+  }
 
   function setPointer(clientX: number, clientY: number) {
     const rect = renderer.domElement.getBoundingClientRect()
@@ -156,31 +195,81 @@
   }
 
   function tintGhost(valid: boolean) {
-    ghost?.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return
-      const materials = Array.isArray(object.material)
-        ? object.material
-        : [object.material]
-      for (const material of materials) {
-        if (material instanceof THREE.MeshStandardMaterial)
-          material.color.set(valid ? '#65d98a' : '#ef5b5b')
-      }
-    })
+    for (const { material, color } of originalColors) {
+      material.color.copy(color)
+      if (!valid) material.color.lerp(invalidColor, 0.65)
+    }
+  }
+
+  function clearSignText() {
+    if (!signText) return
+    signText.removeFromParent()
+    signText.geometry.dispose()
+    const materials = Array.isArray(signText.material)
+      ? signText.material
+      : [signText.material]
+    for (const material of materials) {
+      ;(material as THREE.MeshBasicMaterial).map?.dispose()
+      material.dispose()
+    }
+    signText = null
+  }
+
+  function updateSignText() {
+    if (!ghost) return
+    const mode = get(estateFurniturePlacementMode)
+    const text = mode?.kind === 'move' ? (mode.furniture.text ?? '') : ''
+    if (text === renderedSignText) return
+    renderedSignText = text
+    clearSignText()
+    const model = furnitureModelDefinition(definition.modelId)
+    if (text && model?.procedural === 'shopSign') {
+      const style = getShopSignStyle(model.shopSignStyle)
+      signText = buildShopSignText(text, style.board, style.text)
+      ghost.add(signText)
+    } else ghost.userData.objectText = text || undefined
   }
 
   function updatePreview() {
-    if (!player || !ghost || !cursor || get(cameraRotationEnabled)) {
+    const mode = get(estateFurniturePlacementMode)
+    if (
+      mode?.kind === 'move' &&
+      get(estateFurniturePlacementHeight).offset === null
+    ) {
+      const { position, floor_level } = mode.furniture
+      const house = placementHouse()
+      const baseY = house
+        ? houseFloorY(house, floor_level, position.x, position.z)
+        : heightManager.groundYOrNull(position.x, position.z)
+      if (baseY === null) {
+        hidePreview()
+        return
+      }
+      initializeEstateFurniturePlacementHeight(baseY)
+    }
+    if (!player || !ghost) {
       hidePreview()
       return
     }
-    setPointer(cursor.x, cursor.y)
-    const hit = surfaceHit()
-    if (!hit) {
+    if (get(cameraRotationEnabled)) return
+    if (cursor.pointer && !cursor.position)
+      setPointer(cursor.pointer.x, cursor.pointer.y)
+    const point =
+      cursor.position ??
+      (cursor.pointer
+        ? surfaceHit()?.point
+        : mode?.kind === 'move'
+          ? mode.furniture.position
+          : null)
+    if (!point) {
       hidePreview()
       return
     }
-    const x = snapPlacementCoordinate(hit.point.x, definition.snapStep)
-    const z = snapPlacementCoordinate(hit.point.z, definition.snapStep)
+    const x = snapPlacementCoordinate(
+      unwrapWorldXNear(player.position.x, point.x),
+      definition.snapStep
+    )
+    const z = snapPlacementCoordinate(point.z, definition.snapStep)
     const house = placementHouse()
     const fits = (rotation: number) =>
       footprintOnOwnedEstate(x, z, rotation, definition.footprint, plots) &&
@@ -217,16 +306,18 @@
     const baseY =
       (house
         ? houseFloorY(house, floorLevel, x, z)
-        : heightManager.groundYOrNull(x, z)) ?? hit.point.y
-    const y = definition.maxHeightOffset
-      ? Math.max(
-          baseY,
-          Math.min(
-            baseY + definition.maxHeightOffset,
-            hit.point.y + heightOffset
-          )
-        )
-      : baseY
+        : heightManager.groundYOrNull(x, z)) ?? point.y
+    const height = get(estateFurniturePlacementHeight)
+    const offset = Math.max(
+      0,
+      Math.min(
+        definition.maxHeightOffset ?? 0,
+        height.manual ? (height.offset ?? 0) : point.y - baseY
+      )
+    )
+    if (height.offset !== offset)
+      estateFurniturePlacementHeight.set({ ...height, offset })
+    const y = baseY + offset
     previewValid =
       floorLevel >= definition.minFloor &&
       floorLevel <= definition.maxFloor &&
@@ -254,37 +345,54 @@
         if (disposed) return
         ghost = gltf.scene.clone(true)
         ghost.visible = false
-        ghost.renderOrder = 5
         ghost.traverse((object) => {
           if (!(object instanceof THREE.Mesh)) return
+          object.castShadow = true
+          object.receiveShadow = true
           const sources = Array.isArray(object.material)
             ? object.material
             : [object.material]
           const materials = sources.map((source) => {
             const material = source.clone()
-            material.transparent = true
-            material.opacity = 0.55
-            material.depthWrite = false
+            if (material instanceof THREE.MeshStandardMaterial)
+              originalColors.push({ material, color: material.color.clone() })
             return material
           })
           object.material = Array.isArray(object.material)
             ? materials
             : materials[0]
         })
+        const model = furnitureModelDefinition(definition.modelId)
+        updateSignText()
+        if (model?.fire) {
+          torchFire = model.fireKind === 'torch'
+          fire = torchFire
+            ? new TorchFireParticles()
+            : new CampfireFireParticles()
+          fireOffset = new THREE.Vector3(
+            model.fire.x,
+            model.fire.y,
+            model.fire.z
+          )
+          fire.group.visible = false
+          group.add(fire.group)
+        }
         group.add(ghost)
       })
       .catch((error) => {
+        if (disposed) return
         console.error('Failed to load estate furniture preview:', error)
         onerror('Could not load the furniture preview. Reload to try again.')
       })
 
     const canvas = renderer.domElement
     const move = (event: PointerEvent) => {
-      cursor = { x: event.clientX, y: event.clientY }
+      cursor.movePointer(event.clientX, event.clientY)
     }
-    const leave = () => {
-      cursor = null
-      hidePreview()
+    const save = () => {
+      updatePreview()
+      if (preview && previewValid) onplace(preview)
+      else onerror('Choose a valid position before saving.')
     }
     const click = (event: MouseEvent) => {
       if (
@@ -298,27 +406,57 @@
         return
       event.preventDefault()
       event.stopImmediatePropagation()
-      cursor = { x: event.clientX, y: event.clientY }
-      updatePreview()
-      if (preview && previewValid) onplace(preview)
+      cursor.prepareSave(event.clientX, event.clientY)
+      save()
     }
     const wheel = (event: WheelEvent) => {
-      if (pending || event.deltaY === 0 || get(cameraRotationEnabled)) return
+      if (
+        pending ||
+        event.deltaY === 0 ||
+        event.ctrlKey ||
+        get(cameraRotationEnabled)
+      )
+        return
       event.preventDefault()
       event.stopImmediatePropagation()
-      const direction = event.deltaY > 0 ? 1 : -1
-      if (event.shiftKey && definition.maxHeightOffset) {
-        heightOffset = Math.max(
-          -3,
-          Math.min(3, heightOffset - direction * 0.05)
-        )
-      } else {
-        rotateEstateFurniturePlacement(direction)
-      }
+      adjustEstateFurniturePlacementHeight(event.deltaY < 0 ? 1 : -1)
       updatePreview()
     }
     const keydown = (event: KeyboardEvent) => {
-      if (isTypingTarget(event.target)) return
+      if (
+        isTypingTarget(event.target) &&
+        !(
+          event.target instanceof HTMLInputElement &&
+          event.target.type === 'range'
+        )
+      )
+        return
+      const saveKey = event.code === 'Enter' || event.code === 'NumpadEnter'
+      const nudgeKey = isFurnitureNudgeKey(event.code) ? event.code : null
+      if (saveKey || nudgeKey) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (
+          pending ||
+          (saveKey && event.repeat) ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey ||
+          get(cameraRotationEnabled) ||
+          get(mapEditorMode) ||
+          get(housingEditorMode) ||
+          get(currentDungeonDepth) > 0
+        )
+          return
+        if (nudgeKey) {
+          updatePreview()
+          if (preview) {
+            cursor.nudge(nudgeKey, preview.position)
+            updatePreview()
+          }
+        } else save()
+        return
+      }
       if (
         event.code === 'KeyR' &&
         !event.ctrlKey &&
@@ -342,7 +480,6 @@
       hidePreview()
     }
     canvas.addEventListener('pointermove', move)
-    canvas.addEventListener('pointerleave', leave)
     canvas.addEventListener('mousedown', click, true)
     canvas.addEventListener('wheel', wheel, { capture: true, passive: false })
     window.addEventListener('keydown', keydown, true)
@@ -351,10 +488,10 @@
       unsubscribeHeight()
       unsubscribeHouses()
       canvas.removeEventListener('pointermove', move)
-      canvas.removeEventListener('pointerleave', leave)
       canvas.removeEventListener('mousedown', click, true)
       canvas.removeEventListener('wheel', wheel, true)
       window.removeEventListener('keydown', keydown, true)
+      clearSignText()
       ghost?.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return
         const materials = Array.isArray(object.material)
@@ -362,11 +499,13 @@
           : [object.material]
         for (const material of materials) material.dispose()
       })
+      originalColors.length = 0
+      fire?.dispose()
       grid.dispose()
     }
   })
 
-  useTask(() => {
+  useTask((delta) => {
     group.visible = get(currentDungeonDepth) < 1
     const insideHouseId = get(playerInsideHouseId)
     if (floorLevel !== lastGridFloor || insideHouseId !== lastGridHouseId) {
@@ -375,7 +514,19 @@
       grid.markDirty()
     }
     grid.update(!!player, plots, player?.position.x ?? 0)
+    updateSignText()
     updatePreview()
+    if (fire && fireOffset && ghost) {
+      fire.group.visible = ghost.visible
+      if (ghost.visible) {
+        firePosition
+          .copy(fireOffset)
+          .applyEuler(ghost.rotation)
+          .add(ghost.position)
+        fire.setOrigin(firePosition)
+        fire.update(delta, get(camera))
+      }
+    }
   })
 </script>
 
