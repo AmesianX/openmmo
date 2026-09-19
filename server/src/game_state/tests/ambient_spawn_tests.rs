@@ -13,7 +13,7 @@ async fn walking_spawns_monsters_and_standing_still_does_not() {
     game_state.enable_ambient_spawns();
 
     pace_player(&game_state, &player_id, 200.0, 0.0, 60).await;
-    let after_walking = owned_monster_count(&game_state, &player_id).await;
+    let after_walking = nearby_monster_count(&game_state, &player_id).await;
     assert!(
         after_walking > 0,
         "600m of walking must draw at least one monster"
@@ -23,7 +23,7 @@ async fn walking_spawns_monsters_and_standing_still_does_not() {
         game_state.tick_player_movement(1.0).await;
     }
     assert_eq!(
-        owned_monster_count(&game_state, &player_id).await,
+        nearby_monster_count(&game_state, &player_id).await,
         after_walking,
         "standing still must draw nothing — that is the whole point"
     );
@@ -40,8 +40,8 @@ async fn walking_forever_still_stops_at_the_cap() {
 
     pace_player(&game_state, &player_id, 200.0, 0.0, 200).await;
     assert_eq!(
-        owned_monster_count(&game_state, &player_id).await,
-        world_config().max_monsters_per_player as usize,
+        nearby_monster_count(&game_state, &player_id).await,
+        world_config().max_nearby_monsters as usize,
         "2km of pacing fills the cap and stops there"
     );
 }
@@ -99,7 +99,7 @@ async fn nothing_spawns_in_open_water() {
         walk_player_to(&game_state, &player_id, -200.0, 100.0 * leg as f32).await;
     }
     assert_eq!(
-        owned_monster_count(&game_state, &player_id).await,
+        nearby_monster_count(&game_state, &player_id).await,
         0,
         "the sea is not a hunting ground"
     );
@@ -123,7 +123,7 @@ async fn nothing_spawns_around_a_no_spawn_zone() {
 
     pace_player(&game_state, &player_id, 200.0, 0.0, 100).await;
     assert_eq!(
-        owned_monster_count(&game_state, &player_id).await,
+        nearby_monster_count(&game_state, &player_id).await,
         0,
         "a town and its margin stay clear however far one walks through it"
     );
@@ -216,7 +216,7 @@ async fn a_teleport_is_not_a_walk() {
             .await;
     }
     assert_eq!(
-        owned_monster_count(&game_state, &player_id).await,
+        nearby_monster_count(&game_state, &player_id).await,
         0,
         "50 teleports of a kilometre each must earn nothing"
     );

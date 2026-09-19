@@ -22,7 +22,6 @@ pub(super) struct Config {
 #[derive(Default, Serialize)]
 struct MonsterTotals {
     server_attempts: u64,
-    client_requests: u64,
     rejected: BTreeMap<String, u64>,
     hits: u64,
     misses: u64,
@@ -82,7 +81,7 @@ struct Window {
 impl Window {
     fn new(character_id: i64, p: &Player, now: u64) -> Self {
         Self {
-            schema: 2,
+            schema: 3,
             character_id,
             player_id: p.id,
             name: p.name.clone(),
@@ -114,16 +113,12 @@ impl Window {
         self.level = p.level;
     }
 
-    fn record_attempt(&mut self, kind: Option<&str>, client: bool) -> &mut MonsterTotals {
+    fn record_attempt(&mut self, kind: Option<&str>) -> &mut MonsterTotals {
         let counts = self
             .monsters
             .entry(kind.unwrap_or("unknown").into())
             .or_default();
-        if client {
-            counts.client_requests += 1;
-        } else {
-            counts.server_attempts += 1;
-        }
+        counts.server_attempts += 1;
         counts
     }
 }
@@ -258,11 +253,10 @@ impl CombatAudit {
         }
     }
 
-    pub(super) fn attack<'a>(&'a self, id: PlayerId, client: bool) -> Attack<'a> {
+    pub(super) fn attack<'a>(&'a self, id: PlayerId) -> Attack<'a> {
         Attack {
             audit: self,
             id,
-            client,
             kind: None,
             reason: "missing_monster",
             finished: false,
@@ -438,7 +432,6 @@ impl Drop for PlayerAttack<'_> {
 pub(super) struct Attack<'a> {
     audit: &'a CombatAudit,
     id: PlayerId,
-    client: bool,
     kind: Option<String>,
     pub(super) reason: &'static str,
     finished: bool,
@@ -480,7 +473,7 @@ impl Attack<'_> {
             .get_mut(&self.id)
         {
             s.window.health(old, p, "monster");
-            let counts = s.window.record_attempt(self.kind.as_deref(), self.client);
+            let counts = s.window.record_attempt(self.kind.as_deref());
             if hit {
                 counts.hits += 1;
             } else {
@@ -504,7 +497,7 @@ impl Drop for Attack<'_> {
             .sessions
             .get_mut(&self.id)
         {
-            let counts = s.window.record_attempt(self.kind.as_deref(), self.client);
+            let counts = s.window.record_attempt(self.kind.as_deref());
             *counts.rejected.entry(self.reason.into()).or_default() += 1;
         }
     }
@@ -705,7 +698,7 @@ mod tests {
         let (audit, players) = setup();
         let p = players.values().next().unwrap();
         {
-            let mut attack = audit.attack(p.id, false);
+            let mut attack = audit.attack(p.id);
             attack.monster("m1", "troll");
             attack.resolved(p.health, p, false);
         }
@@ -768,7 +761,7 @@ mod tests {
         let (audit, mut players) = setup();
         let p = players.values_mut().next().unwrap();
         {
-            let mut attack = audit.attack(p.id, false);
+            let mut attack = audit.attack(p.id);
             attack.monster("m1", "troll");
             p.health = 0;
             attack.resolved(10, p, true);
@@ -799,7 +792,7 @@ mod tests {
         let (audit, players) = setup();
         let p = players.values().next().unwrap();
         for i in 0..=MAX_MONSTERS {
-            let mut attack = audit.attack(p.id, false);
+            let mut attack = audit.attack(p.id);
             attack.monster(&format!("m{i}"), "troll");
         }
         audit.kill(&p.id, "unknown", "troll");

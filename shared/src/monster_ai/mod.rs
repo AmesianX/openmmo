@@ -1,8 +1,4 @@
-//! Shared monster AI behavior tree runtime — used by both WASM (client) and native Rust (agent-client).
-//!
-//! The runtime is stateful per-monster via [`MonsterBrain`]. Each tick receives
-//! external inputs (delta time, nearby players) and returns a list of
-//! [`AiCommand`]s that the caller translates into network messages.
+//! Monster behavior trees, ticked and applied by the server.
 //!
 //! The module is split into:
 //! - [`tree`] — behavior tree data model and JSON loading
@@ -25,7 +21,7 @@ mod tree;
 mod tests;
 
 pub use brain::MonsterBrain;
-pub use command::{AiCommand, AiState, ChaseAim, NearbyMonster, NearbyPlayer, TickResult};
+pub use command::{AiCommand, AiState, ChaseAim, NearbyMonster, NearbyPlayer};
 pub use path::{CachePathProvider, PathProvider};
 pub use tree::{behavior_tree_for, load_behavior_trees, BehaviorNode, BehaviorTree};
 
@@ -76,11 +72,7 @@ const DEFAULT_TARGET_MOVE_THRESHOLD: f32 = 3.0;
 /// decisions, which has nothing to do with the monster's reach. Well inside the
 /// server's own (also absolute) reach slack.
 const ATTACK_RELEASE_MARGIN_METERS: f32 = 0.5;
-/// Least time between network position syncs while a monster is continuously
-/// moving (chase/return/flee). The brain simulates every frame but only emits a
-/// `Move` this often, cutting ~60/s of packets to ~2/s; remote clients
-/// interpolate toward `target_position` in between, and state changes still sync
-/// immediately. Server-authoritative movement (F-006) absorbs the coarser rate.
+/// Movement sync interval; state changes and path bends sync immediately.
 const NETWORK_SYNC_INTERVAL_MS: f32 = 500.0;
 /// See `MonsterBrain::chase_stop_range`.
 const ENGAGE_INSET_METERS: f32 = 0.05;

@@ -92,47 +92,6 @@ impl SharedState {
                     sprinting,
                 }
             }
-            ClientMessage::MonsterMove {
-                monster_id,
-                position,
-                rotation,
-                state,
-                target_position,
-            } => {
-                // A dungeon monster stands on its floor, not on the terrain
-                // above it — snapping those to heightmap Y would haul the whole
-                // floor's monsters up to the surface.
-                let floor_level = self
-                    .nearby_monsters
-                    .get(&monster_id)
-                    .map(|m| m.floor_level)
-                    .unwrap_or(0);
-                let (position, target_position) = if floor_level < 0 {
-                    let floor = passability_floor_for_level(floor_level);
-                    (
-                        self.on_dungeon_floor(position, floor),
-                        self.on_dungeon_floor(target_position, floor),
-                    )
-                } else {
-                    // position and target_position are independent coordinates, so
-                    // sample both terrain heights concurrently rather than serially.
-                    let prev = self.nearby_monsters.get(&monster_id).map(|m| m.position);
-                    tokio::join!(
-                        self.ground_tracked_position(prev, position, "MonsterMove"),
-                        self.snap_position_to_ground(target_position, "MonsterMove target"),
-                    )
-                };
-                // The server skips echoing our own monster moves back;
-                // mirror them locally or owned monsters freeze at spawn.
-                self.apply_monster_pose(&monster_id, position, rotation, state);
-                ClientMessage::MonsterMove {
-                    monster_id,
-                    position,
-                    rotation,
-                    state,
-                    target_position,
-                }
-            }
             ClientMessage::InteractObject {
                 object_type,
                 object_id,

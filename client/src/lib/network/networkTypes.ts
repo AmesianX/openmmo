@@ -60,14 +60,12 @@ export type ServerMonster = {
   position: Position
   rotation: number
   state: MonsterData['state']
-  owner_id?: number
   health: number
   max_health: number
   /** 0 = overworld, 1..3 housing floors, negative = dungeon depth. Always
    *  sent by the server (shared Monster::floor_level). */
   floor_level: number
-  /** Proactive (선공형): attacks on sight rather than only retaliating.
-   *  Drives behavior-tree selection for monsters we own. */
+  /** Attacks on sight. */
   aggressive?: boolean
 }
 
@@ -164,19 +162,9 @@ export type ClientMessage =
     }
   | { PlayerFloorChanged: { floor_level: number } }
   | { ChatMessage: { message: string } }
-  | {
-      MonsterMove: {
-        monster_id: string
-        position: Position
-        rotation: number
-        state: MonsterData['state']
-        target_position: Position
-      }
-    }
   | { PlayerAttack: { monster_id: string } }
   | { UseAbility: { ability: AbilityId; monster_id: string | null } }
   | { DaggerDoubleSlash: { monster_id: string } }
-  | { MonsterAttack: { monster_id: string; target_player_id: number } }
   | 'RequestRespawn'
   | { FishingCast: { position: Position } }
   | { FishingRespond: { action: FishingAction } }

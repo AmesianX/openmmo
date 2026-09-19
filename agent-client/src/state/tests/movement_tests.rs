@@ -31,13 +31,13 @@ fn targetable_state() -> (SharedState, mpsc::Receiver<ClientMessage>) {
     karl.name = "Karl".to_string();
     s.nearby_players.insert(karl.id, karl);
 
-    let mut near = monster("m2_1");
+    let mut near = monster("m21");
     near.monster_type = "goblin".to_string();
     near.position = p(5.0, 0.0, 0.0);
-    let mut far = monster("m2_7");
+    let mut far = monster("m27");
     far.monster_type = "goblin".to_string();
     far.position = p(12.0, 0.0, 0.0);
-    let mut other = monster("m2_9");
+    let mut other = monster("m29");
     other.monster_type = "slime".to_string();
     other.position = p(4.0, 0.0, 0.0);
     for m in [near, far, other] {
@@ -59,9 +59,9 @@ fn a_move_target_resolves_by_shape_then_by_name() {
     let (s, _rx) = targetable_state();
 
     assert_eq!(
-        s.resolve_move_target("m2_1"),
+        s.resolve_move_target("m21"),
         Ok(MoveTarget::Monster {
-            id: "m2_1".to_string()
+            id: "m21".to_string()
         })
     );
     assert_eq!(
@@ -135,7 +135,7 @@ fn a_monster_species_is_refused_with_the_ids_that_would_work() {
             .iter()
             .map(|(id, _)| id.as_str())
             .collect::<Vec<_>>(),
-        ["m2_1", "m2_7"]
+        ["m21", "m27"]
     );
 }
 
@@ -145,9 +145,9 @@ fn a_monster_species_is_refused_with_the_ids_that_would_work() {
 fn a_vanished_monster_id_says_it_is_gone() {
     let (s, _rx) = targetable_state();
     assert_eq!(
-        s.resolve_move_target("m2_4"),
+        s.resolve_move_target("m24"),
         Err(MoveTargetError::MonsterGone {
-            id: "m2_4".to_string()
+            id: "m24".to_string()
         })
     );
 }
@@ -161,7 +161,7 @@ fn an_unknown_target_lists_what_is_addressable() {
         panic!("expected an unknown target");
     };
     assert!(addressable.contains(&"Karl".to_string()), "{addressable:?}");
-    assert!(addressable.contains(&"m2_1".to_string()), "{addressable:?}");
+    assert!(addressable.contains(&"m21".to_string()), "{addressable:?}");
 }
 
 /// Dungeon names come from the registry and survive whatever casing and

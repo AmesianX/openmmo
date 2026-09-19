@@ -229,16 +229,6 @@ pub(super) async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry
         // A forced move can span the whole map; legs keep every target under
         // the server's distance cap so none is silently refused.
         let from = s.self_player.as_ref().map_or(target, |p| p.position);
-        // All legs go out at once but the server walks them; until then our
-        // optimistic position is a destination, not a body, and pose readers
-        // (monster brains) must not act on it.
-        let walk_ms = travel_ms(
-            PlanarDelta::between(&from, &target).dist,
-            false,
-            s.movement_speed_mult(),
-        );
-        let turn_ms = s.mount_turn_delay_ms(PlanarDelta::between(&from, &target).rotation());
-        s.suppress_pose_for((walk_ms + turn_ms) as f32 / 1000.0);
         for (i, leg) in force_move_legs(&from, target).into_iter().enumerate() {
             let cmd = ClientMessage::PlayerMove {
                 position: leg,

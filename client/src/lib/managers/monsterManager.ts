@@ -1,7 +1,6 @@
 import { SvelteMap } from 'svelte/reactivity'
 import { hmrSingleton } from '../utils/hmr'
 import * as THREE from 'three'
-import { networkManager } from '../network/socket'
 import { get } from 'svelte/store'
 import { gameStore, type GameState } from '../stores/gameStore'
 import { inventoryStore } from '../stores/inventoryStore'
@@ -37,47 +36,11 @@ import {
   PLAYER_RANGED_DRAW_DELAY_MS,
   PLAYER_RANGED_IMPACT_DELAY_MS,
   DEFAULT_MONSTER_ATTACK_IMPACT_DELAY_MS,
-  DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
   PLAYER_ATTACK_IMPACT_DELAY_MS,
   SWORD_MISS_DELAY_MS,
 } from '../data/combatTiming'
-import {
-  ai_load_behavior_trees,
-  ai_create_brain,
-  ai_remove_brain,
-  ai_tick_brain,
-  ai_handle_hit,
-  ai_handle_death,
-  ai_apply_authoritative_position,
-} from '../wasm/onlinerpg_shared'
-import behaviorTreesJson from '../../../../data-src/behavior_trees.json'
-import monstersJson from '../../../../data/monsters.json'
-
 type MonsterState = MonsterData['state']
 
-interface AiCommand {
-  type: 'Move' | 'Attack'
-  monster_id: string
-  position?: { x: number; y: number; z: number }
-  rotation?: number
-  state?: MonsterState
-  target_position?: { x: number; y: number; z: number }
-  target_player_id?: number
-}
-
-interface TickResult {
-  commands: AiCommand[]
-  position: { x: number; y: number; z: number }
-  rotation: number
-  state: MonsterState
-}
-
-const DEFAULT_MONSTER_BEHAVIOR = 'brave'
-// Behavior tree for proactive (선공형) monsters; acquires targets on sight.
-// Overrides the monster type's default when the spawn is flagged aggressive.
-// Must match shared monster_ai::AGGRESSIVE_BEHAVIOR and a tree in
-// data-src/behavior_trees.json.
-const AGGRESSIVE_MONSTER_BEHAVIOR = 'aggressive'
 const MONSTER_POSITION_EPSILON = 0.001
 // Server corrections under this size are absorbed by speed, not snapped.
 const SYNC_BLEND_MAX_METERS = 2.5
@@ -93,12 +56,8 @@ const DEAD_PENDING_TIMEOUT_MS = 2000
 class MonsterManager {
   monsters = new SvelteMap<string, MonsterData>()
   heightManager: TerrainHeightManager | null = null
-  private templatesLoaded = false
 
-  /** Ground height on the monster's floor, or null when the terrain tile
-   *  isn't streamed in — reporting the brain's stale Y then would sink the
-   *  monster to sea level and get the move refused. `fallbackY` covers the
-   *  floors that have no sample of their own. */
+  /** Keep the current height until terrain is available. */
   private monsterGroundYOrNull(
     monster: MonsterData,
     x: number,
@@ -118,8 +77,7 @@ class MonsterManager {
     return this.monsterGroundYOrNull(monster, x, z, y) ?? y
   }
 
-  /** Ground-resolved copy of `position`, or null when the tile isn't streamed
-   *  in yet — the hold sentinel `processAiCommands` reports on. */
+  /** Ground-resolved position, or null while terrain is loading. */
   private snapToMonsterGround(
     monster: MonsterData,
     position: { x: number; y: number; z: number }
@@ -132,13 +90,6 @@ class MonsterManager {
     )
     if (y === null) return null
     return { x: position.x, y, z: position.z }
-  }
-
-  private ensureTemplatesLoaded() {
-    if (!this.templatesLoaded) {
-      ai_load_behavior_trees(JSON.stringify(behaviorTreesJson))
-      this.templatesLoaded = true
-    }
   }
 
   findMeshPosition(
@@ -165,37 +116,6 @@ class MonsterManager {
     return undefined
   }
 
-  /**
-   * Behavior tree a monster we own should run. Aggressive (선공형) spawns
-   * acquire targets on sight, overriding the type's default timid/brave tree.
-   */
-  private resolveBehavior(
-    type: MonsterData['type'],
-    aggressive?: boolean
-  ): string {
-    if (aggressive) return AGGRESSIVE_MONSTER_BEHAVIOR
-    const monsterDef = (monstersJson as Record<string, { behavior?: string }>)[
-      type
-    ]
-    return monsterDef?.behavior ?? DEFAULT_MONSTER_BEHAVIOR
-  }
-
-  /**
-   * MonsterAssigned handler: either a fresh spawn assigned to us or an
-   * ownership handover of a monster we already track (dungeon floors
-   * reassign AI when the previous owner leaves).
-   */
-  adoptOwnership(monster: ServerMonster) {
-    const existing = this.monsters.get(monster.id)
-    if (!existing) return
-    existing.ownerId = monster.owner_id
-    if (monster.floor_level !== undefined) {
-      existing.floorLevel = monster.floor_level
-    }
-    this.monsters.set(monster.id, { ...existing })
-    this.ensureBrain(existing, monster.aggressive)
-  }
-
   spawnWithId(monster: ServerMonster) {
     if (this.monsters.has(monster.id)) return
 
@@ -212,56 +132,17 @@ class MonsterManager {
       position: monster.position,
       rotation: 0,
       state: spawnDead ? 'dead' : 'idle',
-      ownerId: monster.owner_id,
       moveSpeed: def?.walkSpeed ?? 1,
-      stateTimer: 0,
       attackCounter: 0,
       hitCounter: 0,
       health: monster.health ?? 10,
       maxHealth: monster.max_health ?? 10,
-      spawnPosition: { ...monster.position },
       floorLevel: monster.floor_level ?? 0,
     }
     this.monsters.set(monster.id, record)
-    this.ensureBrain(record, monster.aggressive)
-  }
-
-  /** (Re)create our WASM brain from the monster's live state. Only monsters
-   *  we own get one, and corpses never do. */
-  private ensureBrain(monster: MonsterData, aggressive?: boolean) {
-    if (monster.ownerId !== get(gameStore).currentPlayer?.id) return
-    if (monster.state === 'dead') return
-    ai_remove_brain(monster.id)
-    this.ensureTemplatesLoaded()
-    const def = getMonsterDef(monster.type)
-    ai_create_brain({
-      monsterId: monster.id,
-      monsterType: monster.type,
-      position: monster.position,
-      health: monster.health,
-      maxHealth: monster.maxHealth,
-      walkSpeed: def?.walkSpeed ?? 1,
-      runSpeed: def?.runSpeed ?? 8,
-      attackRange: def?.attackRange ?? 2,
-      chaseRange: def?.chaseRange ?? 25,
-      attackCooldown: def?.attackCooldown ?? DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
-      behavior: this.resolveBehavior(monster.type, aggressive),
-      pathFloor: this.pathFloorFor(monster),
-    })
-  }
-
-  releaseControl(id: string) {
-    ai_remove_brain(id)
-    const monster = this.monsters.get(id)
-    if (monster) monster.ownerId = undefined
   }
 
   remove(id: string) {
-    const monster = this.monsters.get(id)
-    const gameState = get(gameStore)
-    if (monster?.ownerId === gameState.currentPlayer?.id) {
-      ai_remove_brain(id)
-    }
     this.monsters.delete(id)
   }
 
@@ -293,7 +174,6 @@ class MonsterManager {
   handleMonsterDead(id: string, droppedWeaponItemDefId?: string | null) {
     const monster = this.monsters.get(id)
     if (monster) {
-      ai_handle_death(id)
       monster.droppedWeaponItemDefId = droppedWeaponItemDefId ?? undefined
       const deathPlaysHit = this.deathPlaysHitFor(monster)
       // If we are waiting for an impact, delay the visual death
@@ -314,7 +194,6 @@ class MonsterManager {
         // Otherwise die immediately
         this.playDeathSound(monster)
         this.applyMonsterPose(monster, { state: 'dead' })
-        monster.stateTimer = 0
       }
       this.monsters.set(id, { ...monster })
     }
@@ -329,7 +208,6 @@ class MonsterManager {
 
   private finishPendingDeath(monster: MonsterData) {
     this.applyMonsterPose(monster, { state: 'dead' })
-    monster.stateTimer = 0
     monster.isDeadPending = false
     this.monsters.set(monster.id, { ...monster })
   }
@@ -376,15 +254,9 @@ class MonsterManager {
           )
       }
       if (!hit) playSwordMissSound(getMaterialMissSoundUrl('metal'), 0)
-      if (monster.ownerId === state.currentPlayer?.id) {
-        this.processAiCommands(
-          monster,
-          ai_handle_hit(monster.id, playerId, hit, damage) ?? []
-        )
-      } else if (hit) {
+      if (hit) {
         this.applyMonsterPose(monster, { state: 'hit' })
         this.restartHitClip(monster)
-        monster.stateTimer = 0
       }
       this.monsters.set(monsterId, { ...monster })
       return
@@ -440,8 +312,6 @@ class MonsterManager {
         SWORD_MISS_DELAY_MS
       )
     }
-    // Temporarily store damage to show at impact
-    monster.pendingDamage = damage
     if (isLocalPlayerAttack) {
       monster.pendingDamageText = {
         delay: monster.impactDelay + DAMAGE_TEXT_AFTER_IMPACT_MS,
@@ -452,17 +322,6 @@ class MonsterManager {
 
     // Trigger reactivity
     this.monsters.set(monsterId, { ...monster })
-  }
-
-  handleMonsterProvoked(monsterId: string, playerId: number) {
-    const monster = this.monsters.get(monsterId)
-    if (!monster || monster.state === 'dead') return
-
-    monster.targetPlayerId = playerId
-    if (monster.ownerId === get(gameStore).currentPlayer?.id) {
-      const commands = ai_handle_hit(monster.id, playerId, false, 0) ?? []
-      this.processAiCommands(monster, commands)
-    }
   }
 
   // Facing is the client's call: the server's rotation lags the target.
@@ -518,10 +377,6 @@ class MonsterManager {
   }
 
   reset() {
-    // Remove all brains
-    for (const id of this.monsters.keys()) {
-      ai_remove_brain(id)
-    }
     this.monsters.clear()
     clearXpArrival()
   }
@@ -529,29 +384,16 @@ class MonsterManager {
   update(deltaTime: number) {
     // FSM & Movement Logic
     const gameState = get(gameStore)
-    const myPlayerId = gameState.currentPlayer?.id
-    const nearbyPlayers = this.buildNearbyPlayers(gameState)
-    // Built lazily: most clients own no monsters most frames.
-    let nearbyMonsters:
-      | ReturnType<MonsterManager['buildNearbyMonsters']>
-      | undefined
-
     for (const monster of this.monsters.values()) {
-      // Keep non-owned monster Y aligned with its floor's ground (owned
-      // monsters get Y from TickResult)
-      if (monster.ownerId !== myPlayerId) {
-        const terrainY = this.monsterGroundY(
-          monster,
-          monster.position.x,
-          monster.position.z
-        )
-        if (
-          Math.abs(monster.position.y - terrainY) > MONSTER_POSITION_EPSILON
-        ) {
-          this.applyMonsterPose(monster, {
-            position: { ...monster.position, y: terrainY },
-          })
-        }
+      const terrainY = this.monsterGroundY(
+        monster,
+        monster.position.x,
+        monster.position.z
+      )
+      if (Math.abs(monster.position.y - terrainY) > MONSTER_POSITION_EPSILON) {
+        this.applyMonsterPose(monster, {
+          position: { ...monster.position, y: terrainY },
+        })
       }
 
       let impactJustExpired = false
@@ -574,33 +416,18 @@ class MonsterManager {
             this.applyMonsterPose(monster, {
               state: leadWithHit ? 'hit' : 'dead',
             })
-            monster.stateTimer = 0
             if (leadWithHit) {
               this.restartHitClip(monster)
             } else {
               monster.isDeadPending = false
             }
-          } else if (monster.ownerId === myPlayerId) {
-            const hitCommands: AiCommand[] =
-              ai_handle_hit(
-                monster.id,
-                // 0 is never a real id (the server's counter starts at 1), so
-                // it is the "no attacker" sentinel.
-                monster.targetPlayerId ?? 0,
-                !!monster.isLastHitSuccess,
-                monster.pendingDamage ?? 0
-              ) ?? []
-            this.processAiCommands(monster, hitCommands)
           } else if (monster.isLastHitSuccess) {
-            // Non-owner: show hit stagger visually; restart so a repeat hit
-            // on the clamped clip doesn't no-op.
+            // Restart the hit clip for repeated impacts.
             this.applyMonsterPose(monster, { state: 'hit' })
             this.restartHitClip(monster)
-            monster.stateTimer = 0
           } else if (monster.targetPlayerId && monster.state !== 'attack') {
-            // Non-owner miss: show attack state visually
+            // Show retaliation after a missed swing.
             this.applyMonsterPose(monster, { state: 'attack' })
-            monster.stateTimer = 0
           }
         }
       }
@@ -625,96 +452,21 @@ class MonsterManager {
         }
       }
 
-      // Only control monsters that YOU own
-      if (monster.ownerId === myPlayerId) {
-        // Guard: If dead or about to die, stop AI immediately
-        if (monster.state === 'dead' || monster.isDeadPending) {
-          this.monsters.set(monster.id, { ...monster })
-          continue
-        }
-
-        nearbyMonsters ??= this.buildNearbyMonsters()
-        const raw = ai_tick_brain(
-          monster.id,
-          deltaTime,
-          nearbyPlayers,
-          nearbyMonsters
-        )
-        // ai_tick_brain returns a TickResult object with commands, position, rotation, state
-        const result = raw as TickResult
-
-        // Gate XZ movement here: the brain reports its internal state as attack
-        // while chasing, then emits a Run Move command below; gating prevents
-        // the intermediate attack snapshot from translating the model before
-        // the Run command arrives.
-        const resultPosition = result.position
-          ? {
-              x: result.position.x,
-              y: this.monsterGroundY(
-                monster,
-                result.position.x,
-                result.position.z
-              ),
-              z: result.position.z,
-            }
-          : undefined
-        this.applyMonsterPose(
-          monster,
-          {
-            position: resultPosition,
-            rotation: result.rotation,
-            state: result.state,
-          },
-          true
-        )
-
-        // Process transition commands (network sync, attacks)
-        if (result.commands) {
-          this.processAiCommands(monster, result.commands)
-        }
-
-        // Trigger reactivity with new reference
+      const blended = this.absorbSyncCorrection(monster, deltaTime)
+      if (
+        monster.state !== 'dead' &&
+        !monster.isDeadPending &&
+        this.isMovementState(monster.state) &&
+        monster.targetPosition
+      ) {
+        const aim =
+          this.liveChaseAim(monster, gameState) ?? monster.targetPosition
+        this.moveTowards(monster, aim, deltaTime)
         this.monsters.set(monster.id, { ...monster })
-      } else {
-        // Interpolate remote monsters
-        const blended = this.absorbSyncCorrection(monster, deltaTime)
-        if (
-          monster.state !== 'dead' &&
-          !monster.isDeadPending &&
-          this.isMovementState(monster.state) &&
-          monster.targetPosition
-        ) {
-          const aim =
-            this.liveChaseAim(monster, gameState) ?? monster.targetPosition
-          this.moveTowards(monster, aim, deltaTime)
-          this.monsters.set(monster.id, { ...monster })
-        } else if (blended || impactJustExpired || damageTextFired) {
-          this.monsters.set(monster.id, { ...monster })
-        }
+      } else if (blended || impactJustExpired || damageTextFired) {
+        this.monsters.set(monster.id, { ...monster })
       }
     }
-  }
-
-  // Monster poses for cell separation (doc/MONSTER_SEPARATION.md); the
-  // shared brain decides which states occupy cells, filters by its own
-  // floor, and excludes itself.
-  private buildNearbyMonsters(): Array<{
-    id: string
-    position: { x: number; y: number; z: number }
-    state: string
-    pathFloor: number
-  }> {
-    const list = []
-    for (const m of this.monsters.values()) {
-      if (m.state === 'dead' || m.isDeadPending || m.health <= 0) continue
-      list.push({
-        id: m.id,
-        position: m.position,
-        state: m.state,
-        pathFloor: this.pathFloorFor(m),
-      })
-    }
-    return list
   }
 
   // Dungeon monsters path on their depth's passability floor; surface
@@ -724,43 +476,6 @@ class MonsterManager {
     return fl < 0 && dungeonManager.active
       ? dungeonManager.passabilityFloor(-fl)
       : 0
-  }
-
-  private buildNearbyPlayers(gameState: GameState): Array<{
-    id: number
-    position: { x: number; y: number; z: number }
-    health: number
-  }> {
-    const players: Array<{
-      id: number
-      position: { x: number; y: number; z: number }
-      health: number
-    }> = []
-
-    // Current player
-    if (gameState.currentPlayer) {
-      players.push({
-        id: gameState.currentPlayer.id,
-        position: {
-          x: gameState.currentPlayer.position.x,
-          y: gameState.currentPlayer.position.y,
-          z: gameState.currentPlayer.position.z,
-        },
-        health: gameState.currentPlayer.health ?? 0,
-      })
-    }
-
-    // Remote players
-    for (const [playerId, remoteState] of remotePlayerManager.players) {
-      const remotePlayer = gameState.otherPlayers.get(playerId)
-      players.push({
-        id: playerId,
-        position: remoteState.position,
-        health: remotePlayer?.health ?? 0,
-      })
-    }
-
-    return players
   }
 
   private updateMoveSpeedFromState(monster: MonsterData) {
@@ -776,13 +491,6 @@ class MonsterManager {
     return state === 'walk' || state === 'run'
   }
 
-  private hasXzMovement(from: Position, to: Position) {
-    return (
-      Math.abs(from.x - to.x) > MONSTER_POSITION_EPSILON ||
-      Math.abs(from.z - to.z) > MONSTER_POSITION_EPSILON
-    )
-  }
-
   private applyMonsterPose(
     monster: MonsterData,
     update: {
@@ -790,14 +498,7 @@ class MonsterManager {
       rotation?: number
       state?: MonsterState
       targetPosition?: Position
-    },
-    // The owner's brain reports its internal state as `attack` while chasing
-    // and emits the locomotion (Run) Move command separately. Gating XZ
-    // movement to walk/run states stops that intermediate attack snapshot from
-    // sliding the model before the Run command arrives. Authoritative network
-    // updates and visual-only state changes must NOT gate — they carry
-    // ground-truth positions that have to be applied regardless of state.
-    gateXzMovement = false
+    }
   ) {
     if (update.state) {
       // The frame the kill starts falling: XP held for it can ride the clip.
@@ -820,53 +521,7 @@ class MonsterManager {
 
     if (!update.position) return
 
-    if (
-      gateXzMovement &&
-      !this.isMovementState(monster.state) &&
-      this.hasXzMovement(monster.position, update.position)
-    ) {
-      // Non-movement states may still need terrain/deck height correction, but
-      // XZ translation must go through walk/run so the rendered pose has a
-      // locomotion animation to match it.
-      monster.position = { ...monster.position, y: update.position.y }
-      return
-    }
-
     monster.position = update.position
-  }
-
-  private processAiCommands(monster: MonsterData, commands: AiCommand[]) {
-    for (const cmd of commands) {
-      if (cmd.type === 'Move') {
-        const position = cmd.position
-          ? (this.snapToMonsterGround(monster, cmd.position) ?? undefined)
-          : undefined
-        // Unsnappable destination: the server would reject the stale Y —
-        // hold the report, the brain retries next tick.
-        if (cmd.position && !position) continue
-        const targetPosition = cmd.target_position
-          ? (this.snapToMonsterGround(monster, cmd.target_position) ??
-            cmd.target_position)
-          : undefined
-
-        this.applyMonsterPose(monster, {
-          position,
-          rotation: cmd.rotation,
-          state: cmd.state,
-          targetPosition,
-        })
-        networkManager.sendMonsterMove(
-          cmd.monster_id,
-          position ?? monster.position,
-          cmd.rotation ?? monster.rotation,
-          cmd.state ?? monster.state,
-          targetPosition ?? monster.position
-        )
-      } else if (cmd.type === 'Attack' && cmd.target_player_id) {
-        this.handleMonsterAttackStarted(cmd.monster_id)
-        networkManager.sendMonsterAttack(cmd.monster_id, cmd.target_player_id)
-      }
-    }
   }
 
   updateMonsterFromNetwork(
@@ -875,7 +530,6 @@ class MonsterManager {
     rotation: number,
     state: MonsterData['state'],
     targetPosition: { x: number; y: number; z: number },
-    ownerId?: number,
     chasing?: { player_id: number; stop_range: number } | null
   ) {
     const monster = this.monsters.get(id)
@@ -887,16 +541,6 @@ class MonsterManager {
       monster.chaseAim = chasing
         ? { playerId: chasing.player_id, stopRange: chasing.stop_range }
         : undefined
-
-      // The fanout names the current owner; a mismatch means we missed a
-      // handoff and would fight the real owner's stream with a stale brain.
-      if (ownerId !== undefined && ownerId !== monster.ownerId) {
-        const myPlayerId = get(gameStore).currentPlayer?.id
-        if (monster.ownerId === myPlayerId) {
-          ai_remove_brain(id)
-        }
-        monster.ownerId = ownerId
-      }
 
       const hasPendingImpact =
         monster.impactDelay !== undefined && monster.impactDelay > 0
@@ -926,16 +570,6 @@ class MonsterManager {
         targetPosition: snappedTargetPosition,
       })
       this.monsters.set(id, { ...monster })
-
-      // Fanout skips the owner, so this is a correction — the brain must hear it
-      // too or its next tick overwrites this pose. Unsnapped: the server's own
-      // position is the authority, and emits get snapped anyway.
-      if (
-        monster.ownerId !== undefined &&
-        monster.ownerId === get(gameStore).currentPlayer?.id
-      ) {
-        ai_apply_authoritative_position(id, position.x, position.y, position.z)
-      }
     }
   }
 
@@ -1020,17 +654,14 @@ class MonsterManager {
     }
 
     const moveStep = (speed * deltaTime) / 1000
-    const onUpperFloor = (monster.currentFloor ?? 0) > 0
     // Dungeon floors live below Y=0, so the "stepped into water" guard
     // only applies to surface monsters.
     const inDungeon = (monster.floorLevel ?? 0) < 0
 
     if (distance <= moveStep) {
       const targetX = wrapWorldX(target.x)
-      const y = onUpperFloor
-        ? target.y
-        : this.monsterGroundY(monster, targetX, target.z)
-      if (!onUpperFloor && !inDungeon && y < 0) return true
+      const y = this.monsterGroundY(monster, targetX, target.z)
+      if (!inDungeon && y < 0) return true
       this.applyMonsterPose(monster, {
         position: { x: targetX, y, z: target.z },
       })
@@ -1038,10 +669,8 @@ class MonsterManager {
     } else {
       const newX = wrapWorldX(monster.position.x + (dx / distance) * moveStep)
       const newZ = monster.position.z + (dz / distance) * moveStep
-      const y = onUpperFloor
-        ? target.y
-        : this.monsterGroundY(monster, newX, newZ)
-      if (!onUpperFloor && !inDungeon && y < 0) return true
+      const y = this.monsterGroundY(monster, newX, newZ)
+      if (!inDungeon && y < 0) return true
       this.applyMonsterPose(monster, {
         position: { x: newX, y, z: newZ },
       })

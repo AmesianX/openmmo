@@ -1,26 +1,6 @@
 use super::*;
 
 #[test]
-fn control_assignment_does_not_create_a_visible_monster() {
-    let (mut state, _rx) = test_state();
-    let assigned = monster("controlled");
-    state.push_event(ServerMessage::MonsterAssigned {
-        monster: assigned.clone(),
-    });
-    assert!(!state.nearby_monsters.contains_key(&assigned.id));
-    state.push_event(ServerMessage::MonsterSpawned {
-        monster: assigned.clone(),
-    });
-    state.push_event(ServerMessage::MonsterAssigned {
-        monster: assigned.clone(),
-    });
-    state.push_event(ServerMessage::MonsterControlReleased {
-        monster_id: assigned.id.clone(),
-    });
-    assert!(state.nearby_monsters.contains_key(&assigned.id));
-}
-
-#[test]
 fn mana_updates_are_tracked_at_zero_and_cleared_on_character_change() {
     let (mut state, _rx) = test_state();
     state.push_event(ServerMessage::ManaUpdate {
@@ -39,35 +19,6 @@ fn mana_updates_are_tracked_at_zero_and_cleared_on_character_change() {
         max_mana: 17,
     });
     assert_eq!(state.self_mana, Some((7, 17)));
-}
-
-/// The server never echoes our own monster moves back (the owner is
-/// skipped in the fanout), so `send_command` must apply them locally.
-#[tokio::test]
-async fn outgoing_monster_move_echoes_into_local_state() {
-    let (mut s, mut rx) = test_state();
-    s.nearby_monsters.insert("m1".to_string(), monster("m1"));
-
-    s.send_command(ClientMessage::MonsterMove {
-        monster_id: "m1".to_string(),
-        position: p(3.0, 1.0, 4.0),
-        rotation: 1.5,
-        state: MonsterState::Run,
-        target_position: p(6.0, 1.0, 8.0),
-    })
-    .await
-    .unwrap();
-
-    let m = &s.nearby_monsters["m1"];
-    assert_eq!(m.position.x, 3.0);
-    assert_eq!(m.position.z, 4.0);
-    assert_eq!(m.rotation, 1.5);
-    assert_eq!(m.state, MonsterState::Run);
-
-    match rx.try_recv() {
-        Ok(ClientMessage::MonsterMove { monster_id, .. }) => assert_eq!(monster_id, "m1"),
-        other => panic!("expected MonsterMove on the wire, got {other:?}"),
-    }
 }
 
 /// A self-teleport must resync position, rotation AND floor, or the client
@@ -150,35 +101,6 @@ fn a_neighbours_teleport_only_moves_their_entry() {
     assert_eq!(
         s.position_corrections, 0,
         "a neighbour's teleport must not abandon our path"
-    );
-}
-
-/// A dungeon monster's moves must keep its floor's height. Terrain snapping
-/// would haul the whole floor's monsters up to the surface.
-#[tokio::test]
-async fn dungeon_monster_moves_keep_their_floor_height() {
-    let (mut s, dungeon, _rx) = dungeon_state();
-    let landing = dungeon.arrival_position(2).unwrap();
-    let mut m = monster("m1");
-    m.floor_level = -2;
-    m.position = landing;
-    s.nearby_monsters.insert("m1".to_string(), m);
-
-    s.send_command(ClientMessage::MonsterMove {
-        monster_id: "m1".to_string(),
-        position: p(landing.x, 999.0, landing.z),
-        rotation: 0.0,
-        state: MonsterState::Run,
-        target_position: p(landing.x, 999.0, landing.z),
-    })
-    .await
-    .unwrap();
-
-    let y = s.nearby_monsters["m1"].position.y;
-    assert!(
-        (y - dungeon.floor_y(2)).abs() < 0.01,
-        "monster ended at y={y}, floor 2 sits at {}",
-        dungeon.floor_y(2)
     );
 }
 

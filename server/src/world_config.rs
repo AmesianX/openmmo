@@ -12,21 +12,12 @@ pub struct WorldConfig {
     /// room's beds in the region-object file covering `(x, z)`; a free one is
     /// taken lying down, otherwise the player stands at `(x, y, z)`.
     pub respawn: RespawnConfig,
-    /// Live ambient monsters one player may own at once, across every type.
-    /// Kept small so the field stays sparse now that dungeons carry the dense
-    /// fights. The only server-wide bound there is: no global ceiling is
-    /// tracked, because this cap times the player count already is one (plus
-    /// corpses, which sit outside the cap and expire in 30s). Loosely enforced
-    /// on purpose — the count is read before the requests it gates go out.
-    #[serde(rename = "maxMonstersPerPlayer")]
-    pub max_monsters_per_player: u32,
+    /// Live monsters allowed within one spawn's visibility radius.
+    #[serde(rename = "maxNearbyMonsters")]
+    pub max_nearby_monsters: u32,
     /// Monster types that spawn dynamically around players (no fixed zones).
     #[serde(rename = "ambientSpawns", default)]
     pub ambient_spawns: Vec<AmbientSpawnRule>,
-    /// Brains tick on the server; off hands them back to owning clients
-    /// (doc/SERVER_SIDE_MONSTER_AI.md).
-    #[serde(rename = "serverMonsterAi", default = "default_true")]
-    pub server_monster_ai: bool,
     #[serde(default)]
     pub pricing: PricingConfig,
 }
@@ -116,10 +107,6 @@ impl RespawnConfig {
             tile_to_region(world_to_tile(self.z)),
         )
     }
-}
-
-fn default_true() -> bool {
-    true
 }
 
 static WORLD_CONFIG: LazyLock<WorldConfig> = LazyLock::new(|| {

@@ -7,7 +7,7 @@
 //! around the heading — validates it and walks the line back to the player, so
 //! a monster never appears somewhere it could not walk in from.
 
-use crate::types::{MonsterLifecycle, PlayerId, Position, ServerMessage};
+use crate::types::{MonsterLifecycle, PlayerId, Position};
 use onlinerpg_shared::{shortest_world_delta_x, wrap_world_x, MAX_MOVE_TARGET_DISTANCE};
 use rand::Rng;
 use tracing::debug;
@@ -19,10 +19,10 @@ use tracing::debug;
 const SPAWN_CHANCE_PER_METER: f64 = 0.08;
 /// Half-edge of the screen-aligned square spawns land on. Covers the visible
 /// ground up to a 2.0 aspect ratio, and its corner stays inside AOI
-/// (`EVENT_DELIVERY_RADIUS`) so the owner's client can simulate the monster.
+/// (`EVENT_DELIVERY_RADIUS`) so the mover can see the monster.
 const SPAWN_HALF_EDGE: f32 = 20.0;
 // The corner is the far point of that square: outside AOI it would spawn
-// monsters the owner can neither see nor simulate.
+// monsters outside the mover's view.
 const _: () = assert!(
     2.0 * SPAWN_HALF_EDGE * SPAWN_HALF_EDGE
         < super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
@@ -101,8 +101,14 @@ impl super::GameState {
         let Some(monster_type) = self.pick_ambient_type(&point) else {
             return;
         };
-        let max_per_player = crate::world_config::world_config().max_monsters_per_player as usize;
-        if self.monsters.read().await.owned_alive_by(&step.player_id) >= max_per_player {
+        let max_nearby = crate::world_config::world_config().max_nearby_monsters as usize;
+        if self
+            .monsters
+            .read()
+            .await
+            .alive_near(&step.to, step.floor_level)
+            >= max_nearby
+        {
             return;
         }
         // An agent nobody is watching draws no monsters.
@@ -130,7 +136,6 @@ impl super::GameState {
                 monster_type.to_string(),
                 position,
                 rotation,
-                Some(step.player_id),
                 0,
                 MonsterLifecycle::Ambient,
                 None,
@@ -150,14 +155,6 @@ impl super::GameState {
                 },
                 step.player_id
             );
-            // The owner runs the AI, and it only starts on this message.
-            if !self.server_monster_ai() {
-                self.send_direct_message(
-                    &step.player_id,
-                    ServerMessage::MonsterAssigned { monster },
-                )
-                .await;
-            }
         }
     }
 

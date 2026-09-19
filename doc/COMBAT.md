@@ -457,9 +457,7 @@ slash4(1.3초)도 마찬가지다.
 
 ### 명중 시 어그로
 
-거절된 공격만 어그로를 끌던 종전 경로로는 원거리에서 *명중한* 공격이 몬스터를
-깨우지 못한다. 근접 리치 밖에서 명중하면 `MonsterProvoked`를 몬스터 소유
-클라이언트에 따로 보낸다(서버 AI는 `brain_hit`로 이미 깨어난다).
+서버는 명중·빗나감과 도발 범위 안의 사거리 거절을 `brain_hit`로 처리하여 몬스터의 표적을 갱신한다. 클라이언트에 별도의 몬스터 제어 메시지를 보내지 않는다.
 
 ### 양손 무기
 
@@ -539,7 +537,7 @@ NetHack의 AC를 반전시킨 방어 수치이자 명중 목표값. **높을수�
 
 ### 몬스터 → 플레이어 공격
 
-1. 클라이언트(몬스터 owner)가 `MonsterAttack { monster_id, target_player_id }` 전송
+1. 서버 몬스터 AI가 표적을 선택하고 `monster_attack` 호출
 2. 서버에서 히트 롤: `roll_attack(monster_attack_bonus + place_attack_bonus, player_guard, monster_damage)`
 3. 결과를 전체 클라이언트에 브로드캐스트 (`MonsterAttackedPlayer`)
 4. 명중 시 플레이어 HP 차감
@@ -675,7 +673,6 @@ current_hp = min(current_hp, new_max_hp)
 ```
 Client → Server:
   PlayerAttack { monster_id }
-  MonsterAttack { monster_id, target_player_id }
   RequestRespawn
   UseItem { instance_id }          (phoenix_talisman → 제자리 부활)
 

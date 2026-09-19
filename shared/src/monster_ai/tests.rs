@@ -102,7 +102,7 @@ fn make_brain() -> MonsterBrain {
         "test_m1".into(),
         // A type with no measured clip: brain tests set their own swing length
         // rather than inheriting one from the generated model data.
-        "test_monster".into(),
+        "test_monster",
         "default".into(),
         Position {
             x: 10.0,
@@ -147,7 +147,7 @@ fn idle_does_not_transition_before_check_interval() {
     let mut rng = SmallRng::seed_from_u64(42);
 
     let result = brain.tick_with_behavior_tree(500.0, &[], &[], &tree, &DirectPath, &mut rng);
-    assert!(result.commands.is_empty());
+    assert!(result.is_empty());
     assert_eq!(brain.state(), AiState::Idle);
 }
 
@@ -158,7 +158,7 @@ fn idle_can_transition_to_move() {
     let mut rng = SmallRng::seed_from_u64(42);
 
     let result = brain.tick_with_behavior_tree(1001.0, &[], &[], &tree, &DirectPath, &mut rng);
-    assert!(!result.commands.is_empty());
+    assert!(!result.is_empty());
     assert!(brain.state() == AiState::Walk || brain.state() == AiState::Run);
 }
 
@@ -233,10 +233,7 @@ fn behavior_tree_attacks_target_in_range() {
 
     let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
 
-    assert!(result
-        .commands
-        .iter()
-        .any(|c| matches!(c, AiCommand::Attack { .. })));
+    assert!(result.iter().any(|c| matches!(c, AiCommand::Attack { .. })));
     assert_eq!(brain.state(), AiState::Attack);
 }
 
@@ -305,10 +302,7 @@ fn behavior_tree_holds_its_swing_through_a_wall() {
 
     let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &WalledOff, &mut rng);
 
-    assert!(!result
-        .commands
-        .iter()
-        .any(|c| matches!(c, AiCommand::Attack { .. })));
+    assert!(!result.iter().any(|c| matches!(c, AiCommand::Attack { .. })));
     assert_ne!(brain.state(), AiState::Attack);
 }
 
@@ -362,10 +356,7 @@ fn chase_to_attack_fires_without_waiting_full_cooldown() {
 
     let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
 
-    assert!(result
-        .commands
-        .iter()
-        .any(|c| matches!(c, AiCommand::Attack { .. })));
+    assert!(result.iter().any(|c| matches!(c, AiCommand::Attack { .. })));
     assert_eq!(brain.state(), AiState::Attack);
 }
 
@@ -409,11 +400,8 @@ fn behavior_tree_chases_target_in_range() {
 
     let result = brain.tick_with_behavior_tree(50.0, &players, &[], &tree, &DirectPath, &mut rng);
 
-    assert!(result
-        .commands
-        .iter()
-        .any(|c| matches!(c, AiCommand::Move { .. })));
-    assert!(result.commands.iter().any(|c| {
+    assert!(result.iter().any(|c| matches!(c, AiCommand::Move { .. })));
+    assert!(result.iter().any(|c| {
         matches!(
             c,
             AiCommand::Move {
@@ -521,7 +509,7 @@ fn behavior_tree_flee_without_threat_position_runs_to_spawn() {
     let result = brain.tick_with_behavior_tree(16.0, &[], &[], &tree, &DirectPath, &mut rng);
 
     assert_eq!(brain.state(), AiState::Flee);
-    assert!(result.commands.iter().any(|c| {
+    assert!(result.iter().any(|c| {
         matches!(
             c,
             AiCommand::Move {
@@ -552,7 +540,7 @@ fn behavior_tree_flee_runs_away_from_attacker_beyond_sight() {
     let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
 
     assert_eq!(brain.state(), AiState::Flee);
-    assert!(result.commands.iter().any(|c| {
+    assert!(result.iter().any(|c| {
         matches!(
             c,
             AiCommand::Move {
@@ -604,7 +592,7 @@ fn behavior_tree_flee_repaths_when_attacker_keeps_chasing() {
     let result = brain.tick_with_behavior_tree(5000.0, &chasing, &[], &tree, &DirectPath, &mut rng);
 
     assert_eq!(brain.state(), AiState::Flee);
-    assert!(result.commands.iter().any(|c| {
+    assert!(result.iter().any(|c| {
         matches!(
             c,
             AiCommand::Move {
@@ -626,7 +614,7 @@ fn behavior_tree_does_not_flee_without_target() {
     let result = brain.tick_with_behavior_tree(16.0, &[], &[], &tree, &DirectPath, &mut rng);
 
     assert_eq!(brain.state(), AiState::Idle);
-    assert!(result.commands.is_empty());
+    assert!(result.is_empty());
 }
 
 #[test]
@@ -639,7 +627,7 @@ fn behavior_tree_return_sends_walk_target_to_spawn() {
     let result = brain.tick_with_behavior_tree(16.0, &[], &[], &tree, &DirectPath, &mut rng);
 
     assert_eq!(brain.state(), AiState::Return);
-    assert!(result.commands.iter().any(|c| {
+    assert!(result.iter().any(|c| {
         matches!(
             c,
             AiCommand::Move {
@@ -698,7 +686,6 @@ fn behavior_tree_requires_existing_target_before_attacking() {
 
     let peaceful = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
     assert!(!peaceful
-        .commands
         .iter()
         .any(|c| matches!(c, AiCommand::Attack { .. })));
     assert_eq!(brain.state(), AiState::Idle);
@@ -706,7 +693,6 @@ fn behavior_tree_requires_existing_target_before_attacking() {
     brain.handle_hit_with_behavior_tree(&1.into(), false, 0);
     let provoked = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
     assert!(provoked
-        .commands
         .iter()
         .any(|c| matches!(c, AiCommand::Attack { .. })));
 }
@@ -855,10 +841,7 @@ fn attack_chases_nearby_player() {
     }];
 
     let result = brain.tick_with_behavior_tree(50.0, &players, &[], &tree, &DirectPath, &mut rng);
-    assert!(result
-        .commands
-        .iter()
-        .any(|c| matches!(c, AiCommand::Move { .. })));
+    assert!(result.iter().any(|c| matches!(c, AiCommand::Move { .. })));
 }
 
 #[test]
@@ -905,14 +888,12 @@ fn attack_command_uses_monster_cooldown() {
     let before_cooldown =
         brain.tick_with_behavior_tree(1700.0, &players, &[], &tree, &DirectPath, &mut rng);
     assert!(!before_cooldown
-        .commands
         .iter()
         .any(|c| matches!(c, AiCommand::Attack { .. })));
 
     let after_cooldown =
         brain.tick_with_behavior_tree(100.0, &players, &[], &tree, &DirectPath, &mut rng);
     assert!(after_cooldown
-        .commands
         .iter()
         .any(|c| matches!(c, AiCommand::Attack { .. })));
 }
@@ -955,7 +936,6 @@ fn re_entering_attack_range_does_not_re_arm_the_cooldown() {
             entries += 1;
         }
         attacks += result
-            .commands
             .iter()
             .filter(|c| matches!(c, AiCommand::Attack { .. }))
             .count();
@@ -1015,10 +995,7 @@ fn a_swing_in_progress_is_not_abandoned_when_the_target_walks_off() {
 
     let near = attacker_at(11.0, 10.0);
     let result = brain.tick_with_behavior_tree(16.0, &near, &[], &tree, &DirectPath, &mut rng);
-    assert!(result
-        .commands
-        .iter()
-        .any(|c| matches!(c, AiCommand::Attack { .. })));
+    assert!(result.iter().any(|c| matches!(c, AiCommand::Attack { .. })));
 
     // The target sprints clear, but the swing is only one frame old.
     let far = attacker_at(20.0, 10.0);
@@ -1079,7 +1056,7 @@ fn a_reported_target_stays_on_the_leg_being_walked() {
     let mut moves = 0;
     for _ in 0..400 {
         let result = brain.tick_with_behavior_tree(16.0, &[], &[], &tree, &BentPath, &mut rng);
-        for cmd in &result.commands {
+        for cmd in &result {
             let AiCommand::Move {
                 position,
                 target_position,
@@ -1125,7 +1102,7 @@ fn a_reported_move_never_spans_a_path_bend() {
     let mut reported = Vec::new();
     for _ in 0..400 {
         let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &BentPath, &mut rng);
-        for cmd in &result.commands {
+        for cmd in &result {
             if let AiCommand::Move { position, .. } = cmd {
                 reported.push(*position);
             }
@@ -1151,9 +1128,7 @@ fn a_reported_move_never_spans_a_path_bend() {
     );
 }
 
-/// The server refuses a move by echoing back the position it kept. The brain has
-/// to resume from there — carrying on from its own would repeat the refusal
-/// forever, leaving the monster frozen for everyone but its owner.
+/// A refused move resets the brain's path to the accepted position.
 #[test]
 fn a_correction_moves_the_brain_back_and_repaths() {
     let mut brain = make_brain();
@@ -1325,7 +1300,7 @@ fn leash_measures_periodic_distance_to_spawn() {
     // The leash condition has to fail outright. Letting it pass and relying on
     // `return_to_spawn` to notice it already arrived would still emit a pose.
     assert!(
-        result.commands.is_empty(),
+        result.is_empty(),
         "a monster inside its leash must not report a return"
     );
 }
@@ -1375,7 +1350,7 @@ fn chase_attack_tree() -> BehaviorTree {
 fn brain_at(id: &str, x: f32, z: f32) -> MonsterBrain {
     MonsterBrain::new(
         id.into(),
-        "test_monster".into(),
+        "test_monster",
         "default".into(),
         Position { x, y: 0.0, z },
         10,
@@ -1481,7 +1456,7 @@ fn a_corridor_queues_chasers_one_per_cell() {
         let v2 = view_of(&[&b1, &b3]);
         let r2 =
             b2.tick_with_behavior_tree(16.0, &players, &v2, &tree, &corridor_1_wide(), &mut rng);
-        for cmd in &r2.commands {
+        for cmd in &r2 {
             if let AiCommand::Move {
                 state,
                 position,
@@ -1552,7 +1527,7 @@ fn no_free_cell_falls_back_to_the_raw_target_position() {
     // target standing dead-center in its own cell: no valid standing cell.
     let mut brain = MonsterBrain::new(
         "m1".into(),
-        "test_monster".into(),
+        "test_monster",
         "default".into(),
         Position {
             x: 14.0,
@@ -1660,7 +1635,7 @@ fn unreachable_target_holds_in_place_instead_of_wandering() {
     let mut cmds = 0;
     for _ in 0..300 {
         let r = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &unreachable(), &mut rng);
-        cmds += r.commands.len();
+        cmds += r.len();
     }
 
     // Waiting (not failed into idle/wander), shown as idle, unmoved,
@@ -1774,8 +1749,7 @@ fn door_closing_mid_chase_settles_the_pack() {
     let mut rng = SmallRng::seed_from_u64(42);
     let players = attacker_at(10.0, 10.5);
 
-    // The server refuses a move through the shut door by echoing back the
-    // kept position; the owner snaps the brain there.
+    // Reset the brain when the server rejects a move through the shut door.
     fn enforce_door(brain: &mut MonsterBrain, before: Position, open: bool) {
         if !open && before.x >= 12.0 && brain.position.x < 12.0 {
             brain.apply_authoritative_position(before);
@@ -2231,7 +2205,6 @@ fn chase_move_targets_a_point_on_the_path_not_the_player() {
 
     let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
     let target = result
-        .commands
         .iter()
         .find_map(|c| match c {
             AiCommand::Move {
@@ -2264,7 +2237,6 @@ fn chase_move_names_the_chased_player_and_other_moves_do_not() {
     let players = attacker_at(10.0, 40.0);
     let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
     let chasing = result
-        .commands
         .iter()
         .find_map(|c| match c {
             AiCommand::Move { chasing, .. } => Some(*chasing),
@@ -2390,7 +2362,7 @@ fn chase_syncs_land_the_client_where_the_attack_starts() {
             }
             let result =
                 brain.tick_with_behavior_tree(200.0, &players, &[], tree, &DirectPath, &mut rng);
-            for c in &result.commands {
+            for c in &result {
                 if let AiCommand::Move {
                     position,
                     state,
@@ -2459,12 +2431,12 @@ fn a_chase_resumed_after_a_hit_syncs_before_its_first_step() {
     // A post-step sync would report a pose a whole tick ahead of the hit
     // pose the client is holding.
     assert!(
-        result.commands.iter().any(|c| matches!(
+        result.iter().any(|c| matches!(
             c,
             AiCommand::Move { state: MonsterState::Run, position, .. } if *position == held
         )),
         "{held:?} vs {:?}",
-        result.commands
+        result
     );
 }
 
@@ -2485,14 +2457,13 @@ fn a_repath_that_turns_mid_leg_reports_the_turn_point_not_the_next_step() {
         brain.tick_with_behavior_tree(200.0, &players, &[], &chase_tree(), &DirectPath, &mut rng);
 
     let moves: Vec<_> = result
-        .commands
         .iter()
         .filter_map(|c| match c {
             AiCommand::Move { position, .. } => Some(*position),
             _ => None,
         })
         .collect();
-    assert_eq!(moves.len(), 1, "{:?}", result.commands);
+    assert_eq!(moves.len(), 1, "{:?}", result);
     assert_eq!(
         moves[0], turn,
         "a pose past the turn makes the chord from the last report cut the corner"

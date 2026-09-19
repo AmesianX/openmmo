@@ -1,4 +1,22 @@
-# Server-Side Monster AI (설계안)
+# Server-Side Monster AI
+
+상태: **서버 전용, 소유권 제거 (2026-09-19, 프로토콜 85)**.
+
+몬스터의 이동·표적·공격·피격 반응은 `server/src/game_state/monster_ai.rs`에서만 실행한다. 웹은 서버 이동을 보간하고 전투 효과를 표시하며, agent-client는 몬스터 상태를 관찰해 자기 캐릭터의 행동을 결정한다. 공유 crate의 행동트리·경로 탐색 코드는 서버가 계속 사용한다.
+
+- `Monster.owner_id`, 이동 메시지의 owner, 소유권 이전·배정 장부, 클라이언트 이동 검증, 웹 WASM의 AI 바인딩, CLI의 몬스터 AI 모듈을 제거했다.
+- `MonsterMove`, `MonsterAttack`, `MonsterAssigned`, `MonsterControlReleased`, `MonsterProvoked`를 프로토콜에서 제거했다. 서버·웹 WASM·CLI를 프로토콜 85로 함께 갱신해야 한다.
+- `serverMonsterAi` 전환 플래그를 제거했다. 테스트도 서버 AI만 사용한다.
+- `maxNearbyMonsters`(기본 8)는 같은 층의 반경 32m 내 살아 있는 몬스터 수로 일반 스폰을 제한한다. 이동 스폰은 플레이어 주변과 생성 지점을 검사하며, 최종 검사와 등록은 같은 잠금에서 수행한다. 시체는 제외하고 던전 슬롯은 별도 상한을 사용한다. 여러 플레이어가 모여도 개인별 할당량이 누적되지 않는다.
+- 일반 몬스터는 주변 플레이어가 모두 떠나면 제거한다. 이동·접속 종료 시 바로 확인하고 주기적으로 재검사한다. 던전 슬롯 몬스터는 해당 층의 마지막 플레이어가 떠날 때 제거한다.
+- `MonsterRemoved`는 월드 구독 경로로 모든 구독자에게 전달한다. 제거 시 서버 뇌도 정리한다.
+- 등록·이동·제거는 레지스트리 변경과 월드 통지를 같은 잠금 안에서 처리한다. 제거 후 늦게 도착한 이동 통지가 구독 상태에 몬스터를 다시 등록하는 경쟁 조건을 막는다.
+- 몬스터 ID는 서버 실행 중 단조 증가하는 `m{number}`이며 플레이어 번호와 무관하다.
+
+## 초기 전환 설계 기록 (2026-08-25)
+
+아래는 소유 클라이언트 방식에서 서버 AI로 전환할 당시의 설계·대안·측정 기록이다. 호환 플래그와 클라이언트 소유 경로에 관한 설명은 현재 동작이 아니다.
+
 
 상태: **C 구현됨 (2026-08-25)** — `server/src/game_state/monster_ai.rs`, 플래그 `serverMonsterAi`. 동접 20명대라 현 서버 용량으로 충분. 며칠~몇 주 메트릭을 보고 5,000명 감당이 안 되면 A(별도 머신에서 뇌 틱, `brains`+`apply` 경계를 IPC로 분리)를 구현한다. 관련: [NPC_MONSTER_AI.md](NPC_MONSTER_AI.md), [MONSTER_SEPARATION.md](MONSTER_SEPARATION.md), [REPEAT_FARMING.md](REPEAT_FARMING.md), [COMBAT.md](COMBAT.md), [AGENT_CLIENT.md](AGENT_CLIENT.md), [RUNTIME_PERFORMANCE.md](RUNTIME_PERFORMANCE.md)
 

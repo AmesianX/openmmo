@@ -131,10 +131,7 @@ fn closed_return_door_allows_damage_and_retaliation() {
     assert_eq!(brain.health, 9);
     let result = brain.tick_with_behavior_tree(800.0, &players, &[], &tree, &door, &mut rng);
     assert_eq!(brain.state(), AiState::Attack);
-    assert!(result
-        .commands
-        .iter()
-        .any(|c| matches!(c, AiCommand::Attack { .. })));
+    assert!(result.iter().any(|c| matches!(c, AiCommand::Attack { .. })));
 }
 
 #[test]
@@ -167,7 +164,7 @@ fn return_repath_reports_a_turn_before_moving() {
     let result = brain.tick_with_behavior_tree(600.0, &[], &[], &tree, &BentPath, &mut rng);
     assert!(brain.position.x < turn.x);
     assert_eq!(brain.position.z, turn.z);
-    assert!(result.commands.iter().any(|c| matches!(
+    assert!(result.iter().any(|c| matches!(
         c,
         AiCommand::Move { position, target_position, .. }
             if *position == turn && target_position.z == turn.z
@@ -230,7 +227,6 @@ fn blocked_return_does_not_attack_through_the_door() {
     for _ in 0..10 {
         let result = brain.tick_with_behavior_tree(200.0, &players, &[], &tree, &door, &mut rng);
         assert!(result
-            .commands
             .iter()
             .all(|c| !matches!(c, AiCommand::Attack { .. })));
         assert!(brain.position.x >= 60.0);

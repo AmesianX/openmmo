@@ -1,7 +1,4 @@
-//! Server-driven monster brains (doc/SERVER_SIDE_MONSTER_AI.md). The same
-//! `shared::monster_ai` runtime the clients ran, ticked here so a modified
-//! client cannot park, herd or aim the monsters it used to own. Ownership in
-//! the registry stays as spawn-cap bookkeeping; on the wire it reads `None`.
+//! Server-driven monster brains (doc/SERVER_SIDE_MONSTER_AI.md).
 
 use crate::types::{Monster, MonsterState, PlayerId, Position, ServerMessage};
 use onlinerpg_shared::dungeon::passability_floor_for_level;
@@ -154,11 +151,6 @@ struct Active {
 }
 
 impl super::GameState {
-    pub(crate) fn server_monster_ai(&self) -> bool {
-        self.server_monster_ai
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
     #[cfg(test)]
     pub(crate) async fn brain_target(&self, monster_id: &str) -> Option<PlayerId> {
         let brains = self.monster_brains.lock().await;
@@ -166,28 +158,6 @@ impl super::GameState {
             .entries
             .get(monster_id)
             .and_then(|e| e.brain.target_player_id())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn enable_server_monster_ai(&self) {
-        self.server_monster_ai
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// The monster as clients should see it: no owner while the server drives
-    /// it, or the cap holder's client would start a brain of its own.
-    pub(super) fn wire_monster(&self, monster: &Monster) -> Monster {
-        let mut monster = monster.clone();
-        monster.owner_id = self.wire_owner(monster.owner_id);
-        monster
-    }
-
-    pub(super) fn wire_owner(&self, owner_id: Option<PlayerId>) -> Option<PlayerId> {
-        if self.server_monster_ai() {
-            None
-        } else {
-            owner_id
-        }
     }
 
     fn new_brain(&self, monster: &Monster) -> MonsterBrain {
@@ -200,7 +170,7 @@ impl super::GameState {
         };
         let mut brain = MonsterBrain::new(
             monster.id.clone(),
-            monster.monster_type.clone(),
+            &monster.monster_type,
             behavior,
             monster.position,
             monster.health,
@@ -230,9 +200,6 @@ impl super::GameState {
     }
 
     async fn tick_monster_ai_with(&self, forced_delta_ms: Option<f32>) {
-        if !self.server_monster_ai() {
-            return;
-        }
         let started = Instant::now();
         let (mut roster, underground) = {
             let now = Self::now_ms();
@@ -413,12 +380,7 @@ impl super::GameState {
                     delta_ms, &a.players, &monsters, tree, &path, &mut rng,
                 );
                 ticked += 1;
-                commands.extend(
-                    result
-                        .commands
-                        .into_iter()
-                        .map(|c| (a.id.clone(), a.floor_level, c)),
-                );
+                commands.extend(result.into_iter().map(|c| (a.id.clone(), a.floor_level, c)));
             }
             if !over_budget {
                 brains.cursor = 0;
@@ -479,15 +441,12 @@ impl super::GameState {
             }
             AiCommand::Attack {
                 target_player_id, ..
-            } => {
-                self.monster_attack(None, monster_id, &target_player_id)
-                    .await
-            }
+            } => self.monster_attack(monster_id, &target_player_id).await,
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn apply_ai_move(
+    pub(super) async fn apply_ai_move(
         &self,
         monster_id: &str,
         floor_level: i8,
@@ -533,7 +492,7 @@ impl super::GameState {
             .expected_monster_move_y(floor_level, from, position)
             .await;
         position.y = y.unwrap_or(from.y);
-        let (old_position, owner_id, monster) = {
+        let despawns_when_unattended = {
             let mut monsters = self.monsters.write().await;
             let Some(m) = monsters.get_mut(monster_id) else {
                 return;
@@ -543,11 +502,24 @@ impl super::GameState {
             }
             m.rotation = rotation;
             m.state = state;
-            let old = m.position;
             let Some(m) = monsters.set_position(monster_id, position) else {
                 return;
             };
-            (old, m.owner_id, m.clone())
+            self.interest_lock().publish_monster_movement(
+                m,
+                ServerMessage::MonsterMoved {
+                    monster_id: monster_id.to_string(),
+                    position,
+                    rotation,
+                    state,
+                    target_position: Position {
+                        y: position.y,
+                        ..target_position
+                    },
+                    chasing,
+                },
+            );
+            m.lifecycle.despawns_when_unattended()
         };
         {
             let mut brains = self.monster_brains.lock().await;
@@ -555,24 +527,10 @@ impl super::GameState {
                 entry.brain.position.y = position.y;
             }
         }
-        self.fanout_monster_position_update(
-            &monster,
-            old_position,
-            ServerMessage::MonsterMoved {
-                monster_id: monster_id.to_string(),
-                position,
-                rotation,
-                state,
-                target_position: Position {
-                    y: position.y,
-                    ..target_position
-                },
-                owner_id: self.wire_owner(owner_id),
-                chasing,
-            },
-            None,
-        )
-        .await;
+        if despawns_when_unattended {
+            self.despawn_unwatched_monsters(&[monster_id.to_owned()])
+                .await;
+        }
     }
 
     /// Feed a player's swing (hit or miss — a miss still aggros) to the brain
@@ -584,9 +542,6 @@ impl super::GameState {
         hit: bool,
         damage: u32,
     ) {
-        if !self.server_monster_ai() {
-            return;
-        }
         let commands = {
             let mut brains = self.monster_brains.lock().await;
             let Some(entry) = brains.entries.get_mut(monster_id) else {
@@ -619,9 +574,6 @@ impl super::GameState {
     /// Where the brain has the monster right now; the registry trails it by
     /// up to a sync interval while it runs.
     pub(super) async fn brain_position_now(&self, monster_id: &str) -> Option<Position> {
-        if !self.server_monster_ai() {
-            return None;
-        }
         let mut brains = self.monster_brains.lock().await;
         let entry = brains.entries.get_mut(monster_id)?;
         let owed = entry.owed_ms(Instant::now(), None);
@@ -630,9 +582,6 @@ impl super::GameState {
     }
 
     pub(super) async fn brain_death(&self, monster_id: &str) {
-        if !self.server_monster_ai() {
-            return;
-        }
         let mut brains = self.monster_brains.lock().await;
         if brains.entries.remove(monster_id).is_some() {
             debug!("Brain dropped for dead monster {monster_id}");

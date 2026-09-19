@@ -1313,7 +1313,7 @@ async fn summon_and_goto_teleport_beside_the_target() {
 }
 
 #[tokio::test]
-async fn spawnmob_spawns_owned_aggressive_monsters_beside_the_admin() {
+async fn spawnmob_spawns_aggressive_monsters_beside_the_admin() {
     let game_state = make_test_game_state("admin_spawnmob");
     let auth = make_test_auth("admin_spawnmob");
     let admin_id = pid("admin");
@@ -1328,11 +1328,11 @@ async fn spawnmob_spawns_owned_aggressive_monsters_beside_the_admin() {
     let assigned: Vec<_> = messages
         .iter()
         .filter_map(|m| match m {
-            ServerMessage::MonsterAssigned { monster } => Some(monster),
+            ServerMessage::MonsterSpawned { monster } => Some(monster),
             _ => None,
         })
         .collect();
-    assert_eq!(assigned.len(), 3, "the admin's client must own all three");
+    assert_eq!(assigned.len(), 3, "the admin must see all three");
     let admin_pos = Position {
         x: 0.0,
         y: 0.0,
@@ -1341,12 +1341,11 @@ async fn spawnmob_spawns_owned_aggressive_monsters_beside_the_admin() {
     let monsters = game_state.monsters.read().await;
     for monster in &assigned {
         assert_eq!(monster.monster_type, "kobold");
-        assert_eq!(monster.owner_id, Some(admin_id));
         assert!(monster.aggressive, "spawned monsters must fight back");
         assert_eq!(
             monsters.get(&monster.id).map(|m| m.lifecycle),
             Some(MonsterLifecycle::Ambient),
-            "admin spawns have no slot: the ownership system must own removal"
+            "admin spawns have no slot: unattended cleanup removes them"
         );
         let distance = monster.position.dist_xz_sq(&admin_pos).sqrt();
         assert!(
@@ -1419,7 +1418,7 @@ async fn spawnmob_ring_avoids_blocked_cells() {
         messages
             .into_iter()
             .find_map(|m| match m {
-                ServerMessage::MonsterAssigned { monster } => Some(monster.position),
+                ServerMessage::MonsterSpawned { monster } => Some(monster.position),
                 _ => None,
             })
             .expect("a monster must still spawn")

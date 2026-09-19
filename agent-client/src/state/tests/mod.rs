@@ -55,7 +55,7 @@ pub(crate) fn monster(id: &str) -> Monster {
         position: p(0.0, 0.0, 0.0),
         rotation: 0.0,
         state: MonsterState::Idle,
-        owner_id: None,
+
         health: 10,
         max_health: 10,
         floor_level: 0,
@@ -63,9 +63,6 @@ pub(crate) fn monster(id: &str) -> Monster {
         aggressive: false,
         lifecycle: Default::default(),
         last_attack_at: 0,
-        last_move_at: 0,
-        move_budget: 0.0,
-        owner_since: 0,
     }
 }
 

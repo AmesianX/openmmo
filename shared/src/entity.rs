@@ -11,12 +11,8 @@ use crate::character::{CharacterClass, Gender};
 use crate::mount::MountKind;
 use crate::world::Position;
 
-/// A live player's session handle. Minted fresh on every login and dropped on
-/// disconnect — it is never persisted, so it is not a durable identity (the
-/// unique character name is). It is a newtype rather than a bare `String` so
-/// the compiler can keep it apart from the other id-shaped strings it travels
-/// with, above all monster ids: `Monster::is_controllable_by` is an
-/// authorization gate, and before this the two were the same type there.
+/// A player's session handle, minted on login and never persisted.
+/// The newtype keeps player identities distinct from other entity ids.
 ///
 /// `#[serde(transparent)]` puts a bare integer on the wire. Two invariants
 /// follow from that, and this is the one place they are stated:
@@ -208,7 +204,7 @@ impl fmt::Display for MonsterState {
 /// (events, bosses, quests) add variants here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MonsterLifecycle {
-    /// Ambient spawn: the ownership system (AOI events + sweep) despawns it
+    /// Ambient spawn: visibility events and a periodic sweep despawn it
     /// once no player is near.
     #[default]
     Ambient,
@@ -231,7 +227,6 @@ pub struct Monster {
     pub position: Position,
     pub rotation: f32,
     pub state: MonsterState,
-    pub owner_id: Option<PlayerId>,
     pub health: u32,
     pub max_health: u32,
     /// 0 = overworld, 1..3 housing floors, negative = dungeon depth.
@@ -246,7 +241,7 @@ pub struct Monster {
     #[serde(default)]
     pub level_override: Option<u8>,
     /// Proactive (선공형) monster: attacks players on sight rather than only
-    /// retaliating when hit. Drives behavior-tree selection on the agent-client.
+    /// retaliating when hit. Selects the server behavior tree.
     #[serde(default)]
     pub aggressive: bool,
     /// Server-only; never on the wire.
@@ -254,27 +249,6 @@ pub struct Monster {
     pub lifecycle: MonsterLifecycle,
     #[serde(skip)]
     pub last_attack_at: u64,
-    /// Server timestamp (ms) the movement budget was last refilled. Paired with
-    /// `move_budget` to rate-limit client-driven moves so an owned monster can't
-    /// be teleported onto a distant victim.
-    #[serde(skip)]
-    pub last_move_at: u64,
-    /// Remaining movement allowance (meters) in the monster's move token bucket,
-    /// refilled at its run speed. A move costing more than this is refused.
-    #[serde(skip)]
-    pub move_budget: f32,
-    /// Server timestamp (ms) of the last ownership change. A non-owner move
-    /// inside the grace window after it is an in-flight packet, not a stale
-    /// controller.
-    #[serde(skip)]
-    pub owner_since: u64,
-}
-
-impl Monster {
-    /// Gate for client-driven mutations (move/attack): alive and owned by the requester.
-    pub fn is_controllable_by(&self, player_id: &PlayerId) -> bool {
-        self.state != MonsterState::Dead && self.owner_id.as_ref() == Some(player_id)
-    }
 }
 
 #[cfg(test)]
@@ -298,7 +272,6 @@ mod tests {
             },
             rotation: 0.5,
             state: MonsterState::Walk,
-            owner_id: None,
             health: 10,
             max_health: 12,
             floor_level: 0,
@@ -306,9 +279,6 @@ mod tests {
             aggressive: true,
             lifecycle: MonsterLifecycle::Ambient,
             last_attack_at: 0,
-            last_move_at: 0,
-            move_budget: 0.0,
-            owner_since: 0,
         };
         let bytes = rmp_serde::to_vec(&monster).unwrap();
         let decoded: Monster = rmp_serde::from_slice(&bytes).unwrap();

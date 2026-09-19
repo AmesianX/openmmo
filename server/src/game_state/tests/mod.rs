@@ -38,6 +38,7 @@ mod mana_tests;
 mod meal_tests;
 mod metrics_tests;
 mod monster_ai_tests;
+mod monster_lifecycle_tests;
 mod mount_tests;
 mod movement_audit_tests;
 mod movement_tests;
@@ -255,7 +256,7 @@ async fn seed_subjects(game: &GameState) {
         for monster in monsters.values() {
             if !interest.has_subject(&format!("monster:{}", monster.id)) {
                 interest.publish_state(&ServerMessage::MonsterSpawned {
-                    monster: game.wire_monster(monster),
+                    monster: monster.clone(),
                 });
             }
         }
@@ -333,9 +334,14 @@ async fn pace_player(game_state: &GameState, player_id: &PlayerId, x: f32, z: f3
     }
 }
 
-/// Monsters this player owns and has not killed.
-async fn owned_monster_count(game_state: &GameState, player_id: &PlayerId) -> usize {
-    game_state.monsters.read().await.owned_alive_by(player_id)
+/// Living monsters within the player's view.
+async fn nearby_monster_count(game_state: &GameState, player_id: &PlayerId) -> usize {
+    let player = game_state.players.read().await[player_id].clone();
+    game_state
+        .monsters
+        .read()
+        .await
+        .alive_near(&player.position, player.floor_level)
 }
 
 fn first_dungeon(game_state: &GameState) -> crate::dungeon_defs::DungeonEntranceDef {
@@ -345,16 +351,6 @@ fn first_dungeon(game_state: &GameState) -> crate::dungeon_defs::DungeonEntrance
         .next()
         .expect("a dungeon def")
         .clone()
-}
-
-/// Which player's client is simulating a monster.
-async fn owner_of(game_state: &GameState, monster_id: &str) -> Option<PlayerId> {
-    game_state
-        .monsters
-        .read()
-        .await
-        .get(monster_id)
-        .and_then(|m| m.owner_id)
 }
 
 fn first_correction(rx: &mut DirectRx) -> Option<(Position, f32, i8)> {
@@ -375,7 +371,7 @@ fn make_monster(id: &str, position: Position, floor_level: i8) -> crate::types::
         position,
         rotation: 0.0,
         state: MonsterState::Idle,
-        owner_id: None,
+
         health: 10,
         max_health: 10,
         floor_level,
@@ -383,9 +379,6 @@ fn make_monster(id: &str, position: Position, floor_level: i8) -> crate::types::
         aggressive: false,
         lifecycle: MonsterLifecycle::Ambient,
         last_attack_at: 0,
-        last_move_at: 0,
-        move_budget: 0.0,
-        owner_since: 0,
     }
 }
 

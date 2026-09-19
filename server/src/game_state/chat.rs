@@ -1214,10 +1214,6 @@ impl super::GameState {
         Ok(format!("Goto: you are at {canonical}'s side."))
     }
 
-    /// Spawn monsters in a ring around the admin for combat testing. The
-    /// admin's own client owns them (`MonsterAssigned`), so their AI runs
-    /// like an ambient spawn's — ownerless monsters would neither fight back
-    /// nor despawn their corpses.
     async fn spawnmob_command(
         &self,
         admin_id: &PlayerId,
@@ -1248,12 +1244,11 @@ impl super::GameState {
         for i in 0..count {
             let angle = i as f32 / count as f32 * std::f32::consts::TAU;
             let position = self.open_spot_beside(&center, angle, SPAWNMOB_RING_RADIUS);
-            let Some(monster) = self
+            let Some(_) = self
                 .spawn_monster(
                     monster_type.to_string(),
                     position,
                     rotation,
-                    Some(*admin_id),
                     floor,
                     crate::types::MonsterLifecycle::Ambient,
                     None,
@@ -1263,10 +1258,6 @@ impl super::GameState {
             else {
                 break;
             };
-            if !self.server_monster_ai() {
-                self.send_direct_message(admin_id, ServerMessage::MonsterAssigned { monster })
-                    .await;
-            }
             spawned += 1;
         }
         info!(admin = ?admin_id, monster_type, spawned, "admin spawnmob");

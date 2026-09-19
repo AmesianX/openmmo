@@ -3,12 +3,11 @@
 //! Each NPC gets its own WebSocket connection and session loop, but they share
 //! terrain data (HeightSampler) and world cache (PassabilityCache + houses).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use onlinerpg_shared::monster_ai::BehaviorTree;
 use onlinerpg_shared::{
     Character, CharacterAttributes, CharacterClass, ClientMessage, Gender, ServerMessage,
 };
@@ -180,9 +179,6 @@ pub struct SharedResources {
     pub height_sampler: Arc<HeightSampler>,
     pub splat_sampler: Arc<crate::splat::SplatSampler>,
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
-    pub behavior_trees: Arc<HashMap<String, BehaviorTree>>,
-    pub type_mapping: Arc<HashMap<String, String>>,
-    pub movement_speeds: Arc<HashMap<String, crate::monster_ai::MonsterMovement>>,
     pub scheduler: LlmScheduler,
     pub codex_app_server: codex::CodexAppServer,
     /// One claim board for the process, so co-located NPCs (the two inn
@@ -596,71 +592,25 @@ async fn run_npc_session(
 
     let llm_task = spawn_llm_task(npc, &state, shared, server_url, watch.clone());
 
-    // Monster AI tick task (1Hz)
-    let state_for_ai = Arc::clone(&state);
-    let trees_for_ai = Arc::clone(&shared.behavior_trees);
-    let mapping_for_ai = Arc::clone(&shared.type_mapping);
-    let movement_for_ai = Arc::clone(&shared.movement_speeds);
-    let ai_task = tokio::spawn(async move {
-        let tick_interval = Duration::from_secs(1);
-        let mut interval = tokio::time::interval(tick_interval);
-        let delta_ms = 1000.0_f32;
-
-        {
-            let mut s = state_for_ai.lock().await;
-            s.monster_ai.set_behavior_trees((*trees_for_ai).clone());
-            s.monster_ai.set_type_mapping((*mapping_for_ai).clone());
-            s.monster_ai.set_movement_speeds((*movement_for_ai).clone());
-        }
-
+    let maintenance_state = Arc::clone(&state);
+    let maintenance_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
-            let mut s = state_for_ai.lock().await;
-            if !s.in_game {
+            let mut state = maintenance_state.lock().await;
+            if !state.in_game {
                 continue;
             }
-            if !s.world_view.synchronized {
-                let _ = s.send_background_command(ClientMessage::ResyncWorld).await;
+            if !state.world_view.synchronized {
+                let _ = state
+                    .send_background_command(ClientMessage::ResyncWorld)
+                    .await;
                 continue;
             }
-            s.check_music_finished();
-
-            // Clone Arc to avoid borrow conflict: world_cache (immutable) vs monster_ai (mutable).
-            // Must drop the RwLockReadGuard before any .await (not Send).
-            let (commands, pending) = {
-                let wc = Arc::clone(&s.world_cache);
-                let world = wc.read().unwrap();
-                // Deliberately the plain conversion, not `passability_floor()`
-                // (stair-shaft aware): brains set `path_floor` with the same
-                // plain mapping, and the gate must match it.
-                let self_pass_floor =
-                    onlinerpg_shared::dungeon::passability_floor_for_level(s.self_floor_level);
-                // A force-move burst leaves our optimistic position pointing
-                // at the destination; hide self until the server catches up.
-                let pose_settled = s.self_pose_settled();
-                let SharedState {
-                    ref nearby_players,
-                    ref nearby_monsters,
-                    ref self_player,
-                    ref mut monster_ai,
-                    ..
-                } = *s;
-                let cmds = monster_ai.tick_all(
-                    delta_ms,
-                    nearby_players,
-                    nearby_monsters,
-                    self_player.as_ref().filter(|_| pose_settled),
-                    self_pass_floor,
-                    world.passability_cache(),
-                );
-                drop(world);
-                let pending = s.drain_pending_commands();
-                (cmds, pending)
-            };
-
-            for cmd in commands.into_iter().chain(pending) {
-                if let Err(e) = s.send_background_command(cmd).await {
-                    tracing::warn!("Monster AI command failed: {e}");
+            state.check_music_finished();
+            for command in state.drain_pending_commands() {
+                if let Err(error) = state.send_background_command(command).await {
+                    tracing::warn!("Pending command failed: {error}");
                     break;
                 }
             }
@@ -677,7 +627,7 @@ async fn run_npc_session(
     let _ = rx_task.await;
 
     tx_task.abort();
-    ai_task.abort();
+    maintenance_task.abort();
     terrain_task.abort();
     if let Some(t) = llm_task {
         t.abort();

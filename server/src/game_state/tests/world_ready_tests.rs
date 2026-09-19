@@ -10,11 +10,11 @@ fn loading_player(id: &str, x: f32) -> Player {
     player
 }
 
-/// A monster owned by `owner`, standing on the origin.
-async fn adjacent_monster(game_state: &GameState, id: &str, owner: &PlayerId) {
+/// A monster standing at the origin.
+async fn adjacent_monster(game_state: &GameState, id: &str) {
     let mut monsters = game_state.monsters.write().await;
-    let mut monster = make_monster(id, pos(0.0), 0);
-    monster.owner_id = Some(*owner);
+    let monster = make_monster(id, pos(0.0), 0);
+
     monsters.insert(id.to_string(), monster);
 }
 
@@ -26,25 +26,24 @@ async fn was_attacked(game_state: &GameState, id: &PlayerId) -> bool {
 #[tokio::test]
 async fn loading_player_is_shielded_until_world_ready() {
     let game_state = make_test_game_state("loading_no_damage");
-    let owner_id = pid("owner");
     let newcomer_id = pid("newcomer");
 
     game_state.add_player(make_player("owner", 0.0, 0.0)).await;
     game_state.add_player(loading_player("newcomer", 0.0)).await;
     // Each swing burns its monster's cooldown, rejected or not.
     for id in ["loading_monster", "ready_monster"] {
-        adjacent_monster(&game_state, id, &owner_id).await;
+        adjacent_monster(&game_state, id).await;
     }
 
     game_state
-        .broadcast_monster_attack(&owner_id, "loading_monster", &newcomer_id)
+        .monster_attack("loading_monster", &newcomer_id)
         .await;
     assert!(!was_attacked(&game_state, &newcomer_id).await);
     assert_eq!(game_state.players.read().await[&newcomer_id].health, 10);
 
     game_state.mark_world_ready(&newcomer_id).await;
     game_state
-        .broadcast_monster_attack(&owner_id, "ready_monster", &newcomer_id)
+        .monster_attack("ready_monster", &newcomer_id)
         .await;
     assert!(was_attacked(&game_state, &newcomer_id).await);
 }
@@ -52,7 +51,6 @@ async fn loading_player_is_shielded_until_world_ready() {
 #[tokio::test]
 async fn loading_grace_expires_without_world_ready() {
     let game_state = make_test_game_state("loading_grace_expiry");
-    let owner_id = pid("owner");
     let auto_ready_id = pid("auto_ready_player");
 
     game_state.add_player(make_player("owner", 0.0, 0.0)).await;
@@ -60,9 +58,9 @@ async fn loading_grace_expires_without_world_ready() {
     auto_ready_player.ready_at = GameState::now_ms() - 1_000;
     game_state.add_player(auto_ready_player).await;
 
-    adjacent_monster(&game_state, "patient_monster", &owner_id).await;
+    adjacent_monster(&game_state, "patient_monster").await;
     game_state
-        .broadcast_monster_attack(&owner_id, "patient_monster", &auto_ready_id)
+        .monster_attack("patient_monster", &auto_ready_id)
         .await;
     assert!(was_attacked(&game_state, &auto_ready_id).await);
 }

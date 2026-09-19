@@ -9,7 +9,6 @@ import type {
   TradeLineItem,
 } from './networkTypes'
 import { hmrSingleton } from '../utils/hmr'
-import type { MonsterData } from '../types/Monster'
 import type { WallDirection } from '../utils/house-geometry'
 import { gameStore, resetGameStore, serverNotice } from '../stores/gameStore'
 import { resetPartyStores } from '../stores/partyStore'
@@ -480,15 +479,6 @@ class NetworkManager {
     this.sendMessage({ DaggerDoubleSlash: { monster_id: monsterId } })
   }
 
-  sendMonsterAttack(monsterId: string, targetPlayerId: number) {
-    this.sendMessage({
-      MonsterAttack: {
-        monster_id: monsterId,
-        target_player_id: targetPlayerId,
-      },
-    })
-  }
-
   requestRespawn() {
     if (this.sendAndSerialize('RequestRespawn')) {
       this.respawnRequested.emit()
@@ -524,24 +514,6 @@ class NetworkManager {
   /** Floor change between waypoints — see ClientMessage::PlayerFloorChanged. */
   sendPlayerFloor(floorLevel: number) {
     this.sendMessage({ PlayerFloorChanged: { floor_level: floorLevel } })
-  }
-
-  sendMonsterMove(
-    monsterId: string,
-    position: { x: number; y: number; z: number },
-    rotation: number,
-    state: MonsterData['state'],
-    targetPosition: { x: number; y: number; z: number }
-  ) {
-    this.sendMessage({
-      MonsterMove: {
-        monster_id: monsterId,
-        position,
-        rotation,
-        state,
-        target_position: targetPosition,
-      },
-    })
   }
 
   sendDebugTeleport(position: Position) {

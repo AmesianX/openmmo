@@ -7,7 +7,6 @@ mod geom;
 mod google_auth;
 mod item_defs;
 mod llm_scheduler;
-mod monster_ai;
 mod openai;
 mod openrouter;
 mod orchestrator;
@@ -262,12 +261,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let behavior_trees = monster_ai::MonsterAiManager::load_behavior_trees_from_json(include_str!(
-        "../../data-src/behavior_trees.json"
-    ));
-    let (type_mapping, movement_speeds) =
-        monster_ai::MonsterAiManager::load_monster_data(include_str!("../../data/monsters.json"));
-
     let height_sampler = Arc::new(create_height_sampler(
         &config.terrain,
         &config.terrain_cache,
@@ -317,9 +310,6 @@ async fn main() -> anyhow::Result<()> {
         height_sampler,
         splat_sampler,
         world_cache,
-        behavior_trees: Arc::new(behavior_trees),
-        type_mapping: Arc::new(type_mapping),
-        movement_speeds: Arc::new(movement_speeds),
         scheduler: llm_scheduler::LlmScheduler::new(
             config.max_concurrent,
             Duration::from_secs(config.request_timeout_secs),
@@ -497,7 +487,6 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::DaggerDoubleSlashRejected { .. } => "DaggerDoubleSlashRejected",
         ServerMessage::DaggerDoubleSlashSkipped { .. } => "DaggerDoubleSlashSkipped",
         ServerMessage::PlayerAttackRejected { .. } => "PlayerAttackRejected",
-        ServerMessage::MonsterProvoked { .. } => "MonsterProvoked",
         ServerMessage::MonsterAttackedPlayer { .. } => "MonsterAttackedPlayer",
         ServerMessage::PlayerDead { .. } => "PlayerDead",
         ServerMessage::PlayerRespawned { .. } => "PlayerRespawned",
@@ -544,8 +533,6 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::HouseRemoved { .. } => "HouseRemoved",
         ServerMessage::HousesInArea { .. } => "HousesInArea",
         ServerMessage::DoorToggled { .. } => "DoorToggled",
-        ServerMessage::MonsterControlReleased { .. } => "MonsterControlReleased",
-        ServerMessage::MonsterAssigned { .. } => "MonsterAssigned",
         ServerMessage::PlayerInteractionChanged { .. } => "PlayerInteractionChanged",
         ServerMessage::PlayerMusicStarted { .. } => "PlayerMusicStarted",
         ServerMessage::PlayerInstrumentStarted { .. } => "PlayerInstrumentStarted",

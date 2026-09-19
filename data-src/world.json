@@ -13,8 +13,7 @@
     "floorLevel": 1,
     "bedIds": [52, 53, 54, 55]
   },
-  "maxMonstersPerPlayer": 8,
-  "serverMonsterAi": true,
+  "maxNearbyMonsters": 8,
   "pricing": {
     "activeDays": 30,
     "targetDailyGrowth": 0.002,

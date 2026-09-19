@@ -79,7 +79,6 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
 
     let messages = drain(&mut direct_rx);
     assert!(messages.iter().any(|message| matches!(message, ServerMessage::MonsterSpawned { monster } if monster.id == "monster_a")));
-    assert!(messages.iter().any(|message| matches!(message, ServerMessage::MonsterAssigned { monster } if monster.id == "monster_a")));
     assert!(messages.iter().any(|message| matches!(message, ServerMessage::GroundItemAppeared { item } if item.instance_id == 42)));
     assert!(messages.iter().any(|message| matches!(message, ServerMessage::PlayerMoved { player_id: moved, .. } if *moved == player_id)));
 }
@@ -92,7 +91,9 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
 async fn movement_into_aoi_sends_a_monster_that_walked_there() {
     let game_state = make_test_game_state("moved_monster_aoi");
     let walker_id = pid("walker");
-    let owner_id = pid("monster_owner");
+    game_state
+        .add_player(make_player("bystander", 60.0, 0.0))
+        .await;
     // All three spots hang off the AOI: the monster walks from outside it to a
     // spot the walker only reaches after moving.
     let aoi = onlinerpg_shared::EVENT_DELIVERY_RADIUS;
@@ -110,20 +111,19 @@ async fn movement_into_aoi_sends_a_monster_that_walked_there() {
     game_state.add_player(make_player("walker", 0.0, 0.0)).await;
     {
         let mut monsters = game_state.monsters.write().await;
-        let mut monster = make_monster("wanderer", start, 0);
-        monster.owner_id = Some(owner_id);
-        monster.move_budget = 10.0;
-        monster.last_move_at = GameState::now_ms();
+        let monster = make_monster("wanderer", start, 0);
+
         monsters.insert(monster.id.clone(), monster);
     }
     game_state
-        .update_monster_position(
-            &owner_id,
-            "wanderer".to_string(),
+        .apply_ai_move(
+            "wanderer",
+            0,
             walked_to,
             0.0,
             MonsterState::Run,
             walked_to,
+            None,
         )
         .await;
     assert_eq!(
@@ -768,10 +768,7 @@ async fn dead_player_move_is_refused_and_snapped() {
     assert_eq!(player_x(&game_state, &player_id).await, 0.0);
 }
 
-/// `SpatialCell::within_radius` is a conservative superset: every point within
-/// the radius must land in one of the cells it yields. Under-scanning is
-/// silent — the ownership sweep would despawn a monster a player is standing
-/// next to — so pin the property directly rather than through a behaviour.
+/// Radius queries must include every nearby point, including across the seam.
 #[test]
 fn within_radius_covers_every_point_inside_the_radius() {
     use onlinerpg_shared::{wrap_world_x, WORLD_MIN_X, WORLD_WIDTH_X};
@@ -1095,170 +1092,6 @@ mod dungeon_floor_gate {
         let (target, floor) = d.queued_target().await.expect("the move is queued");
         assert_eq!(floor, -1);
         assert_eq!(target.y, honest.y);
-    }
-}
-
-/// Two adoptions racing on the same monster: the loser must be released by a
-/// MonsterRemoved for the owner it *actually* was, not the one planned, and be
-/// respawned as a bystander since it is still watching.
-#[tokio::test]
-async fn outraced_adopter_is_released_and_kept_watching() {
-    let game_state = make_test_game_state("double_adopt_release");
-    let first = pid("first_adopter");
-    let second = pid("second_adopter");
-    let position = Position {
-        x: 10.0,
-        y: 0.0,
-        z: 10.0,
-    };
-
-    game_state
-        .add_player(make_player("first_adopter", 10.0, 10.0))
-        .await;
-    game_state
-        .add_player(make_player("second_adopter", 10.0, 10.0))
-        .await;
-    let mut first_rx = game_state.register_direct_channel(&first).await;
-    let mut second_rx = game_state.register_direct_channel(&second).await;
-
-    {
-        let mut monsters = game_state.monsters.write().await;
-        let mut monster = make_monster("contested", position, 0);
-        monster.owner_id = Some(pid("long_gone"));
-        monsters.insert("contested".to_string(), monster);
-    }
-
-    // Both adoptions were planned against the same unattended monster.
-    use crate::game_state::monster::Handoff;
-    game_state
-        .hand_off_monsters(vec![Handoff {
-            monster_id: "contested".to_string(),
-            new_owner: first,
-        }])
-        .await;
-    game_state
-        .hand_off_monsters(vec![Handoff {
-            monster_id: "contested".to_string(),
-            new_owner: second,
-        }])
-        .await;
-
-    match first_rx.try_recv() {
-        Ok(ServerMessage::MonsterAssigned { monster }) => assert_eq!(monster.id, "contested"),
-        other => panic!("Expected MonsterAssigned to the first adopter, got {other:?}"),
-    }
-    match first_rx.try_recv() {
-        Ok(ServerMessage::MonsterControlReleased { monster_id }) => {
-            assert_eq!(monster_id, "contested")
-        }
-        other => panic!("Expected the outraced adopter's release, got {other:?}"),
-    }
-
-    match second_rx.try_recv() {
-        Ok(ServerMessage::MonsterAssigned { monster }) => {
-            assert_eq!(monster.id, "contested");
-            assert_eq!(monster.owner_id, Some(second));
-        }
-        other => panic!("Expected MonsterAssigned to the final owner, got {other:?}"),
-    }
-}
-
-/// A move from a client that lost ownership long ago is answered with a
-/// release (plus a bystander respawn while it can still see the monster)
-/// instead of being silently dropped, so its stale brain shuts down.
-#[tokio::test]
-async fn stale_controller_move_gets_released() {
-    let game_state = make_test_game_state("stale_controller_release");
-    let stale = pid("stale_controller");
-    let owner = pid("real_owner");
-    let position = Position {
-        x: 10.0,
-        y: 0.0,
-        z: 10.0,
-    };
-
-    game_state
-        .add_player(make_player("stale_controller", 10.0, 10.0))
-        .await;
-    game_state
-        .add_player(make_player("real_owner", 10.0, 10.0))
-        .await;
-    let mut stale_rx = game_state.register_direct_channel(&stale).await;
-
-    {
-        let mut monsters = game_state.monsters.write().await;
-        let mut monster = make_monster("held", position, 0);
-        monster.owner_id = Some(owner);
-        monsters.insert("held".to_string(), monster);
-    }
-
-    let target = Position {
-        x: 11.0,
-        y: 0.0,
-        z: 10.0,
-    };
-    game_state
-        .update_monster_position(
-            &stale,
-            "held".to_string(),
-            target,
-            0.0,
-            MonsterState::Walk,
-            target,
-        )
-        .await;
-
-    match stale_rx.try_recv() {
-        Ok(ServerMessage::MonsterControlReleased { monster_id }) => assert_eq!(monster_id, "held"),
-        other => panic!("Expected the stale controller's release, got {other:?}"),
-    }
-}
-
-/// Inside the grace window after a handoff, a non-owner move is just an
-/// in-flight packet from the old owner — dropped silently, no release.
-#[tokio::test]
-async fn in_flight_move_after_handoff_stays_silent() {
-    let game_state = make_test_game_state("handoff_grace_window");
-    let old_owner = pid("old_owner");
-    let new_owner = pid("new_owner");
-    let position = Position {
-        x: 10.0,
-        y: 0.0,
-        z: 10.0,
-    };
-
-    game_state
-        .add_player(make_player("old_owner", 10.0, 10.0))
-        .await;
-    game_state
-        .add_player(make_player("new_owner", 10.0, 10.0))
-        .await;
-    let mut old_rx = game_state.register_direct_channel(&old_owner).await;
-
-    {
-        let mut monsters = game_state.monsters.write().await;
-        let mut monster = make_monster("fresh_handoff", position, 0);
-        monster.owner_id = Some(old_owner);
-        monsters.insert("fresh_handoff".to_string(), monster);
-        monsters.reassign_owner("fresh_handoff", new_owner, GameState::now_ms());
-    }
-
-    game_state
-        .update_monster_position(
-            &old_owner,
-            "fresh_handoff".to_string(),
-            position,
-            0.0,
-            MonsterState::Walk,
-            position,
-        )
-        .await;
-
-    match old_rx.try_recv() {
-        Err(MpscTryRecvError::Empty) => {}
-        other => {
-            panic!("an in-flight move within the grace window must stay silent, got {other:?}")
-        }
     }
 }
 

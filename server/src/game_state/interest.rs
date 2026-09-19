@@ -133,33 +133,12 @@ impl Interest {
             subject.revision = self.revision;
         }
     }
-    pub(super) fn visible_at(&self, id: &str, position: Position, floor: i8) -> bool {
-        self.subjects.get(id).is_some_and(|subject| {
-            subject
-                .areas
-                .iter()
-                .any(|area| area.contains(&position, &Space::at(&position, floor)))
-        })
-    }
-    pub(super) fn correct_monster_movement(
-        &mut self,
-        monster: &onlinerpg_shared::Monster,
-        message: ServerMessage,
-        owner: PlayerId,
-    ) {
-        let moving = self.subjects.get(&format!("monster:{}", monster.id)).is_some_and(|subject| subject.snapshot.iter().any(|msg| matches!(msg, ServerMessage::MonsterMoved { position, target_position, .. } if position != target_position)));
-        if moving {
-            self.publish_monster_movement(monster, message, Some(owner));
-        }
-    }
     pub(super) fn refresh_monster(&mut self, monster: &onlinerpg_shared::Monster) {
         let id = format!("monster:{}", monster.id);
         if let Some(subject) = self.subjects.get_mut(&id) {
             for message in &mut subject.snapshot {
-                match message {
-                    ServerMessage::MonsterSpawned { monster: cached } => *cached = monster.clone(),
-                    ServerMessage::MonsterMoved { owner_id, .. } => *owner_id = monster.owner_id,
-                    _ => {}
+                if let ServerMessage::MonsterSpawned { monster: cached } = message {
+                    *cached = monster.clone();
                 }
             }
             self.revision += 1;
@@ -171,6 +150,7 @@ impl Interest {
         self.subjects.contains_key(id)
     }
 
+    #[cfg(test)]
     pub(super) fn watches_subject(&self, viewer: PlayerId, id: &str) -> bool {
         self.views
             .get(&viewer)
@@ -262,7 +242,6 @@ impl Interest {
         &mut self,
         monster: &onlinerpg_shared::Monster,
         message: ServerMessage,
-        skip: Option<PlayerId>,
     ) {
         let target = match &message {
             ServerMessage::MonsterMoved {
@@ -272,7 +251,7 @@ impl Interest {
             } => *target_position,
             _ => monster.position,
         };
-        self.publish_to(
+        self.publish(
             format!("monster:{}", monster.id),
             vec![
                 SubjectArea::point(monster.position, monster.floor_level),
@@ -288,7 +267,6 @@ impl Interest {
                 monster_id: monster.id.clone(),
             }],
             vec![message],
-            skip,
         );
     }
     pub(super) fn update_snapshot(
@@ -530,18 +508,6 @@ impl Interest {
         leave: Vec<ServerMessage>,
         changes: Vec<ServerMessage>,
     ) {
-        self.publish_to(id, areas, snapshot, leave, changes, None);
-    }
-
-    fn publish_to(
-        &mut self,
-        id: String,
-        areas: Vec<SubjectArea>,
-        snapshot: Vec<ServerMessage>,
-        leave: Vec<ServerMessage>,
-        changes: Vec<ServerMessage>,
-        skip: Option<PlayerId>,
-    ) {
         self.revision += 1;
         let cells = area_cells(&areas, 0.0);
         let previous = self.subjects.remove(&id);
@@ -617,7 +583,7 @@ impl Interest {
             } else {
                 view.subjects.remove(&id);
             }
-            if change == InterestChange::Update && (skip == Some(viewer) || changes.is_empty()) {
+            if change == InterestChange::Update && changes.is_empty() {
                 continue;
             }
             let event = || WorldEvent {

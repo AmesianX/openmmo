@@ -48,7 +48,9 @@
 | `player_attacks` | 플레이어가 보낸 공격 요청의 판정 건수와 요청별 상세 기록 (`schema: 2`부터) |
 | `history_overflow` | 공격 이력 추적 상한에 도달했는지 여부 |
 
-`monsters`의 각 종류에는 `server_attempts`, `client_requests`, `rejected`(사유별), `hits`, `misses`, `damage`, `kills`, `kills_without_observed_attempt`가 들어간다. 처치 관련 필드 외에는 **몬스터가 추적 캐릭터를 공격한 내역**이며, 플레이어의 공격 횟수·명중률과 구분한다.
+`schema: 3`부터 사용하지 않는 몬스터 제어 요청 카운터 `client_requests`를 제거했다. 이전 로그에는 이 필드가 남아 있다.
+
+`monsters`의 각 종류에는 `server_attempts`, `rejected`(사유별), `hits`, `misses`, `damage`, `kills`, `kills_without_observed_attempt`가 들어간다. 처치 관련 필드 외에는 **몬스터가 추적 캐릭터를 공격한 내역**이며, 플레이어의 공격 횟수·명중률과 구분한다.
 
 - 공격 시도는 AI가 공격 명령을 실행하거나 클라이언트 요청이 들어온 횟수이다. AI의 탐색·접근·대기 자체는 시도로 세지 않는다. 클라이언트 요청은 서버 시도와 별도 집계한다.
 - 거부 사유는 `missing_monster`, `not_controllable`, `cooldown`, `target_not_damageable`, `unreachable_floor`, `out_of_range`, `wall`, `target_disappeared_or_dead`, `client_disabled`이다. 없는 몬스터와 무시된 클라이언트 요청의 종류는 `unknown`이다.

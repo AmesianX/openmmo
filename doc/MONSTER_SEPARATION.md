@@ -18,11 +18,8 @@ brain의 tick 입력은 `nearby_players`뿐이라 다른 몬스터의 존재를 
 
 ## 제약 (아키텍처에서 오는 것)
 
-- **소유가 분산되어 있다.** 같은 플레이어를 쫓는 몬스터들의 brain이 서로 다른
-  클라이언트(웹/agent-client)에서 돌 수 있다. 소유자 간 조정(슬롯 매니저)은 불가능 —
-  각 brain이 로컬 지식만으로 결정해야 한다.
-- **타 소유 몬스터의 위치는 ~500ms 간격 sync로만 안다.** 이동 중의 일시적 겹침은
-  막을 수 없고 막지 않는다. 노리는 것은 **멈춰 선 위치**가 웬만하면 벌어지는 것.
+- 모든 몬스터 뇌는 서버에서 실행되며 같은 틱의 주변 몬스터 스냅샷으로 점유 셀을 계산한다.
+- 웹은 약 500ms 간격의 서버 이동을 보간하므로 화면상의 일시적 겹침은 남을 수 있다.
 - **waypoint 경로 추종 방식이라 steering force(boids식 분리)와 맞지 않는다.**
   매 tick 힘을 섞는 대신 목적지와 전진 여부를 셀 단위로 판단한다.
 - 서버는 통행 가능성만 검증하고 몬스터-몬스터 충돌은 보지 않는다. 뇌가 서버에서 돌 때([SERVER_SIDE_MONSTER_AI.md](SERVER_SIDE_MONSTER_AI.md)) 같은 셀 분리 로직이 `server/src/game_state/monster_ai.rs`에서 그대로 실행된다.
@@ -188,7 +185,7 @@ pub struct NearbyMonster {
 공격자 2마리가 앉는다)과 `SIDESTEP_MAX_PATH_METERS`(3.0). behavior tree
 파라미터로는 빼지 않는다.
 
-**비용**: 소유자 tick당 점유 셀 set 1회 구성 O(AOI 몬스터 수), 조회 O(1).
+**비용**: 서버 AI tick당 점유 셀 set 1회 구성 O(AOI 몬스터 수), 조회 O(1).
 목적지 셀 탐색은 repath 시점(≥500ms 간격)에만 attack_range 안의 셀 몇 개.
 A*는 도달 불가 목표를 조기 거부하지 않으므로, 후보 셀은 `cell_passable`
 (`is_cell_sealed` 기반, 4번의 이동 차단 검사)로 먼저 걸러 벽 안 후보가 탐색을

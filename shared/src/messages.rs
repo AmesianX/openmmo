@@ -407,26 +407,11 @@ pub enum ClientMessage {
     ChatMessage {
         message: String,
     },
-    MonsterMove {
-        monster_id: String,
-        position: Position,
-        rotation: f32,
-        state: MonsterState,
-        /// Where a remote view walks the model until the next sync — a point on
-        /// the mover's own path, not its destination. Aiming a viewer's straight
-        /// line at the destination walks the model through the walls the path
-        /// goes around. See `MonsterBrain::current_leg_target`.
-        target_position: Position,
-    },
     PlayerAttack {
         monster_id: String,
     },
     DaggerDoubleSlash {
         monster_id: String,
-    },
-    MonsterAttack {
-        monster_id: String,
-        target_player_id: PlayerId,
     },
     RequestRespawn,
     /// Open the treasure chest on a dungeon's final floor. The server
@@ -851,9 +836,6 @@ impl ClientMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerMessage {
-    MonsterControlReleased {
-        monster_id: String,
-    },
     DungeonDoorState {
         entrance_id: String,
         depth: u8,
@@ -1167,10 +1149,6 @@ pub enum ServerMessage {
     MonsterSpawned {
         monster: Monster,
     },
-    /// Server assigns a monster to this client for AI control.
-    MonsterAssigned {
-        monster: Monster,
-    },
     MonsterMoved {
         monster_id: String,
         position: Position,
@@ -1181,7 +1159,6 @@ pub enum ServerMessage {
         /// line at the destination walks the model through the walls the path
         /// goes around. See `MonsterBrain::current_leg_target`.
         target_position: Position,
-        owner_id: Option<PlayerId>,
         /// Set on chase legs; viewers aim the walk at the chased player's
         /// live local position instead of the sync-old `target_position`,
         /// stopping at the carried radius.
@@ -1225,12 +1202,6 @@ pub enum ServerMessage {
     EquipmentEnchantSucceeded {
         player_id: PlayerId,
         weapon: bool,
-    },
-    /// A valid attack attempt made outside melee range. No attack roll or
-    /// damage is applied, but the managed monster should acquire the player.
-    MonsterProvoked {
-        player_id: PlayerId,
-        monster_id: String,
     },
     /// Direct ack to the attacker for a dropped `PlayerAttack` request, so a
     /// rejection is distinguishable from packet loss.
@@ -1928,7 +1899,6 @@ impl ServerMessage {
             | Self::DaggerDoubleSlashStarted { .. }
             | Self::DaggerDoubleSlashSkipped { .. }
             | Self::EquipmentEnchantSucceeded { .. }
-            | Self::MonsterProvoked { .. }
             | Self::MonsterAttackedPlayer { .. }
             | Self::PlayerInstrumentNotes { .. }
             | Self::AbilityUsed { .. } => DeliveryClass::NearbyEffect,
@@ -2021,9 +1991,7 @@ impl ServerMessage {
             Self::GameTimeSync { .. } | Self::WeatherSync { .. } | Self::ServerNotice { .. } => {
                 DeliveryClass::Global
             }
-            Self::WorldUpdate { .. }
-            | Self::MonsterAssigned { .. }
-            | Self::MonsterControlReleased { .. } => DeliveryClass::Control,
+            Self::WorldUpdate { .. } => DeliveryClass::Control,
         }
     }
 }

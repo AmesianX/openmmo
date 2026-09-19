@@ -28,19 +28,9 @@ pub enum MoveTargetError {
     },
 }
 
-/// Whether a string has the shape of a monster id (`m2_1`), which is how the
-/// ladder tells "the goblin called m2_1" from "a goblin".
 fn looks_like_monster_id(s: &str) -> bool {
-    let Some(rest) = s.strip_prefix(['m', 'M']) else {
-        return false;
-    };
-    let Some((floor, index)) = rest.split_once('_') else {
-        return false;
-    };
-    !floor.is_empty()
-        && !index.is_empty()
-        && floor.bytes().all(|b| b.is_ascii_digit())
-        && index.bytes().all(|b| b.is_ascii_digit())
+    s.strip_prefix(['m', 'M'])
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 impl SharedState {
@@ -344,15 +334,6 @@ impl SharedState {
         Ok(sprinting)
     }
 
-    /// Put an entity on the ground of dungeon floor `floor`, leaving it where
-    /// it is when no dungeon covers the spot.
-    pub(super) fn on_dungeon_floor(&self, position: Position, floor: u8) -> Position {
-        match self.dungeon_ground_y(position.x, position.z, floor) {
-            Some(y) => Position { y, ..position },
-            None => position,
-        }
-    }
-
     /// The wire `floor_level` to declare while standing at (x, z, y): whichever
     /// floor's grid sits nearest that Y. Deliberately the shared query the
     /// server itself collides against (`authoritative_floor`), so our
@@ -399,47 +380,7 @@ impl SharedState {
         position
     }
 
-    /// Y for a surface monster move: the server validates the stored Y plus
-    /// its own terrain delta, so carry the monster's last pose Y forward by
-    /// our sampled delta. An absolute snap would fight any offset between the
-    /// stored Y and our tiles for the monster's whole life, and the brain's
-    /// raw Y goes stale on every slope.
-    pub(super) async fn ground_tracked_position(
-        &self,
-        prev: Option<Position>,
-        position: Position,
-        context: &str,
-    ) -> Position {
-        let Some(prev) = prev else {
-            return self.snap_position_to_ground(position, context).await;
-        };
-        let (from, to) = tokio::join!(
-            self.height_sampler.sample_height(prev.x, prev.z),
-            self.height_sampler.sample_height(position.x, position.z),
-        );
-        match (from, to) {
-            (Ok(from_ground), Ok(to_ground)) => Position {
-                y: prev.y + (to_ground - from_ground),
-                ..position
-            },
-            (from, to) => {
-                let e = if let Err(e) = from {
-                    e
-                } else {
-                    to.unwrap_err()
-                };
-                tracing::warn!(
-                    "Failed to sample terrain height for {context} at ({:.1}, {:.1}): {e}",
-                    position.x,
-                    position.z
-                );
-                position
-            }
-        }
-    }
-
-    /// Apply an authoritative monster pose — server fanout, a reject
-    /// correction, or the local echo of our own outgoing move.
+    /// Apply the server's monster pose.
     pub(super) fn apply_monster_pose(
         &mut self,
         monster_id: &str,
@@ -471,42 +412,14 @@ impl SharedState {
         self.latest_player_moves.remove(player_id);
     }
 
-    /// Adopt a floor change. No local purge: every server-side removal now
-    /// reaches this client — watched monsters via the floor-aware AOI diff,
-    /// owned ones (the corpse sweep included) via owner-directed messages.
+    /// Visibility updates remove monsters from the previous floor.
     pub(crate) fn adopt_floor_level(&mut self, floor_level: i8) {
         self.self_floor_level = floor_level;
     }
 
-    /// Whether `self_player.position` currently reflects the real body rather
-    /// than a force-move burst the server is still walking.
-    pub fn self_pose_settled(&self) -> bool {
-        self.self_pose_settles_at
-            .is_none_or(|t| std::time::Instant::now() >= t)
-    }
-
-    /// Flag `self_player.position` as a promise for the next `walk_secs`
-    /// plus slack: a force-move burst sends legs the server has yet to walk.
-    /// A sub-second walk (the usual last metre) is not worth hiding.
-    pub fn suppress_pose_for(&mut self, walk_secs: f32) {
-        const POSE_SETTLE_SLACK: std::time::Duration = std::time::Duration::from_secs(2);
-        if walk_secs <= 1.0 {
-            return;
-        }
-        self.self_pose_settles_at = Some(
-            std::time::Instant::now()
-                + std::time::Duration::from_secs_f32(walk_secs)
-                + POSE_SETTLE_SLACK,
-        );
-    }
-
-    /// Drop every trace of a monster: the entry itself, its AI mirror, its
-    /// move-dedup slot, and its sighting so a reappearance announces again.
-    /// The single recipe for all removal paths — a new shadow collection
-    /// belongs here, not in each caller.
+    /// Clear the monster, pending movement, and sighting on every removal path.
     pub(super) fn forget_monster(&mut self, id: &str) {
         self.nearby_monsters.remove(id);
-        self.monster_ai.remove_monster(id);
         self.latest_monster_moves.remove(id);
         self.sighted_pois.remove(&format!("m:{id}"));
     }
@@ -520,7 +433,6 @@ impl SharedState {
             p.rotation = rotation;
             p.floor_level = floor_level;
         }
-        self.self_pose_settles_at = None;
         self.adopt_floor_level(floor_level);
         self.position_corrections = self.position_corrections.wrapping_add(1);
         if let Some(id) = self.self_player_id {

@@ -1211,17 +1211,6 @@ export function handleServerMessage(
       break
     }
 
-    case 'MonsterControlReleased':
-      monsterManager.releaseControl(data.monster_id)
-      break
-
-    case 'MonsterAssigned': {
-      // May be a reassignment of a monster we already track (dungeon
-      // owner handover): update the owner and (re)create our brain.
-      monsterManager.adoptOwnership(data.monster as ServerMonster)
-      break
-    }
-
     case 'MonsterMoved':
       monsterManager.updateMonsterFromNetwork(
         data.monster_id,
@@ -1229,7 +1218,6 @@ export function handleServerMessage(
         data.rotation,
         data.state,
         data.target_position,
-        data.owner_id,
         data.chasing
       )
       break
@@ -1357,10 +1345,6 @@ export function handleServerMessage(
       break
     }
 
-    case 'MonsterProvoked':
-      monsterManager.handleMonsterProvoked(data.monster_id, data.player_id)
-      break
-
     case 'MonsterAttackedPlayer': {
       const gameState = get(gameStore)
       const isCurrentPlayer = gameState.currentPlayer?.id === data.player_id
@@ -1371,13 +1355,7 @@ export function handleServerMessage(
         ? gameState.currentPlayer?.position
         : remotePlayerManager.players.get(data.player_id)?.position
       const monster = monsterManager.monsters.get(data.monster_id)
-      if (monster?.ownerId !== gameState.currentPlayer?.id) {
-        monsterManager.handleMonsterAttackStarted(
-          data.monster_id,
-          250,
-          targetPos
-        )
-      }
+      monsterManager.handleMonsterAttackStarted(data.monster_id, 250, targetPos)
 
       const impactDelayMs = monsterManager.getMonsterAttackDamageTextDelayMs(
         data.monster_id

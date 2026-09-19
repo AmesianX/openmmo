@@ -373,7 +373,6 @@ impl MonsterBrain {
             self.swing_left_ms = self.swing_commit_ms;
             commands.push(self.make_move_cmd());
             commands.push(AiCommand::Attack {
-                monster_id: self.monster_id.clone(),
                 target_player_id: target_id,
             });
         }

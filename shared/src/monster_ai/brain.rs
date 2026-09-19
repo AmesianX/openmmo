@@ -6,18 +6,16 @@
 use super::tree::BehaviorStatus;
 use super::{
     cell_of, AiCommand, AiState, BehaviorTree, ChaseAim, NearbyMonster, NearbyPlayer, PathProvider,
-    TickResult, DEFAULT_ATTACK_RANGE, DEFAULT_CHASE_RANGE, DEFAULT_HIT_STAGGER_MS,
-    DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST, NETWORK_SYNC_INTERVAL_MS,
+    DEFAULT_ATTACK_RANGE, DEFAULT_CHASE_RANGE, DEFAULT_HIT_STAGGER_MS, DEFAULT_MAX_MOVE_DIST,
+    DEFAULT_MIN_MOVE_DIST, NETWORK_SYNC_INTERVAL_MS,
 };
 use crate::pathfinding::PathWaypoint;
 use crate::{MonsterState, PlayerId, Position};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MonsterBrain {
     pub monster_id: String,
-    pub monster_type: String,
     pub behavior: String,
     pub position: Position,
     pub rotation: f32,
@@ -36,56 +34,43 @@ pub struct MonsterBrain {
     pub(super) waypoints: Vec<PathWaypoint>,
     pub(super) current_waypoint_idx: usize,
     pub(super) path_elapsed_ms: f32,
-    #[serde(default)]
     pub(super) return_retry_left_ms: f32,
     pub(super) last_known_target_pos: Option<Position>,
     pub(super) spawn_position: Position,
     /// Passability floor for path queries. 0 = overworld/house ground;
     /// dungeon monsters use their depth's passability floor index.
-    #[serde(default)]
     pub path_floor: u8,
     /// Time accumulated toward the next throttled network position sync while
     /// continuously moving. See [`Self::should_sync_move`].
-    #[serde(default)]
     pub(super) sync_elapsed_ms: f32,
     /// Movement state at the last emitted sync, so entering a new one syncs at
     /// once instead of waiting out the interval.
-    #[serde(default)]
     pub(super) last_synced_state: AiState,
     /// A path bend the next sync must not be allowed to cut across.
-    #[serde(default)]
     pub(super) pending_bend_sync: bool,
     /// Time left before the next swing, kept apart from `state_timer_ms` so
     /// that leaving and re-entering Attack cannot re-arm the cooldown. Zero is
     /// ready: the first swing on contact does not wait one out.
-    #[serde(default)]
     pub(super) attack_cooldown_left_ms: f32,
     /// How long this type's swing animation runs. The attack holds the state
     /// this long so a swing it started finishes; 0 releases as soon as the
     /// target steps out.
-    #[serde(default)]
     pub(super) swing_commit_ms: f32,
     /// Time left in the swing currently being delivered.
-    #[serde(default)]
     pub(super) swing_left_ms: f32,
     /// The free cell near the target the chase is heading to; kept while it
     /// stays free so re-slotting doesn't oscillate.
-    #[serde(default)]
     pub(super) chase_goal_cell: Option<(i32, i32)>,
     /// Cells occupied by standing nearby monsters, rebuilt each tick.
-    #[serde(skip)]
     pub(super) occupied_cells: Vec<(i32, i32)>,
     /// A standing monster with a smaller id shares our cell this tick — we
     /// are the one who moves aside. Rebuilt each tick.
-    #[serde(skip)]
     pub(super) cell_yield: bool,
     /// Walking off a shared cell to a slot of our own after a yield. Attack
     /// entry stays refused until arrival, or the yielder would stop at the
     /// first cell boundary, still overlapped.
-    #[serde(default)]
     pub(super) reslotting: bool,
     /// Detour goal; repaths keep avoiding standers until arrival.
-    #[serde(default)]
     pub(super) detour_goal: Option<(f32, f32)>,
 }
 
@@ -93,7 +78,7 @@ impl MonsterBrain {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         monster_id: String,
-        monster_type: String,
+        monster_type: &str,
         behavior: String,
         position: Position,
         health: u32,
@@ -104,10 +89,9 @@ impl MonsterBrain {
         chase_range: f32,
         attack_cooldown_ms: f32,
     ) -> Self {
-        let swing_commit_ms = super::attack_clip_ms(&monster_type);
+        let swing_commit_ms = super::attack_clip_ms(monster_type);
         Self {
             monster_id,
-            monster_type,
             behavior,
             rotation: 0.0,
             health,
@@ -218,16 +202,6 @@ impl MonsterBrain {
         self.swing_left_ms = (self.swing_left_ms - delta_ms).max(0.0);
     }
 
-    /// Build a `TickResult` snapshot of the brain's current pose plus `commands`.
-    fn tick_result(&self, commands: Vec<AiCommand>) -> TickResult {
-        TickResult {
-            commands,
-            position: self.position,
-            rotation: self.rotation,
-            state: self.network_state(),
-        }
-    }
-
     pub fn tick_with_behavior_tree(
         &mut self,
         delta_ms: f32,
@@ -236,9 +210,9 @@ impl MonsterBrain {
         behavior_tree: &BehaviorTree,
         path_provider: &dyn PathProvider,
         rng: &mut impl Rng,
-    ) -> TickResult {
+    ) -> Vec<AiCommand> {
         if self.state == AiState::Dead || self.health == 0 {
-            return self.tick_result(vec![]);
+            return vec![];
         }
 
         self.occupied_cells.clear();
@@ -269,7 +243,7 @@ impl MonsterBrain {
 
         if self.state == AiState::Hit {
             if self.state_timer_ms < DEFAULT_HIT_STAGGER_MS {
-                return self.tick_result(commands);
+                return commands;
             }
             self.state = AiState::Idle;
             self.state_timer_ms = 0.0;
@@ -292,7 +266,7 @@ impl MonsterBrain {
             }
         }
 
-        self.tick_result(commands)
+        commands
     }
 
     // =========================================================================
@@ -417,7 +391,6 @@ impl MonsterBrain {
             None
         };
         AiCommand::Move {
-            monster_id: self.monster_id.clone(),
             position: self.position,
             rotation: self.rotation,
             state: self.state.to_monster_state(),

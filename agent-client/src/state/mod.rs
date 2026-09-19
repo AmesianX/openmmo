@@ -42,7 +42,6 @@ impl SharedState {
 }
 
 use crate::dungeon::Dungeon;
-use crate::monster_ai::MonsterAiManager;
 use onlinerpg_shared::dungeon::{
     cell_center, dungeon_cache_key, floor_cells, floor_level_for_passability,
     passability_floor_for_level, path_max_nodes, set_floor_cells, world_to_cell,
@@ -404,10 +403,6 @@ pub struct SharedState {
     pub last_correction_at: Option<std::time::Instant>,
     pub mount_recovery_id: u32,
     pub mount_recovery_result: Option<bool>,
-    /// Until when `self_player.position` is a promise, not a pose: a schedule
-    /// force-move sends all its legs up front while the server walks them, so
-    /// consumers that need the real body (monster brains) wait this out.
-    pub self_pose_settles_at: Option<std::time::Instant>,
     /// The chest we last asked the server to open, until it answers. Opening a
     /// clutter prop is recorded before the answer arrives (an already-claimed
     /// prop is a silent no-op, and without the record we would target it
@@ -422,9 +417,7 @@ pub struct SharedState {
     last_player_attack_at: Option<tokio::time::Instant>,
     /// Notified when an urgent event arrives
     pub urgent_notify: Arc<Notify>,
-    /// Monster AI manager for server-assigned monsters
-    pub monster_ai: MonsterAiManager,
-    /// Pending commands from monster AI and spawn requests
+    /// Commands queued while processing server events.
     pending_commands: Vec<ClientMessage>,
     /// Spectator panel handle; feeds it chat/combat/system lines
     watch: Option<Arc<crate::watch::NpcWatch>>,
@@ -527,14 +520,12 @@ impl SharedState {
             last_correction_at: None,
             mount_recovery_id: 0,
             mount_recovery_result: None,
-            self_pose_settles_at: None,
             pending_chest_open: None,
             treasure_chests_spent: HashSet::new(),
             cmd_tx,
             attack_cooldown: DEFAULT_ATTACK_COOLDOWN,
             last_player_attack_at: None,
             urgent_notify: Arc::new(Notify::new()),
-            monster_ai: MonsterAiManager::new(),
             pending_commands: Vec::new(),
             watch,
             follow_task: None,

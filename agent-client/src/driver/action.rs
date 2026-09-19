@@ -382,10 +382,10 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         names: &["attack"],
         aliases: &[],
         doc: r#"- Attack a monster:
-  {"type": "attack", "target": "m2_1"}
+  {"type": "attack", "target": "m21"}
   You walk into range first, then strike. Add "sprint": false to walk that
   approach instead of sprinting it:
-  {"type": "attack", "target": "m2_1", "sprint": false}"#,
+  {"type": "attack", "target": "m21", "sprint": false}"#,
     },
     ActionSpec {
         names: &["follow"],
@@ -406,7 +406,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   and stop at the right distance, talking distance for a person and striking
   distance for a monster:
   {"type": "move", "target": "PlayerName"}
-  {"type": "move", "target": "m2_1"}
+  {"type": "move", "target": "m21"}
   To an item lying on the ground, so you can pick it up:
   {"type": "move", "target": 6043}
   To a place, using exact coordinates from the world state:
@@ -1399,8 +1399,8 @@ mod tests {
                 r#"{"actions": [{"type": "move", "x": 1.0, "z": 2.0, "sprint": false}]}"#,
             ),
             (
-                r#"{"actions": [{"type": "attack", "target": "m2_1"}]}"#,
-                r#"{"actions": [{"type": "attack", "target": "m2_1", "sprint": false}]}"#,
+                r#"{"actions": [{"type": "attack", "target": "m21"}]}"#,
+                r#"{"actions": [{"type": "attack", "target": "m21", "sprint": false}]}"#,
             ),
             (
                 r#"{"actions": [{"type": "pickup", "target": 6043}]}"#,
@@ -2402,7 +2402,7 @@ mod tests {
                 sprint: None,
             },
             AgentAction::Attack {
-                monster_id: "m2_1".to_string(),
+                monster_id: "m21".to_string(),
                 sprint: None,
             },
             AgentAction::Use {

@@ -38,10 +38,7 @@ const PLAYER_RANGE_TOLERANCE_METERS: f32 = 1.0;
 // Out-of-range swings may still pull aggro when the monster is plausibly
 // nearby, but farther requests are ignored to prevent remote provocation.
 pub(super) const PLAYER_ATTACK_PROVOKE_RANGE_METERS: f32 = 10.0;
-// Slack added to a monster's own attack_range when validating an owner-reported
-// hit. Monster movement is simulated by the owning client, so its position and
-// the target's can both lag the server's view by a round-trip; this absorbs that
-// drift without leaving the reach unbounded.
+// Allow for positions changing between the brain tick and attack resolution.
 const MONSTER_ATTACK_RANGE_TOLERANCE_METERS: f32 = 4.0;
 // Authored timing data the clients also import (data-src/player_anim_timing.csv),
 // so server delays can never drift from the animations.
@@ -145,12 +142,8 @@ struct PlayerAttackContext {
     monster_position: Position,
     monster_floor_level: i8,
     monster_level_override: Option<u8>,
-    monster_owner_id: Option<PlayerId>,
     player_name: String,
     player_level: u32,
-    /// The swing left melee reach behind, so the target has to be woken
-    /// explicitly on a landed hit.
-    from_range: bool,
     weapon: EquippedWeapon,
     /// The round this shot spends, for weapons that spend one.
     ammo: Option<LoadedAmmo>,
@@ -200,7 +193,6 @@ struct PlayerAttackTarget {
     position: Position,
     floor_level: i8,
     level_override: Option<u8>,
-    owner_id: Option<PlayerId>,
 }
 
 impl super::GameState {
@@ -394,25 +386,6 @@ impl super::GameState {
         Some(best)
     }
 
-    /// Tell a client-owned monster's controller to aggro onto the attacker.
-    /// Server-side brains wake through `brain_hit` instead.
-    async fn notify_monster_provoked(
-        &self,
-        monster_id: &str,
-        player_id: &PlayerId,
-        owner_id: Option<PlayerId>,
-    ) {
-        let Some(owner_id) = owner_id else { return };
-        self.send_direct_message(
-            &owner_id,
-            ServerMessage::MonsterProvoked {
-                player_id: *player_id,
-                monster_id: monster_id.to_string(),
-            },
-        )
-        .await;
-    }
-
     /// Runs every gate on a `PlayerAttack` request. `Err` is the coarse reason
     /// acked back to the attacker plus the gate detail the single call site
     /// logs, so a new gate can never silently drop a request. Side effect: an
@@ -431,7 +404,6 @@ impl super::GameState {
                 position: monster.position,
                 floor_level: monster.floor_level,
                 level_override: monster.level_override,
-                owner_id: monster.owner_id,
             })
         };
         let Some(monster) = monster else {
@@ -476,7 +448,6 @@ impl super::GameState {
         // monsters on another floor, but gate here too so a stale monster
         // id can't drive a cross-floor hit (the original bug: a surface
         // guard striking a monster on the dungeon floor beneath it).
-        let melee_range = PLAYER_MELEE_ATTACK_RANGE_METERS + PLAYER_RANGE_TOLERANCE_METERS;
         // A weapon that declares a `range` (items.csv) shoots that far; the
         // clients gate on the same column, so the two never drift. The lag
         // allowance rides on top of whichever reach is in play rather than
@@ -527,12 +498,7 @@ impl super::GameState {
             // A swing at a monster behind a shut door must not reach it as
             // aggro either.
             if distance_sq <= PLAYER_ATTACK_PROVOKE_RANGE_METERS.powi(2) && !walled_off() {
-                if self.server_monster_ai() {
-                    self.brain_hit(monster_id, player_id, false, 0).await;
-                } else {
-                    self.notify_monster_provoked(monster_id, player_id, monster.owner_id)
-                        .await;
-                }
+                self.brain_hit(monster_id, player_id, false, 0).await;
             }
             return Err((
                 AttackRejectReason::OutOfRange,
@@ -570,10 +536,8 @@ impl super::GameState {
             monster_position: monster.position,
             monster_floor_level: monster.floor_level,
             monster_level_override: monster.level_override,
-            monster_owner_id: monster.owner_id,
             player_name,
             player_level,
-            from_range: distance_sq > melee_range.powi(2),
             weapon,
             ammo,
         })
@@ -832,10 +796,8 @@ impl super::GameState {
             monster_position,
             monster_floor_level,
             monster_level_override,
-            monster_owner_id,
             player_name,
             player_level,
-            from_range,
             weapon,
             ammo,
         } = context;
@@ -937,8 +899,7 @@ impl super::GameState {
 
                     dealt = result_damage.min(monster.health);
                     monster.health = monster.health.saturating_sub(result_damage);
-                    self.interest_lock()
-                        .refresh_monster(&self.wire_monster(monster));
+                    self.interest_lock().refresh_monster(monster);
                     debug!(
                         "Monster {} HP: {}/{}",
                         monster_id, monster.health, monster.max_health
@@ -961,12 +922,6 @@ impl super::GameState {
             if !is_dead {
                 self.brain_hit(&monster_id, player_id, true, result_damage)
                     .await;
-                // A client-owned brain only applies the hit at its own impact
-                // frame; a shot landed from outside melee reach must aggro now.
-                if from_range && !self.server_monster_ai() {
-                    self.notify_monster_provoked(&monster_id, player_id, monster_owner_id)
-                        .await;
-                }
             } else {
                 // Loot lands where the monster fell, which is not where the
                 // registry has it: that only advances on the brain's tick, and
@@ -1079,10 +1034,7 @@ impl super::GameState {
                         .await;
                 }
 
-                // Schedule removal after 60 seconds. Through despawn_monsters
-                // so the removal reaches the corpse's owner directly even when
-                // it has wandered out of range — the radius fanout alone left
-                // a ghost corpse on the owner's client.
+                // Remove the corpse after 60 seconds.
                 let game_state = self.clone();
                 let id_to_remove = monster_id.clone();
                 tokio::spawn(async move {
@@ -1232,32 +1184,7 @@ impl super::GameState {
         }
     }
 
-    /// A client's swing request. With server brains on it is ignored: the
-    /// registry still files a cap owner, so the ownership gate alone would
-    /// let that client aim the monster.
-    pub async fn broadcast_monster_attack(
-        &self,
-        attacker_player_id: &PlayerId,
-        monster_id: &str,
-        target_player_id: &PlayerId,
-    ) {
-        if self.server_monster_ai() {
-            let mut audit = self.combat_audit.attack(*target_player_id, true);
-            audit.reason = "client_disabled";
-            return;
-        }
-        self.monster_attack(Some(attacker_player_id), monster_id, target_player_id)
-            .await;
-    }
-
-    /// `attacker` is the owning client, or `None` for the server's own brain.
-    /// Cooldown, reach and wall checks apply to both.
-    pub(super) async fn monster_attack(
-        &self,
-        attacker: Option<&PlayerId>,
-        monster_id: &str,
-        target_player_id: &PlayerId,
-    ) {
+    pub(super) async fn monster_attack(&self, monster_id: &str, target_player_id: &PlayerId) {
         struct MonsterAttackSnapshot {
             attack_bonus: i32,
             damage_roll: String,
@@ -1270,20 +1197,14 @@ impl super::GameState {
         }
         let now = Self::now_ms();
         let mut monster_data = None;
-        let mut audit = self
-            .combat_audit
-            .attack(*target_player_id, attacker.is_some());
+        let mut audit = self.combat_audit.attack(*target_player_id);
 
         {
             let mut monsters = self.monsters.write().await;
             if let Some(monster) = monsters.get_mut(monster_id) {
                 audit.monster(monster_id, &monster.monster_type);
-                audit.reason = "not_controllable";
-                let controllable = match attacker {
-                    Some(attacker) => monster.is_controllable_by(attacker),
-                    None => monster.state != MonsterState::Dead,
-                };
-                if controllable {
+                audit.reason = "dead";
+                if monster.state != MonsterState::Dead {
                     audit.reason = "cooldown";
                     let def = self.monster_defs.get(&monster.monster_type);
                     let attack_cooldown_ms =

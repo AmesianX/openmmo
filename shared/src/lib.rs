@@ -172,7 +172,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v82: Grass payloads store per-cell counts (GR04).
 /// v83: terrain file manifests and direct binary downloads.
 /// v84: mounts carry a kind instead of a bool.
-pub const PROTOCOL_VERSION: u32 = 84;
+/// v85: server-only monster AI; remove ownership and client control messages.
+pub const PROTOCOL_VERSION: u32 = 85;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -470,7 +471,6 @@ mod tests {
                 },
                 rotation: 0.0,
                 state: MonsterState::Idle,
-                owner_id: None,
                 health: 8,
                 max_health: 8,
                 floor_level: 0,
@@ -478,9 +478,6 @@ mod tests {
                 aggressive: true,
                 lifecycle: MonsterLifecycle::Ambient,
                 last_attack_at: 0,
-                last_move_at: 0,
-                move_budget: 0.0,
-                owner_since: 0,
             },
         );
         let msg = ServerMessage::GameState {
@@ -674,10 +671,6 @@ mod tests {
                 ammo_item_def_id: None,
                 dagger_strike: None,
             },
-            ServerMessage::MonsterProvoked {
-                player_id: 1.into(),
-                monster_id: "m1".to_string(),
-            },
             ServerMessage::Kicked {
                 player_id: 1.into(),
                 reason: "test".to_string(),
@@ -692,6 +685,21 @@ mod tests {
             let decoded = deserialize_server_msg(&bytes).unwrap();
             // Just verify it roundtrips without error
             assert!(!format!("{:?}", decoded).is_empty());
+        }
+    }
+
+    #[test]
+    fn retired_monster_control_requests_are_rejected() {
+        for message in [
+            serde_json::json!({"MonsterMove": {
+                "monster_id": "m1", "position": {"x": 0, "y": 0, "z": 0},
+                "rotation": 0, "state": "idle", "target_position": {"x": 0, "y": 0, "z": 0}
+            }}),
+            serde_json::json!({"MonsterAttack": {"monster_id": "m1", "target_player_id": 1}}),
+        ] {
+            let bytes = rmp_serde::to_vec(&message).unwrap();
+            let error = deserialize_client_msg(&bytes).unwrap_err();
+            assert!(error.to_string().contains("unknown variant"), "{error}");
         }
     }
 }

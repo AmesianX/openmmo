@@ -491,8 +491,8 @@ async fn dungeon_door_blocks_attacks_until_opened() {
     {
         let mut monsters = game_state.monsters.write().await;
         for id in ["shut_door_monster", "open_door_monster"] {
-            let mut monster = make_monster(id, to, -(depth as i8));
-            monster.owner_id = Some(player_id);
+            let monster = make_monster(id, to, -(depth as i8));
+
             monsters.insert(id.to_string(), monster);
         }
     }
@@ -512,7 +512,7 @@ async fn dungeon_door_blocks_attacks_until_opened() {
     );
 
     game_state
-        .broadcast_monster_attack(&player_id, "shut_door_monster", &player_id)
+        .monster_attack("shut_door_monster", &player_id)
         .await;
     assert_eq!(
         game_state.players.read().await[&player_id].last_combat_at,
@@ -528,7 +528,7 @@ async fn dungeon_door_blocks_attacks_until_opened() {
     );
 
     game_state
-        .broadcast_monster_attack(&player_id, "open_door_monster", &player_id)
+        .monster_attack("open_door_monster", &player_id)
         .await;
     assert_ne!(
         game_state.players.read().await[&player_id].last_combat_at,
@@ -722,7 +722,6 @@ async fn locked_door_shuts_itself_again() {
 #[tokio::test]
 async fn monster_brains_do_not_see_through_a_shut_door() {
     let game_state = make_test_game_state("dungeon_door_blocks_sight");
-    game_state.enable_server_monster_ai();
     let (entrance, depth, door) = first_dungeon_door(&game_state);
     game_state
         .init_passability(&crate::terrain::io::TerrainIO::new(
@@ -767,7 +766,6 @@ async fn monster_brains_do_not_see_through_a_shut_door() {
             "goblin".to_string(),
             outside,
             0.0,
-            Some(player_id),
             -(depth as i8),
             MonsterLifecycle::Ambient,
             None,

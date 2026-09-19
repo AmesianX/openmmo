@@ -58,16 +58,8 @@ impl SpatialCell {
         }
     }
 
-    /// Every cell that can hold a point within `radius` of `position`, as a
-    /// conservative superset — callers still test the exact distance.
-    ///
-    /// The spatial hash stores canonical positions, so a query near either X
-    /// edge is repeated from a copy translated one circumference away; that is
-    /// what lets cells from the opposite edge participate. Those copies are
-    /// only emitted within reach of a seam — everywhere else they are pure
-    /// misses, and this runs once per monster per ownership tick and twice per
-    /// monster move. Canonical order first, so the common case hits before any
-    /// translated copy is walked.
+    /// Candidate cells, including wrapped copies near the X seam.
+    /// Callers still test the exact distance.
     fn within_radius(position: &Position, radius: f32) -> impl Iterator<Item = SpatialCell> + '_ {
         // A cell's own width past the radius: the translated query is rounded
         // out to cell boundaries, so reach is radius + one cell.
@@ -168,28 +160,6 @@ impl<K: Eq + Hash> SpatialIndex<K> {
         radius: f32,
     ) -> impl Iterator<Item = &'a K> + 'a {
         SpatialCell::within_radius(position, radius)
-            .filter_map(|cell| self.cells.get(&cell))
-            .flatten()
-    }
-
-    /// The same for two positions at once, each key yielded once.
-    fn keys_near_either(
-        &self,
-        a: &Position,
-        b: &Position,
-        radius: f32,
-    ) -> impl Iterator<Item = &K> {
-        // Enough for one query's cells even beside the world seam, where they
-        // double; a short step's two queries mostly coincide.
-        let mut cells: Vec<SpatialCell> = Vec::with_capacity(18);
-        cells.extend(SpatialCell::within_radius(a, radius));
-        for cell in SpatialCell::within_radius(b, radius) {
-            if !cells.contains(&cell) {
-                cells.push(cell);
-            }
-        }
-        cells
-            .into_iter()
             .filter_map(|cell| self.cells.get(&cell))
             .flatten()
     }
@@ -304,9 +274,9 @@ fn checked_batch_quantities<K: Eq + Hash>(
 
 #[derive(Default)]
 struct IdState {
+    next_monster_number: u64,
     next_player_number: u32,
     player_numbers: HashMap<PlayerId, u32>,
-    owner_spawn_counts: HashMap<u32, u32>,
 }
 
 struct AccountSession {
@@ -359,10 +329,8 @@ pub struct GameState {
     last_dagger_skills: Arc<RwLock<HashMap<i64, u64>>>,
     player_spatial_cells: Arc<RwLock<SpatialIndex<PlayerId>>>,
     monsters: Arc<RwLock<monster::MonsterRegistry>>,
-    /// Server-driven brains (doc/SERVER_SIDE_MONSTER_AI.md); empty while
-    /// `server_monster_ai` is off and clients still simulate.
+    /// Server-driven monster brains.
     monster_brains: Arc<Mutex<monster_ai::ServerBrains>>,
-    server_monster_ai: Arc<std::sync::atomic::AtomicBool>,
     /// player_id → (resolved track title, performance start). Source of the
     /// `elapsed_secs` sent to players entering earshot mid-performance;
     /// cleared with the `MUSIC_EMOTE` interaction.
@@ -740,9 +708,6 @@ impl GameState {
             #[cfg(test)]
             ambient_spawns_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             monster_brains: Arc::new(Mutex::new(monster_ai::ServerBrains::new())),
-            server_monster_ai: Arc::new(std::sync::atomic::AtomicBool::new(
-                !cfg!(test) && crate::world_config::world_config().server_monster_ai,
-            )),
             housing_io,
             cape_textures,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),

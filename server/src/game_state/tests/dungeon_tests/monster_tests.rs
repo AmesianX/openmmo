@@ -5,8 +5,6 @@ use onlinerpg_shared::dungeon::GRID;
 const DEPTH: u8 = 1;
 const FLOOR: i8 = -(DEPTH as i8);
 
-/// A spot on floor `DEPTH`, inside the entrance's footprint so the floor
-/// change resolves the dungeon from it.
 fn inside(entrance: &DungeonEntranceDef) -> Position {
     Position {
         x: entrance.x,
@@ -15,9 +13,6 @@ fn inside(entrance: &DungeonEntranceDef) -> Position {
     }
 }
 
-/// A player standing on floor `DEPTH`, registered with the floor runtime so
-/// the exit path counts it as an occupant. Entry populates the floor's spawn
-/// slots, so the first occupant added is who the monsters belong to.
 async fn add_occupant(
     game_state: &GameState,
     name: &str,
@@ -35,16 +30,12 @@ async fn add_occupant(
     id
 }
 
-/// Walks `player_id` off the floor the way a stair climb does, without the
-/// position fan-out — these tests are about `leave_dungeon_floor` itself.
 async fn leave_floor(game_state: &GameState, player_id: &PlayerId, entrance: &DungeonEntranceDef) {
     game_state
-        .handle_player_floor_change(player_id, FLOOR, 0, &inside(entrance), &entrance.position())
+        .teleport_player(player_id, entrance.position(), 0.0, 0)
         .await;
 }
 
-/// Kills `player_id` and revives it, the exit route the client used to patch
-/// around. Stairs, /escape and teleports share its `finish_position_update`.
 async fn die_and_respawn(game_state: &GameState, player_id: &PlayerId) {
     game_state
         .players
@@ -56,7 +47,6 @@ async fn die_and_respawn(game_state: &GameState, player_id: &PlayerId) {
     game_state.respawn_player(player_id).await;
 }
 
-/// The monsters the floor's spawn slots are holding, which floor entry filled.
 async fn floor_monster_ids(game_state: &GameState, entrance: &DungeonEntranceDef) -> Vec<String> {
     let ids: Vec<String> = {
         let dungeons = game_state.dungeons.read().await;
@@ -78,17 +68,25 @@ async fn floor_monster_ids(game_state: &GameState, entrance: &DungeonEntranceDef
     ids
 }
 
-fn removed_ids(msgs: &[ServerMessage]) -> Vec<String> {
-    msgs.iter()
-        .filter_map(|m| match m {
-            ServerMessage::MonsterRemoved { monster_id }
-            | ServerMessage::MonsterControlReleased { monster_id } => Some(monster_id.clone()),
+fn visible_ids(messages: &[ServerMessage]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            ServerMessage::MonsterSpawned { monster } => Some(monster.id.clone()),
             _ => None,
         })
         .collect()
 }
 
-/// Asserts `rx` was told about exactly `ids`, in any order.
+fn removed_ids(msgs: &[ServerMessage]) -> Vec<String> {
+    msgs.iter()
+        .filter_map(|m| match m {
+            ServerMessage::MonsterRemoved { monster_id } => Some(monster_id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 fn assert_removed_exactly(msgs: &[ServerMessage], ids: &[String], context: &str) {
     let mut removed = removed_ids(msgs);
     removed.sort();
@@ -98,9 +96,6 @@ fn assert_removed_exactly(msgs: &[ServerMessage], ids: &[String], context: &str)
     assert_eq!(removed, expected, "{context}");
 }
 
-/// The slot spawn path must tag its monsters `DungeonSlot`: that tag is what
-/// exempts them from the ownership sweep's despawn and the abandonment
-/// despawn — the floor owns their removal.
 #[tokio::test]
 async fn floor_slots_spawn_dungeon_slot_lifecycle_monsters() {
     let game_state = make_test_game_state("dungeon_slot_lifecycle");
@@ -118,54 +113,36 @@ async fn floor_slots_spawn_dungeon_slot_lifecycle_monsters() {
     }
 }
 
-/// The leaver's client is what simulates its monsters, and it keeps rendering
-/// them until told otherwise. Handing them to whoever stayed behind without
-/// telling the leaver leaves it holding monsters it no longer owns.
 #[tokio::test]
 async fn leaving_a_still_occupied_floor_tells_the_leaver_its_monsters_are_gone() {
     let game_state = make_test_game_state("dungeon_leave_reassign");
     let entrance = first_dungeon(&game_state);
     let leaver = add_occupant(&game_state, "leaver", &entrance).await;
-    let stayer = add_occupant(&game_state, "stayer", &entrance).await;
+    add_occupant(&game_state, "stayer", &entrance).await;
     let ids = floor_monster_ids(&game_state, &entrance).await;
 
-    let mut leaver_rx = game_state.register_direct_channel(&leaver).await;
-    let mut stayer_rx = game_state.register_direct_channel(&stayer).await;
-    drain(&mut leaver_rx);
+    let mut leaver_rx = DirectRx(
+        game_state.register_connection_channel(&leaver).await,
+        Default::default(),
+    );
+    let mut stayer_rx = game_state.register_direct_channel(&pid("stayer")).await;
+    let visible = visible_ids(&drain(&mut leaver_rx));
+    assert!(!visible.is_empty());
     drain(&mut stayer_rx);
 
     leave_floor(&game_state, &leaver, &entrance).await;
 
     for id in &ids {
-        assert_eq!(
-            owner_of(&game_state, id).await,
-            Some(stayer),
-            "monster {id} should have gone to the player still on the floor"
-        );
+        assert!(game_state.monsters.read().await.get(id).is_some());
     }
     assert_removed_exactly(
         &drain(&mut leaver_rx),
-        &ids,
-        "the leaver needs MonsterRemoved for every monster it handed over",
+        &visible,
+        "the leaver needs MonsterRemoved for every previously visible monster",
     );
-    let assigned: Vec<String> = drain(&mut stayer_rx)
-        .iter()
-        .filter_map(|m| match m {
-            ServerMessage::MonsterAssigned { monster } => Some(monster.id.clone()),
-            _ => None,
-        })
-        .collect();
-    for id in &ids {
-        assert!(
-            assigned.contains(id),
-            "the new owner needs MonsterAssigned for {id} to start running its AI"
-        );
-    }
+    assert!(removed_ids(&drain(&mut stayer_rx)).is_empty());
 }
 
-/// The last player out despawns the floor. The removal broadcast is filtered
-/// to the monster's floor, which the now-surfaced leaver is no longer on, so
-/// without a direct message it keeps ghosts whose ids no longer exist.
 #[tokio::test]
 async fn emptying_a_floor_tells_the_leaver_its_monsters_are_gone() {
     let game_state = make_test_game_state("dungeon_leave_despawn");
@@ -173,8 +150,12 @@ async fn emptying_a_floor_tells_the_leaver_its_monsters_are_gone() {
     let leaver = add_occupant(&game_state, "solo", &entrance).await;
     let ids = floor_monster_ids(&game_state, &entrance).await;
 
-    let mut leaver_rx = game_state.register_direct_channel(&leaver).await;
-    drain(&mut leaver_rx);
+    let mut leaver_rx = DirectRx(
+        game_state.register_connection_channel(&leaver).await,
+        Default::default(),
+    );
+    let visible = visible_ids(&drain(&mut leaver_rx));
+    assert!(!visible.is_empty());
 
     leave_floor(&game_state, &leaver, &entrance).await;
 
@@ -186,7 +167,7 @@ async fn emptying_a_floor_tells_the_leaver_its_monsters_are_gone() {
     }
     assert_removed_exactly(
         &drain(&mut leaver_rx),
-        &ids,
+        &visible,
         "the leaver needs MonsterRemoved for every despawned monster",
     );
     assert!(
@@ -195,12 +176,8 @@ async fn emptying_a_floor_tells_the_leaver_its_monsters_are_gone() {
     );
 }
 
-/// A dungeon floor is wider than the event radius, so the AOI rule
-/// `tick_monster_ownership` uses would find no candidate and despawn monsters
-/// out from under a player still fighting on the far side of the floor.
-/// Occupancy, not proximity, is what a floor hands off by.
 #[tokio::test]
-async fn a_floor_mate_out_of_range_still_inherits_rather_than_losing_the_monsters() {
+async fn a_floor_mate_out_of_range_keeps_the_monsters_alive() {
     let game_state = make_test_game_state("dungeon_leave_far_side");
     let entrance = first_dungeon(&game_state);
     let leaver = add_occupant(&game_state, "leaver", &entrance).await;
@@ -231,54 +208,29 @@ async fn a_floor_mate_out_of_range_still_inherits_rather_than_losing_the_monster
 
     leave_floor(&game_state, &leaver, &entrance).await;
 
+    game_state.tick_monster_despawns().await;
     for id in &ids {
-        assert_eq!(
-            owner_of(&game_state, id).await,
-            Some(far),
-            "monster {id} should go to the floor's remaining occupant, not despawn"
-        );
+        assert!(game_state.monsters.read().await.get(id).is_some());
     }
 }
 
-/// What the client is left holding after a real exit, not just what
-/// `leave_dungeon_floor` sends. The exit only touches the leaver's own
-/// monsters; the ones it merely watched are cleared by the floor-aware AOI
-/// diff in `fanout_player_position_update`, which has to reach back to the
-/// floor from the world spawn to find them. Both halves have to land for the
-/// client to be able to drop its own by-floor purge.
 #[tokio::test]
-async fn dying_beside_a_party_member_clears_watched_monsters_as_well_as_owned_ones() {
+async fn dying_beside_a_party_member_clears_watched_monsters() {
     let game_state = make_test_game_state("dungeon_leave_party_respawn");
     let entrance = first_dungeon(&game_state);
     let leaver = add_occupant(&game_state, "leaver", &entrance).await;
-    let stayer = add_occupant(&game_state, "stayer", &entrance).await;
-    let ids = floor_monster_ids(&game_state, &entrance).await;
-    assert!(
-        ids.len() >= 2,
-        "need a monster each to test the not-owned half"
+    add_occupant(&game_state, "stayer", &entrance).await;
+    let mut leaver_rx = DirectRx(
+        game_state.register_connection_channel(&leaver).await,
+        Default::default(),
     );
-
-    // Give the stayer one of them, so the leaver is holding a monster whose
-    // ownership the exit never touches.
-    let not_owned = ids[0].clone();
-    game_state
-        .monsters
-        .write()
-        .await
-        .reassign_owner(&not_owned, stayer, 0);
-    assert_eq!(
-        owner_of(&game_state, &not_owned).await,
-        Some(stayer),
-        "the not-owned half is only tested if the monster really moved"
-    );
-
-    let mut leaver_rx = game_state.register_direct_channel(&leaver).await;
-    drain(&mut leaver_rx);
+    let visible = visible_ids(&drain(&mut leaver_rx));
+    assert!(!visible.is_empty());
 
     die_and_respawn(&game_state, &leaver).await;
 
     let removed = removed_ids(&drain(&mut leaver_rx));
-    for id in &ids {
+    for id in &visible {
         assert!(
             removed.contains(id),
             "respawning off a shared floor must clear {id}; got {removed:?}"
@@ -286,12 +238,6 @@ async fn dying_beside_a_party_member_clears_watched_monsters_as_well_as_owned_on
     }
 }
 
-/// Dying alone in a dungeon is the case the client's by-floor purge was
-/// written for, and the one it hooks: `finish_position_update` runs the floor
-/// change before the position fan-out, so the despawned monsters are already
-/// out of the registry when the AOI diff looks for them. Only the direct
-/// message to the old owner reaches the leaver — and respawn lands at the
-/// world spawn, far enough that no radius-filtered broadcast would.
 #[tokio::test]
 async fn dying_alone_on_a_floor_clears_the_monsters_the_exit_despawned() {
     let game_state = make_test_game_state("dungeon_leave_solo_respawn");
@@ -299,13 +245,20 @@ async fn dying_alone_on_a_floor_clears_the_monsters_the_exit_despawned() {
     let leaver = add_occupant(&game_state, "solo", &entrance).await;
     let ids = floor_monster_ids(&game_state, &entrance).await;
 
-    let mut leaver_rx = game_state.register_direct_channel(&leaver).await;
-    drain(&mut leaver_rx);
+    let mut leaver_rx = DirectRx(
+        game_state.register_connection_channel(&leaver).await,
+        Default::default(),
+    );
+    let visible = visible_ids(&drain(&mut leaver_rx));
+    assert!(!visible.is_empty());
 
     die_and_respawn(&game_state, &leaver).await;
 
+    assert!(ids
+        .iter()
+        .all(|id| game_state.monsters.try_read().unwrap().get(id).is_none()));
     let removed = removed_ids(&drain(&mut leaver_rx));
-    for id in &ids {
+    for id in &visible {
         assert!(
             removed.contains(id),
             "respawning out of a dungeon must clear {id}; got {removed:?}"
@@ -313,10 +266,6 @@ async fn dying_alone_on_a_floor_clears_the_monsters_the_exit_despawned() {
     }
 }
 
-/// Emptying a floor used to zero every slot's respawn clock, including the
-/// boss's — so a party could step onto the stairs and back to refight the
-/// guardian every couple of minutes, each kill a guaranteed weapon drop.
-/// A slain boss now holds its slot until the dungeon resets.
 #[tokio::test]
 async fn a_slain_boss_does_not_return_when_the_floor_empties() {
     let game_state = make_test_game_state("boss_slot_holds");
@@ -352,8 +301,6 @@ async fn a_slain_boss_does_not_return_when_the_floor_empties() {
     );
 }
 
-/// A slain slot keeps its timer when the floor empties, so a solo hunter
-/// can't disconnect (or step onto the stairs) and re-enter for a free respawn.
 #[tokio::test]
 async fn emptying_a_floor_keeps_slain_slots_on_their_respawn_timer() {
     let game_state = make_test_game_state("slain_slot_keeps_timer");

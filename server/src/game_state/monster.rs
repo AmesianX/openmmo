@@ -1,150 +1,25 @@
-use crate::types::{MonsterLifecycle, MonsterState, PlayerId, Position, ServerMessage};
-use std::collections::hash_map::Entry;
-use std::collections::HashSet;
-use tracing::{debug, info, warn};
+use crate::types::{MonsterLifecycle, MonsterState, Position, ServerMessage};
+use tracing::{debug, info};
 
-/// Keep spawns this many meters clear of every no-spawn zone (towns), so the
-/// area *around* a town stays empty too. Mirrors the client's TOWN_MARGIN.
 pub(super) const NO_SPAWN_MARGIN: f32 = 30.0;
-
-/// Headroom over a monster's run speed at which its move token bucket refills,
-/// absorbing jitter between the owner's simulation clock and packet arrival.
-const MONSTER_MOVE_SPEED_SLACK: f32 = 1.2;
-/// Capacity of a monster's move token bucket (meters). Bounds the jump an idle
-/// monster could bank up — set just above the ~10m longest legitimate wander
-/// leg (`DEFAULT_MAX_MOVE_DIST`) — while still absorbing a burst of frames that
-/// the network delivered bunched together.
-const MONSTER_MOVE_BUDGET_CAP_METERS: f32 = 12.0;
-/// How far a reported monster Y may sit from the server's own ground sample
-/// before the move is refused. Absorbs the mismatch between the client's
-/// terrain snap and the server's sample without leaving enough room to clear
-/// the furniture the passability sweep guards.
-const MONSTER_GROUND_Y_TOLERANCE_METERS: f32 = 0.25;
-/// Run speed assumed for a monster whose type has no definition (only test /
-/// misconfigured types). Kept just above the player's own speed so an unknown
-/// type stays tightly bounded rather than inheriting a fast monster's leeway.
-const DEFAULT_MONSTER_RUN_SPEED: f32 = 3.5;
-/// Metres from town before an ambient type one level higher starts spawning.
-/// What you meet on the surface follows where you stand, not your level.
 const AMBIENT_SPAWN_METERS_PER_LEVEL: f32 = 70.0;
-/// Monsters the ownership sweep visits per lock acquisition, so it never holds
-/// the registry — written by every kill and every move — for all 135k. A write
-/// between chunks can reorder the map and hide monsters from that sweep; the
-/// next tick restarts from zero over a fresh order, so a reconcile is at worst
-/// delayed a few ticks, never skipped.
-const OWNERSHIP_SCAN_CHUNK: usize = 4_000;
-/// How long after an ownership change a non-owner move is still treated as an
-/// in-flight packet from the normal handoff, rather than a stale controller.
-const STALE_CONTROLLER_GRACE_MS: u64 = 2_000;
+const DESPAWN_SCAN_CHUNK: usize = 4_000;
 
-/// One tick's view of the roster, bucketed by cell, so the ownership sweep
-/// locks it once rather than once per monster.
-type PlayerSnapshot = std::collections::HashMap<super::SpatialCell, Vec<(PlayerId, Position, i8)>>;
-
-/// Who, if anyone, is inside a monster's AOI.
-enum Attendance {
-    /// Nobody — invisible to every client.
-    Nobody,
-    /// The owner is there, so its client is simulating the monster.
-    Owner,
-    /// Someone else is, but the owner is not: the nearest candidate to adopt it.
-    Bystander(PlayerId),
-}
-
-/// How `update_monster_position` treats the mover: the owner simulates, a
-/// stale controller is released, everything else (dead, unknown, in-flight
-/// packets inside the handoff grace window) is dropped silently.
-enum MoveGate {
-    Owner { position: Position, floor_level: i8 },
-    Ignore,
-    Stale(Box<crate::types::Monster>),
-}
-
-/// One reassignment for `hand_off_monsters` to apply. Picking the candidate is
-/// the caller's job; this is just the request.
-pub(super) struct Handoff {
-    pub monster_id: String,
-    pub new_owner: PlayerId,
-}
-
-/// owner → the ids it owns, so the spawn cap is O(1) and a disconnect finds
-/// its handful of monsters without walking the whole map. Its own struct so
-/// `MonsterRegistry` can update it while holding a `&mut Monster` — separate
-/// fields, so the borrows stay disjoint. State plays no part: a corpse stays
-/// filed under its owner until it is removed, because a disconnect has to
-/// clear corpses too.
-#[derive(Default, PartialEq)]
-struct OwnedIds {
-    by_owner: std::collections::HashMap<PlayerId, HashSet<String>>,
-}
-
-impl OwnedIds {
-    fn add(&mut self, owner: Option<PlayerId>, id: &str) {
-        let Some(owner) = owner else {
-            return;
-        };
-        self.by_owner
-            .entry(owner)
-            .or_default()
-            .insert(id.to_string());
-    }
-
-    fn remove(&mut self, owner: Option<PlayerId>, id: &str) {
-        let Some(owner) = owner else {
-            return;
-        };
-        // Empty sets are dropped, so a disconnected player's key does not
-        // linger.
-        let Entry::Occupied(mut entry) = self.by_owner.entry(owner) else {
-            return;
-        };
-        entry.get_mut().remove(id);
-        if entry.get().is_empty() {
-            entry.remove();
-        }
-    }
-
-    fn len_for(&self, owner: &PlayerId) -> usize {
-        self.by_owner.get(owner).map(|ids| ids.len()).unwrap_or(0)
-    }
-
-    fn for_owner(&self, owner: &PlayerId) -> impl Iterator<Item = &str> {
-        self.by_owner
-            .get(owner)
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
-    }
-}
-
-/// The monster map plus an owner index and a cell index, so the spawn cap is
-/// O(1) instead of a scan and an AOI query visits only nearby monsters instead
-/// of the whole map. Both indexes carry corpses, since clients still see them.
-///
-/// `get_mut` hands out a plain `&mut Monster` for health and timestamp edits.
-/// Changing `owner_id` through it would desync the owner index and `position`
-/// the cell index — route those through `reassign_owner` / `set_position`.
 #[derive(Default)]
 pub(crate) struct MonsterRegistry {
     monsters: std::collections::HashMap<String, crate::types::Monster>,
-    ids_by_owner: OwnedIds,
-    /// Stored positions are canonical in X
-    /// (`client_monster_move_stores_canonical_world_x`), which is what lets the
-    /// index find them across the world seam.
+    /// Canonical X positions keep queries correct across the world seam.
     cells: super::SpatialIndex<String>,
 }
 
 impl MonsterRegistry {
-    /// Monsters within AOI range of either position — a superset of the two
-    /// AOIs, so the only monsters a move between them can bring into or out of
-    /// view. Callers still test the exact distance.
-    pub(crate) fn near_either(
-        &self,
-        a: &Position,
-        b: &Position,
-    ) -> impl Iterator<Item = &crate::types::Monster> {
+    /// Nearby candidates; callers check exact distance.
+    pub(crate) fn near<'a>(
+        &'a self,
+        position: &'a Position,
+    ) -> impl Iterator<Item = &'a crate::types::Monster> {
         self.cells
-            .keys_near_either(a, b, super::EVENT_DELIVERY_RADIUS)
+            .keys_near(position, super::EVENT_DELIVERY_RADIUS)
             .filter_map(|id| self.monsters.get(id.as_str()))
     }
 
@@ -153,13 +28,10 @@ impl MonsterRegistry {
         id: String,
         monster: crate::types::Monster,
     ) -> Option<crate::types::Monster> {
-        // Unfile whatever this key held first, so a replacement cannot leave
-        // the old monster's entries behind — or drop its own.
+        // Remove the old index entry before replacing the monster.
         let replaced = self.remove(&id);
         let position = monster.position;
-        let owner = monster.owner_id;
         self.monsters.insert(id.clone(), monster);
-        self.ids_by_owner.add(owner, id.as_str());
         self.cells.insert(id, &position);
         replaced
     }
@@ -168,7 +40,6 @@ impl MonsterRegistry {
         let removed = self.monsters.remove(id);
         if let Some(monster) = &removed {
             self.cells.remove(id, &monster.position);
-            self.ids_by_owner.remove(monster.owner_id, id);
         }
         removed
     }
@@ -197,34 +68,14 @@ impl MonsterRegistry {
         self.monsters.is_empty()
     }
 
-    /// Monsters a player owns — how much its client is simulating, which is
-    /// what an ownership handoff balances on. Broader than the ambient spawn
-    /// cap it also gates: dungeon and admin-spawned monsters are exempt from
-    /// that cap but still counted here.
-    /// Corpses included — they still cost fanout, so adoption load balancing
-    /// counts them. The spawn cap uses `owned_alive_by`.
-    pub(crate) fn owned_by(&self, owner: &PlayerId) -> usize {
-        self.ids_by_owner.len_for(owner)
-    }
-
-    /// Live monsters only — the spawn cap ignores corpses, so a kill frees
-    /// its slot immediately instead of for the corpse's fade time. O(cap):
-    /// walks the owner's handful of ids, not the map.
-    pub(crate) fn owned_alive_by(&self, owner: &PlayerId) -> usize {
-        self.ids_by_owner
-            .for_owner(owner)
-            .filter(|id| {
-                self.monsters
-                    .get(*id)
-                    .is_some_and(|m| m.state != MonsterState::Dead)
+    pub(crate) fn alive_near(&self, position: &Position, floor: i8) -> usize {
+        self.near(position)
+            .filter(|monster| {
+                monster.floor_level == floor
+                    && monster.state != MonsterState::Dead
+                    && monster.position.dist_xz_sq(position) <= super::EVENT_DELIVERY_RADIUS.powi(2)
             })
             .count()
-    }
-
-    /// Every monster id a player owns — what a disconnect has to clear,
-    /// without scanning the map.
-    pub(crate) fn ids_owned_by(&self, owner: &PlayerId) -> impl Iterator<Item = &str> {
-        self.ids_by_owner.for_owner(owner)
     }
 
     pub(crate) fn mark_dead(&mut self, id: &str) {
@@ -233,29 +84,7 @@ impl MonsterRegistry {
         }
     }
 
-    /// Returns the updated monster and the owner it actually had, so callers
-    /// can announce the handoff to the real previous owner — the one planned
-    /// at scan time may have been outraced by a concurrent adoption.
-    pub(crate) fn reassign_owner(
-        &mut self,
-        id: &str,
-        new_owner: PlayerId,
-        now: u64,
-    ) -> Option<(&crate::types::Monster, Option<PlayerId>)> {
-        let monster = self.monsters.get_mut(id)?;
-        let previous_owner = monster.owner_id;
-        self.ids_by_owner.remove(previous_owner, id);
-        self.ids_by_owner.add(Some(new_owner), id);
-        monster.owner_id = Some(new_owner);
-        monster.owner_since = now;
-        Some((monster, previous_owner))
-    }
-
-    /// Move a monster, keeping its index entry in step, and return it so callers
-    /// can fan the move out without a second lookup. A position written through
-    /// `get_mut` instead would leave the monster indexed where it used to stand:
-    /// invisible to arriving players, and announced as departed to the ones it
-    /// walked toward.
+    /// Move the monster and its spatial index entry together.
     pub(crate) fn set_position(
         &mut self,
         id: &str,
@@ -268,19 +97,7 @@ impl MonsterRegistry {
         Some(monster)
     }
 
-    /// Whether the owner index files exactly what the map says — the invariant
-    /// the spawn cap and the disconnect cleanup depend on.
-    #[cfg(test)]
-    pub(crate) fn owner_index_matches_map(&self) -> bool {
-        let mut expected = OwnedIds::default();
-        for (id, monster) in &self.monsters {
-            expected.add(monster.owner_id, id);
-        }
-        self.ids_by_owner == expected
-    }
-
-    /// Whether the cell index holds exactly the buckets the map implies — the
-    /// invariant every AOI query depends on.
+    /// Verify the spatial index against the registry.
     #[cfg(test)]
     pub(crate) fn cell_index_matches_map(&self) -> bool {
         let mut expected = super::SpatialIndex::default();
@@ -309,72 +126,38 @@ impl super::GameState {
             .find(|r| r.monster_type == monster_type)
     }
 
-    /// Create a monster, notify nearby players, and return it (or None if limit reached).
-    /// `lifecycle` names who owns the monster's removal; `level_override`
-    /// applies depth scaling (health here, combat stats in combat.rs).
-    /// Dungeon-slot spawns skip the ambient per-player cap — their spawn
-    /// slots are the cap.
+    /// Spawn and publish a monster; dungeon slots have their own population limit.
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn_monster(
         &self,
         monster_type: String,
         position: Position,
         rotation: f32,
-        owner_id: Option<PlayerId>,
         floor_level: i8,
         lifecycle: MonsterLifecycle,
         level_override: Option<u8>,
         aggressive: bool,
     ) -> Option<crate::types::Monster> {
-        // Ambient lifecycle only: a slot monster's cap is its floor's slots,
-        // and an admin-spawned type with no ambient rule has none.
-        let capped_owner = owner_id.filter(|_| {
-            lifecycle == MonsterLifecycle::Ambient
-                && Self::find_ambient_rule(&monster_type).is_some()
-        });
-
-        // O(cap) against the owner index: this runs on every spawn, tens of
-        // thousands of times per tick at target population.
-        if let Some(owner) = capped_owner {
-            let max_per_player =
-                crate::world_config::world_config().max_monsters_per_player as usize;
-            let owned = self.monsters.read().await.owned_alive_by(&owner);
-            if owned >= max_per_player {
-                warn!("Monster spawn rejected: player {owner} already owns {owned} monsters");
-                return None;
-            }
-        }
-
-        let owner_number = match owner_id.as_ref() {
-            Some(owner_id) => self.get_or_assign_player_number(owner_id).await,
-            None => 0,
-        };
-        let spawn_count = {
-            let mut id_state = self.id_state.write().await;
-            let counter = id_state.owner_spawn_counts.entry(owner_number).or_insert(0);
-            *counter = counter.saturating_add(1);
-            *counter
-        };
-        let id = format!("m{}_{}", owner_number, spawn_count);
-
         let def = self.monster_defs.get(&monster_type);
         let base_health = def.map(|d| d.max_health()).unwrap_or(10);
-        // Depth scaling never weakens a monster below its definition
-        // health (bosses have a hand-tuned health larger than their
-        // level's formula value).
+        // Depth scaling preserves any higher authored health, including bosses.
         let health = match level_override {
             Some(level) => {
                 base_health.max(crate::game::combat::monster_max_health_for_level(level))
             }
             None => base_health,
         };
+        let id = {
+            let mut ids = self.id_state.write().await;
+            ids.next_monster_number += 1;
+            format!("m{}", ids.next_monster_number)
+        };
         let monster = crate::types::Monster {
-            id: id.clone(),
+            id,
             monster_type: monster_type.clone(),
             position,
             rotation,
             state: MonsterState::Idle,
-            owner_id,
             health,
             max_health: health,
             floor_level,
@@ -382,54 +165,31 @@ impl super::GameState {
             aggressive,
             lifecycle,
             last_attack_at: 0,
-            last_move_at: Self::now_ms(),
-            // Starts empty: the monster spawns beside its owner and its first
-            // reported position is the spawn point, so nothing legitimate needs
-            // budget yet. The bucket then fills as real time passes.
-            move_budget: 0.0,
-            owner_since: Self::now_ms(),
         };
 
         let mut monsters = self.monsters.write().await;
+        if lifecycle == MonsterLifecycle::Ambient
+            && Self::find_ambient_rule(&monster_type).is_some()
+            && monsters.alive_near(&position, floor_level)
+                >= crate::world_config::world_config().max_nearby_monsters as usize
+        {
+            return None;
+        }
+        let id = monster.id.clone();
         monsters.insert(id.clone(), monster.clone());
         let total = monsters.len();
         info!(
-            "Spawned {} {} at ({:.1},{:.1}) for owner #{} (total: {})",
-            monster_type, id, position.x, position.z, owner_number, total
+            "Spawned {} {} at ({:.1},{:.1}) (total: {})",
+            monster_type, id, position.x, position.z, total
         );
 
-        self.publish_nearby(
-            &monster.position,
-            monster.floor_level,
-            ServerMessage::MonsterSpawned {
-                monster: self.wire_monster(&monster),
-            },
-            None,
-        )
-        .await;
+        self.publish_subject_change(ServerMessage::MonsterSpawned {
+            monster: monster.clone(),
+        });
         Some(monster)
     }
 
-    /// The owner applies its moves optimistically and the normal fanout skips
-    /// it, so a silent reject would desync it until reconnect. Echoes the
-    /// authoritative state back to the mover instead.
-    fn move_correction(monster_id: String, monster: &crate::types::Monster) -> ServerMessage {
-        ServerMessage::MonsterMoved {
-            monster_id,
-            position: monster.position,
-            rotation: monster.rotation,
-            state: monster.state,
-            target_position: monster.position,
-            owner_id: monster.owner_id,
-            chasing: None,
-        }
-    }
-
-    /// The Y a move to `to` should land on: the ground delta applied to the
-    /// stored Y, so an off-ground offset is carried rather than snapped away.
-    /// Ambient spawns are grounded by `ambient_spawn.rs`, but `/spawnmob`
-    /// seeds Y from the admin's pose, and such a monster stays off-ground for
-    /// life. `None` means refuse the move, not "no opinion".
+    /// Apply the terrain delta while preserving any spawn height offset.
     pub(super) async fn expected_monster_move_y(
         &self,
         floor_level: i8,
@@ -466,642 +226,98 @@ impl super::GameState {
         Some(from.y + to_ground - from_ground)
     }
 
-    pub async fn update_monster_position(
-        &self,
-        mover_id: &PlayerId,
-        monster_id: String,
-        mut new_position: Position,
-        rotation: f32,
-        state: MonsterState,
-        mut target_position: Position,
-    ) {
-        // The server simulates: a client's move is noise, not a stale brain.
-        if self.server_monster_ai() {
-            return;
-        }
-        // Dead is rejected like malformed input: only server combat may kill a
-        // monster.
-        let input_valid = new_position.is_finite()
-            && rotation.is_finite()
-            && target_position.is_finite()
-            && state != MonsterState::Dead;
-        let gate = {
-            let monsters = self.monsters.read().await;
-            match monsters.get(&monster_id) {
-                None => MoveGate::Ignore,
-                Some(monster) if monster.is_controllable_by(mover_id) => MoveGate::Owner {
-                    position: monster.position,
-                    floor_level: monster.floor_level,
-                },
-                Some(monster)
-                    if monster.state == MonsterState::Dead
-                        || Self::now_ms().saturating_sub(monster.owner_since)
-                            <= STALE_CONTROLLER_GRACE_MS =>
-                {
-                    MoveGate::Ignore
-                }
-                Some(monster) => MoveGate::Stale(Box::new(monster.clone())),
-            }
-        };
-        let (sample_from, floor_level) = match gate {
-            MoveGate::Owner {
-                position,
-                floor_level,
-            } => (position, floor_level),
-            MoveGate::Ignore => return,
-            // A stale controller missed its release and is simulating a brain
-            // it no longer owns: tell it to drop the brain.
-            MoveGate::Stale(monster) => {
-                warn!(
-                    "Stale controller {} moved monster {} owned by {:?}",
-                    mover_id, monster_id, monster.owner_id
-                );
-                self.send_direct_message(
-                    mover_id,
-                    ServerMessage::MonsterControlReleased {
-                        monster_id: monster.id,
-                    },
-                )
-                .await;
-                return;
-            }
-        };
-        if input_valid {
-            // Store canonical X like player moves do; see
-            // client_monster_move_stores_canonical_world_x.
-            new_position = new_position.wrapped_x();
-            target_position = target_position.wrapped_x();
-        }
-        // Run speed is ground-projected, so charge horizontal travel once and
-        // cap height changes independently. Euclidean distance would
-        // double-charge ordinary slopes that the terrain snap adds.
-        let dx = onlinerpg_shared::shortest_world_delta_x(sample_from.x, new_position.x);
-        let dz = new_position.z - sample_from.z;
-        let horizontal = (dx * dx + dz * dz).sqrt();
-        let raw_dist = horizontal.max((new_position.y - sample_from.y).abs());
-        // `f32::max` swallows NaN, so `input_valid` — not `raw_dist` — is what
-        // keeps malformed input out of the height sample.
-        let expected_y = if input_valid && raw_dist <= MONSTER_MOVE_BUDGET_CAP_METERS {
-            self.expected_monster_move_y(floor_level, sample_from, new_position)
-                .await
-        } else {
-            None
-        };
-        let now = Self::now_ms();
-        let (old_position, owner_id, monster) = {
-            let mut monsters = self.monsters.write().await;
-
-            let Some(monster) = monsters.get_mut(&monster_id) else {
-                return;
-            };
-            if !monster.is_controllable_by(mover_id) {
-                return;
-            }
-            let accepted = 'check: {
-                if !input_valid {
-                    break 'check false;
-                }
-                // The height sample released the lock, so a concurrent move
-                // would have left `expected_y` stale.
-                if monster.position != sample_from {
-                    break 'check false;
-                }
-                // Rate-limit client-reported movement with a token bucket that
-                // refills at the monster's run speed. Movement is simulated by the
-                // owning client, so without this an owner could teleport the monster
-                // onto any player and use it as an unlimited-range weapon
-                // (broadcast_monster_attack's reach check only sees the post-move
-                // position). The bucket lets a legit burst of frames the network
-                // delivered bunched together spend banked allowance, while its cap
-                // bounds the jump an idle monster can bank, and its refill rate the
-                // sustained speed.
-                let run_speed = self
-                    .monster_defs
-                    .get(&monster.monster_type)
-                    .map(|d| d.run_speed)
-                    .unwrap_or(DEFAULT_MONSTER_RUN_SPEED);
-                let elapsed_s = now.saturating_sub(monster.last_move_at) as f32 / 1000.0;
-                let budget = (monster.move_budget
-                    + run_speed * MONSTER_MOVE_SPEED_SLACK * elapsed_s)
-                    .min(MONSTER_MOVE_BUDGET_CAP_METERS);
-                monster.last_move_at = now;
-                // Bank the refill up front so a refused move keeps recovering;
-                // only an accepted one spends it.
-                monster.move_budget = budget;
-                if raw_dist > budget {
-                    warn!(
-                        "Rejected monster move {:.0}m (budget {:.1}m): monster {} by {}",
-                        raw_dist, budget, monster_id, mover_id
-                    );
-                    break 'check false;
-                }
-                let Some(expected_y) = expected_y else {
-                    debug!("No ground height for monster {monster_id} move by {mover_id}");
-                    break 'check false;
-                };
-                if (new_position.y - expected_y).abs() > MONSTER_GROUND_Y_TOLERANCE_METERS {
-                    warn!(
-                        "Rejected monster Y {:.2} (expected {:.2}): monster {} by {} from ({:.2},{:.2},{:.2}) to ({:.2},{:.2})",
-                        new_position.y, expected_y, monster_id, mover_id,
-                        sample_from.x, sample_from.y, sample_from.z,
-                        new_position.x, new_position.z
-                    );
-                    break 'check false;
-                }
-                new_position.y = expected_y;
-                let dist = horizontal.max((expected_y - monster.position.y).abs());
-                if dist > budget {
-                    break 'check false;
-                }
-                // A move that reports an unchanged position can't cross anything,
-                // and attack cadence reports plenty of them.
-                let blocked = dist > 0.0 && {
-                    let cache = self.passability_read();
-                    let floor = super::passability::authoritative_floor(&cache, &monster.position);
-                    // Sweep in unwrapped X so a seam-crossing move stays the short
-                    // local segment `dist` measured.
-                    let to_x = monster.position.x + dx;
-                    super::passability::wrapped_block_info(
-                        &cache,
-                        monster.position.x,
-                        monster.position.z,
-                        to_x,
-                        new_position.z,
-                        floor,
-                        monster.position.y,
-                    )
-                    .is_some()
-                };
-                if blocked {
-                    warn!(
-                        "Rejected monster move through blocked terrain: {monster_id} by {mover_id}"
-                    );
-                    break 'check false;
-                }
-                monster.move_budget = budget - dist;
-                true
-            };
-            if !accepted {
-                let correction = Self::move_correction(monster_id, monster);
-                self.interest_lock().correct_monster_movement(
-                    &self.wire_monster(monster),
-                    correction.clone(),
-                    *mover_id,
-                );
-                drop(monsters);
-                self.send_direct_message(mover_id, correction).await;
-                return;
-            }
-            let old_position = monster.position;
-            monster.rotation = rotation;
-            monster.state = state;
-            // Through the registry so the cell index follows the monster.
-            let Some(monster) = monsters.set_position(&monster_id, new_position) else {
-                return;
-            };
-            (old_position, monster.owner_id, monster.clone())
-        };
-
-        self.fanout_monster_position_update(
-            &monster,
-            old_position,
-            ServerMessage::MonsterMoved {
-                monster_id,
-                position: new_position,
-                rotation,
-                state,
-                target_position,
-                owner_id,
-                // Client-simulated AI relays no chase intent (the field only
-                // flows from server brains); live aim is off in that mode.
-                chasing: None,
-            },
-            owner_id.as_ref(),
-        )
-        .await;
-    }
-
-    pub(super) async fn fanout_monster_position_update(
-        &self,
-        monster: &crate::types::Monster,
-        old_position: Position,
-        update_msg: ServerMessage,
-        skip_player_id: Option<&PlayerId>,
-    ) {
-        let _ = old_position;
-        let departed_owner = {
-            let mut interest = self.interest_lock();
-            let id = format!("monster:{}", monster.id);
-            let was = monster
-                .owner_id
-                .filter(|owner| interest.watches_subject(*owner, &id));
-            interest.publish_monster_movement(
-                &self.wire_monster(monster),
-                update_msg,
-                skip_player_id.copied(),
-            );
-            was.filter(|owner| !interest.watches_subject(*owner, &id))
-        };
-        if let Some(owner) = departed_owner {
-            self.release_monsters_left_behind(
-                &owner,
-                vec![(
-                    monster.id.clone(),
-                    monster.position,
-                    monster.floor_level,
-                    monster.lifecycle,
-                )],
-            )
-            .await;
-        }
-    }
-
-    /// Pick an adopter inside each monster's AOI: least loaded first, nearest
-    /// on ties. The load is seeded from what each candidate already simulates
-    /// and carries this batch's not-yet-applied picks, so a scattering party's
-    /// monsters spread instead of piling on whoever is nearest. Monsters with
-    /// nobody in range come back as orphans, with their lifecycle, for the
-    /// caller's policy — despawn or park.
-    async fn plan_handoffs(
-        &self,
-        abandoned: Vec<(String, Position, i8, MonsterLifecycle)>,
-        old_owner: &PlayerId,
-    ) -> (Vec<Handoff>, Vec<(String, MonsterLifecycle)>) {
-        let mut load: std::collections::HashMap<PlayerId, usize> = std::collections::HashMap::new();
-        let mut handoffs = Vec::new();
-        let mut orphans = Vec::new();
-        for (monster_id, position, floor_level, lifecycle) in abandoned {
-            // The old owner may still be in the roster (a disconnect removes it
-            // later; a walk-out has merely moved), so never let it adopt its
-            // own monsters.
-            let candidates = self
-                .players_within_position(
-                    &position,
-                    floor_level,
-                    super::EVENT_DELIVERY_RADIUS,
-                    Some(old_owner),
-                )
-                .await;
-            if candidates.is_empty() {
-                orphans.push((monster_id, lifecycle));
-                continue;
-            }
-            for (candidate, _) in &candidates {
-                if let std::collections::hash_map::Entry::Vacant(entry) = load.entry(*candidate) {
-                    entry.insert(self.monsters.read().await.owned_by(candidate));
-                }
-            }
-            let Some((new_owner, _)) =
-                candidates
-                    .into_iter()
-                    .min_by(|(a_id, a_dist), (b_id, b_dist)| {
-                        load[a_id]
-                            .cmp(&load[b_id])
-                            .then_with(|| a_dist.total_cmp(b_dist))
-                    })
-            else {
-                continue;
-            };
-            *load.entry(new_owner).or_default() += 1;
-            handoffs.push(Handoff {
-                monster_id,
-                new_owner,
-            });
-        }
-        (handoffs, orphans)
-    }
-
-    /// Hand a departing player's monsters to players still inside their AOI,
-    /// least loaded first, and despawn the rest. Same rule as the walk-out
-    /// release, except the owner is not coming back, so a dungeon monster that
-    /// gets this far is despawned rather than left for the floor. (In practice
-    /// `remove_player` walks a dungeon player off its floor first, so those are
-    /// already reassigned by the time this runs.)
-    pub async fn remove_monsters_by_owner(&self, owner_id: &PlayerId) {
-        let owned: Vec<(String, Position, i8, MonsterLifecycle)> = {
-            let monsters = self.monsters.read().await;
-            monsters
-                .ids_owned_by(owner_id)
-                .filter_map(|id| monsters.get(id))
-                .map(|m| (m.id.clone(), m.position, m.floor_level, m.lifecycle))
-                .collect()
-        };
-        if owned.is_empty() {
-            return;
-        }
-
-        let (handoffs, orphans) = self.plan_handoffs(owned, owner_id).await;
-        debug!(
-            "Owner {} left: {} monsters handed off, {} despawned",
-            owner_id,
-            handoffs.len(),
-            orphans.len()
-        );
-        self.hand_off_monsters(handoffs).await;
-        self.despawn_monsters(orphans.into_iter().map(|(id, _)| id).collect())
-            .await;
-    }
-
-    /// The owner can no longer see these monsters and its client is dropping
-    /// their brains, so ownership is settled by the same event instead of by a
-    /// later sweep. Each monster goes to a player still inside its AOI when
-    /// there is one. With nobody in range, an ambient orphan is despawned on
-    /// the spot — nobody can see it, and keeping it would only hold a cap
-    /// slot — while a dungeon-slot orphan is parked: its floor owns removal,
-    /// and `adopt_unattended_monsters` re-arms it when someone walks back in.
-    /// Every branch tells the old owner `MonsterRemoved` exactly once, which
-    /// is both its release and its AOI removal.
-    pub(super) async fn release_monsters_left_behind(
-        &self,
-        owner_id: &PlayerId,
-        abandoned: Vec<(String, Position, i8, MonsterLifecycle)>,
-    ) {
-        let (handoffs, orphans) = self.plan_handoffs(abandoned, owner_id).await;
-        self.hand_off_monsters(handoffs).await;
-        let (expired, parked): (Vec<_>, Vec<_>) = orphans
-            .into_iter()
-            .partition(|(_, lifecycle)| lifecycle.despawns_when_unattended());
-        self.despawn_monsters(expired.into_iter().map(|(id, _)| id).collect())
-            .await;
-        for (monster_id, _) in parked {
-            debug!("Monster {} parked: owner {} left", monster_id, owner_id);
-            self.send_direct_message(owner_id, ServerMessage::MonsterRemoved { monster_id })
-                .await;
-        }
-    }
-
-    /// Monsters that just entered `player_id`'s view with no owner inside
-    /// their own AOI — parked dungeon monsters, or strays a race left behind.
-    /// Nobody is simulating them, so the viewer adopts them on sight.
-    pub(super) async fn adopt_unattended_monsters(
-        &self,
-        player_id: &PlayerId,
-        entered: &[crate::types::Monster],
-    ) {
-        if entered.is_empty() {
-            return;
-        }
-        let adoptions: Vec<Handoff> = {
-            let players = self.players.read().await;
-            entered
-                .iter()
-                .filter(|monster| {
-                    let attended = monster
-                        .owner_id
-                        .and_then(|id| players.get(&id))
-                        .is_some_and(|owner| Self::watches(owner, monster));
-                    !attended
-                })
-                .map(|monster| Handoff {
-                    monster_id: monster.id.clone(),
-                    new_owner: *player_id,
-                })
-                .collect()
-        };
-        self.hand_off_monsters(adoptions).await;
-    }
-
-    /// How far from town an ambient type starts spawning — one step per level
-    /// above the first, so the gate follows `monsters.csv` instead of being
-    /// authored per rule. Unknown types gate nothing.
+    /// Minimum town distance for an ambient type, derived from its level.
     pub(crate) fn min_ambient_town_distance(&self, monster_type: &str) -> f32 {
         self.monster_defs.get(monster_type).map_or(0.0, |def| {
             f32::from(def.level.saturating_sub(1)) * AMBIENT_SPAWN_METERS_PER_LEVEL
         })
     }
 
-    /// Same predicate as `player_ids_within_position(.., EVENT_DELIVERY_RADIUS)`
-    /// but against a per-tick snapshot, so a sweep over every monster locks the
-    /// roster once instead of twice per monster.
-    /// The adopter is the least-loaded candidate, nearest on ties — one player
-    /// must not inherit a scattering party's whole population while others
-    /// stand idle. `inflight` counts this tick's not-yet-applied handoffs on
-    /// top of what `owned_by` already answers.
-    fn attendance(
-        monsters: &MonsterRegistry,
-        inflight: &std::collections::HashMap<PlayerId, usize>,
-        roster: &PlayerSnapshot,
-        monster: &crate::types::Monster,
-    ) -> Attendance {
-        let mut best: Option<(PlayerId, usize, f32)> = None;
-        for (id, dist_sq) in Self::players_in_aoi(roster, &monster.position, monster.floor_level) {
-            if monster.owner_id == Some(id) {
-                return Attendance::Owner;
-            }
-            let load = monsters.owned_by(&id) + inflight.get(&id).copied().unwrap_or(0);
-            if best.is_none_or(|(_, best_load, best_dist)| {
-                load < best_load || (load == best_load && dist_sq < best_dist)
-            }) {
-                best = Some((id, load, dist_sq));
-            }
+    pub(super) async fn despawn_monsters_near(&self, position: &Position) {
+        let candidates = self
+            .monsters
+            .read()
+            .await
+            .near(position)
+            .filter(|monster| monster.lifecycle.despawns_when_unattended())
+            .map(|monster| monster.id.clone())
+            .collect::<Vec<_>>();
+        self.despawn_unwatched_monsters(&candidates).await;
+    }
+
+    pub(super) async fn despawn_unwatched_monsters(&self, candidates: &[String]) {
+        if candidates.is_empty() {
+            return;
         }
-        match best {
-            Some((id, ..)) => Attendance::Bystander(id),
-            None => Attendance::Nobody,
-        }
-    }
-
-    /// Whether `player` is inside the monster's AOI — the per-player form of
-    /// `players_in_aoi`.
-    pub(super) fn watches(player: &crate::types::Player, monster: &crate::types::Monster) -> bool {
-        let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
-        player.floor_level == monster.floor_level
-            && monster.position.dist_xz_sq(&player.position) <= radius_sq
-    }
-
-    /// Every player inside the AOI around `position` on `floor_level`, with the
-    /// squared distance. Lazy so `attendance` can stop at the owner; the seam
-    /// can yield a player twice, which neither caller minds.
-    fn players_in_aoi<'a>(
-        roster: &'a PlayerSnapshot,
-        position: &'a Position,
-        floor_level: i8,
-    ) -> impl Iterator<Item = (PlayerId, f32)> + 'a {
-        let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
-        super::SpatialCell::within_radius(position, super::EVENT_DELIVERY_RADIUS)
-            .filter_map(move |cell| roster.get(&cell))
-            .flatten()
-            .filter_map(move |(id, player_position, floor)| {
-                let dist_sq = position.dist_xz_sq(player_position);
-                (*floor == floor_level && dist_sq <= radius_sq).then_some((*id, dist_sq))
-            })
-    }
-
-    /// Safety-net reconcile of every monster against who is actually near it.
-    ///
-    /// Ownership is settled event-side — the player-move AOI diff releases
-    /// what a mover leaves behind, the move fanout catches a monster wandering
-    /// off, and entering AOI adopts unattended monsters — so on a healthy
-    /// server this sweep finds nothing. What it repairs is the race those
-    /// events can lose (two players crossing a monster's AOI boundary at the
-    /// same instant, each seeing the other as still inside) and whatever a bug
-    /// strands: a bystander adopts, and a monster nobody can see is deleted,
-    /// since keeping it would only hold a cap slot against a monster that
-    /// exists for no player.
-    ///
-    /// Handoff applies to every lifecycle; the despawn only to monsters whose
-    /// lifecycle leaves removal here — a dungeon floor despawns its own slot
-    /// spawns on exit.
-    pub async fn tick_monster_ownership(&self) {
-        let roster = {
+        let removed = {
             let players = self.players.read().await;
-            let mut roster = PlayerSnapshot::default();
-            for (id, player) in players.iter() {
-                roster
-                    .entry(super::SpatialCell::from_position(&player.position))
-                    .or_default()
-                    .push((*id, player.position, player.floor_level));
-            }
-            roster
+            let spatial = self.player_spatial_cells.read().await;
+            let mut monsters = self.monsters.write().await;
+            let expired = candidates
+                .iter()
+                .filter(|id| {
+                    monsters.get(id).is_some_and(|monster| {
+                        monster.lifecycle.despawns_when_unattended()
+                            && !spatial
+                                .keys_near(&monster.position, super::EVENT_DELIVERY_RADIUS)
+                                .filter_map(|id| players.get(id))
+                                .any(|player| Self::watches(player, monster))
+                    })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            expired
+                .into_iter()
+                .filter_map(|id| {
+                    let monster = monsters.remove(&id)?;
+                    self.publish_subject_change(ServerMessage::MonsterRemoved {
+                        monster_id: id.clone(),
+                    });
+                    debug!("Despawned unattended monster {}", monster.id);
+                    Some(id)
+                })
+                .collect::<Vec<_>>()
         };
-
-        let mut expired: Vec<String> = Vec::new();
-        let mut handoffs: Vec<Handoff> = Vec::new();
-        let mut inflight: std::collections::HashMap<PlayerId, usize> =
-            std::collections::HashMap::new();
-        let mut scanned = 0usize;
-        loop {
-            let mut chunk = 0usize;
-            let monsters = self.monsters.read().await;
-            for monster in monsters.values().skip(scanned).take(OWNERSHIP_SCAN_CHUNK) {
-                chunk += 1;
-                match Self::attendance(&monsters, &inflight, &roster, monster) {
-                    Attendance::Owner => {}
-                    Attendance::Bystander(new_owner) => {
-                        *inflight.entry(new_owner).or_default() += 1;
-                        handoffs.push(Handoff {
-                            monster_id: monster.id.clone(),
-                            new_owner,
-                        })
-                    }
-                    Attendance::Nobody => {
-                        if monster.lifecycle.despawns_when_unattended() {
-                            expired.push(monster.id.clone());
-                        }
-                    }
-                }
-            }
-            scanned += chunk;
-            if chunk < OWNERSHIP_SCAN_CHUNK {
-                break;
-            }
+        for id in removed {
+            self.brain_death(&id).await;
         }
+    }
 
-        self.hand_off_monsters(handoffs).await;
-        self.despawn_monsters(expired).await;
+    pub(super) fn watches(player: &crate::types::Player, monster: &crate::types::Monster) -> bool {
+        player.floor_level == monster.floor_level
+            && monster.position.dist_xz_sq(&player.position) <= super::EVENT_DELIVERY_RADIUS.powi(2)
+    }
+
+    pub async fn tick_monster_despawns(&self) {
+        let candidates = self
+            .monsters
+            .read()
+            .await
+            .values()
+            .filter(|monster| monster.lifecycle.despawns_when_unattended())
+            .map(|monster| monster.id.clone())
+            .collect::<Vec<_>>();
+        for chunk in candidates.chunks(DESPAWN_SCAN_CHUNK) {
+            self.despawn_unwatched_monsters(chunk).await;
+        }
     }
 
     pub(super) async fn despawn_monsters(&self, expired: Vec<String>) {
-        if expired.is_empty() {
-            return;
-        }
-        let removed: Vec<crate::types::Monster> = {
+        let removed = {
             let mut monsters = self.monsters.write().await;
             expired
-                .iter()
-                .filter_map(|id| monsters.remove(id))
-                .collect()
+                .into_iter()
+                .filter_map(|id| {
+                    monsters.remove(&id)?;
+                    self.publish_subject_change(ServerMessage::MonsterRemoved {
+                        monster_id: id.clone(),
+                    });
+                    Some(id)
+                })
+                .collect::<Vec<_>>()
         };
-        let now = Self::now_ms();
-        for monster in removed {
-            if monster.lifecycle == MonsterLifecycle::Ambient {
-                // `owner_since` restarts on a handoff, so this is time held by
-                // the last owner, not always time alive.
-                debug!(
-                    "Ambient despawn {} {} after {}s held, state {:?}",
-                    monster.id,
-                    monster.monster_type,
-                    now.saturating_sub(monster.owner_since) / 1000,
-                    monster.state
-                );
-            } else {
-                debug!("Despawned monster {}", monster.id);
-            }
-            self.announce_monster_removed(&monster).await;
-        }
-    }
-
-    /// Deliberately ignores the per-player cap: the monster already exists, and
-    /// refusing would strand it. The adopter simply gets no new ambient spawns
-    /// until back under the cap.
-    pub(super) async fn hand_off_monsters(&self, handoffs: Vec<Handoff>) {
-        if handoffs.is_empty() {
-            return;
-        }
-        // Chunked like the ownership scan: a mass handoff (server-wide
-        // reconcile after a burst of disconnects) must not hold the registry
-        // write lock, or the channel map, across all of it at once.
-        for batch in handoffs.chunks(OWNERSHIP_SCAN_CHUNK) {
-            let now = Self::now_ms();
-            let reassigned: Vec<(crate::types::Monster, PlayerId, Option<PlayerId>)> = {
-                let mut monsters = self.monsters.write().await;
-                batch
-                    .iter()
-                    .filter_map(|h| {
-                        let (monster, previous_owner) =
-                            monsters.reassign_owner(&h.monster_id, h.new_owner, now)?;
-                        Some((monster.clone(), h.new_owner, previous_owner))
-                    })
-                    .collect()
-            };
-            for (monster, _, _) in &reassigned {
-                self.interest_lock()
-                    .refresh_monster(&self.wire_monster(monster));
-            }
-            // With server brains a handoff is bookkeeping only: no client
-            // held a brain, so nothing is released or assigned.
-            if self.server_monster_ai() {
-                continue;
-            }
-            // One channel-map guard per batch; `tx.send` is synchronous.
-            let channels = self.direct_channels.read().await;
-            for (monster, new_owner, old_owner) in reassigned {
-                debug!("Monster {} handed to {}", monster.id, new_owner);
-                if let Some(tx) = old_owner
-                    .filter(|id| *id != new_owner)
-                    .and_then(|id| channels.get(&id))
-                {
-                    if let Some(bytes) =
-                        super::encode_server_msg(&ServerMessage::MonsterControlReleased {
-                            monster_id: monster.id.clone(),
-                        })
-                    {
-                        let _ = tx.send(bytes);
-                    }
-                }
-                if let Some(tx) = channels.get(&new_owner) {
-                    if let Some(bytes) =
-                        super::encode_server_msg(&ServerMessage::MonsterAssigned { monster })
-                    {
-                        let _ = tx.send(bytes);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Tell everyone who can see a removed monster, and its owner, that it is
-    /// gone. The owner is messaged separately: it may be outside the AOI and
-    /// still holding the monster's AI.
-    async fn announce_monster_removed(&self, monster: &crate::types::Monster) {
-        let removal = ServerMessage::MonsterRemoved {
-            monster_id: monster.id.clone(),
-        };
-        self.publish_nearby(
-            &monster.position,
-            monster.floor_level,
-            removal.clone(),
-            monster.owner_id.as_ref(),
-        )
-        .await;
-        if let Some(owner_id) = monster.owner_id {
-            self.send_direct_message(
-                &owner_id,
-                ServerMessage::MonsterControlReleased {
-                    monster_id: monster.id.clone(),
-                },
-            )
-            .await;
+        for id in removed {
+            self.brain_death(&id).await;
         }
     }
 }

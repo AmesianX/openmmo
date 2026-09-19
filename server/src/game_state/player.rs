@@ -855,9 +855,6 @@ impl super::GameState {
         self.remove_player_tip_hat(player_id).await;
         self.drop_player_trade(player_id, "They left.").await;
         self.last_player_attacks.write().await.remove(player_id);
-        // A player disconnecting inside a dungeon leaves its floor first,
-        // so its monsters get reassigned (or despawned) instead of being
-        // dropped by remove_monsters_by_owner below.
         let dungeon_exit = {
             let players = self.players.read().await;
             players
@@ -870,8 +867,6 @@ impl super::GameState {
                 .await;
         }
 
-        self.remove_monsters_by_owner(player_id).await;
-
         // Release any trade-window holds: this player may have been shopping
         // with NPCs (free them if it was their last customer) or be a trading
         // NPC itself (forget its entry).
@@ -879,11 +874,7 @@ impl super::GameState {
 
         let removed_player_number = {
             let mut id_state = self.id_state.write().await;
-            let removed = id_state.player_numbers.remove(player_id);
-            if let Some(player_number) = removed {
-                id_state.owner_spawn_counts.remove(&player_number);
-            }
-            removed
+            id_state.player_numbers.remove(player_id)
         };
 
         let removed_player = {
@@ -910,6 +901,7 @@ impl super::GameState {
         if let Some(player) = removed_player {
             self.remove_player_spatial_cell(player_id, &player.position)
                 .await;
+            self.despawn_monsters_near(&player.position).await;
             info!(
                 "Player {} ({}) left the game{}",
                 player.name,
@@ -2567,39 +2559,7 @@ impl super::GameState {
         self.interest_lock()
             .publish_player_movement(player, *old_position, old_floor, update_msg);
         self.reconcile_view(player_id).await;
-        let (abandoned, entered) = {
-            let monsters = self.monsters.read().await;
-            let abandoned = monsters
-                .ids_owned_by(player_id)
-                .filter_map(|id| monsters.get(id))
-                .filter(|monster| {
-                    !self.interest_lock().visible_at(
-                        &format!("monster:{}", monster.id),
-                        player.position,
-                        player.floor_level,
-                    )
-                })
-                .map(|monster| {
-                    (
-                        monster.id.clone(),
-                        monster.position,
-                        monster.floor_level,
-                        monster.lifecycle,
-                    )
-                })
-                .collect::<Vec<_>>();
-            let entered = monsters
-                .near_either(&player.position, &player.position)
-                .filter(|monster| Self::watches(player, monster))
-                .cloned()
-                .collect::<Vec<_>>();
-            (abandoned, entered)
-        };
-        if !abandoned.is_empty() {
-            self.release_monsters_left_behind(player_id, abandoned)
-                .await;
-        }
-        self.adopt_unattended_monsters(player_id, &entered).await;
+        self.despawn_monsters_near(old_position).await;
         let stall_strayed = self
             .stalls
             .read()

@@ -293,6 +293,7 @@ async fn bow_mark_cooldown_is_atomic_and_survives_reconnect() {
             ..
         }
     )));
+    gs.add_player(make_player("spectator", 0.0, 0.0)).await;
     gs.remove_player(&caster).await;
     assert!(!gs.abilities.read().await.marks_target(&caster, "target"));
     let mut rx = add_mark_player(&gs, "reconnected", 1).await;

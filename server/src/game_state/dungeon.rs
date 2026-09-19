@@ -24,7 +24,6 @@ use tracing::{info, warn};
 
 use crate::types::PlayerId;
 
-use super::monster::Handoff;
 use super::GameState;
 
 const MONSTER_RESPAWN_MS_BY_PLAYER_COUNT: [u64; 5] = [
@@ -1147,19 +1146,11 @@ impl GameState {
                 .insert(*player_id, Self::now_ms());
         }
         self.reconcile_view(player_id).await;
-        self.populate_dungeon_floor(entrance_id, depth, player_id)
-            .await;
+        self.populate_dungeon_floor(entrance_id, depth).await;
     }
 
-    /// Spawn monsters into every free, respawn-ready slot of a floor and
-    /// assign their AI to `owner`. Claims slots under the lock, spawns
-    /// outside it, then records the ids.
-    pub(crate) async fn populate_dungeon_floor(
-        &self,
-        entrance_id: &str,
-        depth: u8,
-        owner: &PlayerId,
-    ) {
+    /// Claim free slots, spawn their monsters, and record the ids.
+    pub(crate) async fn populate_dungeon_floor(&self, entrance_id: &str, depth: u8) {
         let Some(entrance) = self.dungeon_defs.get(entrance_id) else {
             return;
         };
@@ -1209,7 +1200,6 @@ impl GameState {
                     monster_type,
                     pos,
                     0.0,
-                    Some(*owner),
                     -(depth as i8),
                     crate::types::MonsterLifecycle::DungeonSlot,
                     Some(level),
@@ -1242,10 +1232,6 @@ impl GameState {
                         },
                     );
                     drop(index);
-                    if !self.server_monster_ai() {
-                        self.send_direct_message(owner, ServerMessage::MonsterAssigned { monster })
-                            .await;
-                    }
                 }
                 (Some(slot), None) => {
                     slot.alive_monster_id = None;
@@ -1356,8 +1342,7 @@ impl GameState {
     }
 
     async fn leave_dungeon_floor(&self, player_id: &PlayerId, entrance_id: &str, depth: u8) {
-        // Occupancy + alive-monster snapshot under one lock.
-        let (remaining_owner, alive_ids) = {
+        let alive_ids = {
             let mut dungeons = self.dungeons.write().await;
             let Some(fr) = dungeons
                 .get_mut(entrance_id)
@@ -1366,77 +1351,43 @@ impl GameState {
                 return;
             };
             fr.players.remove(player_id);
-            let remaining = fr.players.keys().next().cloned();
-            let alive: Vec<String> = fr
-                .slots
-                .iter()
-                .filter_map(|s| s.alive_monster_id.clone())
-                .filter(|id| !id.is_empty())
-                .collect();
-            if remaining.is_none() {
-                // Timers stay, so leave-and-re-enter is not a free respawn.
-                for slot in &mut fr.slots {
-                    slot.alive_monster_id = None;
-                }
+            if !fr.players.is_empty() {
+                return;
             }
-            (remaining, alive)
+            // Preserve respawn timers when clearing the floor.
+            fr.slots
+                .iter_mut()
+                .filter_map(|slot| slot.alive_monster_id.take())
+                .filter(|id| !id.is_empty())
+                .collect::<Vec<_>>()
         };
 
-        match remaining_owner {
-            Some(new_owner) => {
-                // Any remaining occupant will do, rather than one inside the
-                // monster's AOI as `tick_monster_ownership` picks: a floor is
-                // wider than the AOI, so that rule would despawn monsters on a
-                // floor someone is still standing on.
-                let handoffs: Vec<Handoff> = {
-                    let monsters = self.monsters.read().await;
-                    alive_ids
-                        .iter()
-                        .filter(|id| {
-                            monsters
-                                .get(id)
-                                .is_some_and(|m| m.owner_id.as_ref() == Some(player_id))
-                        })
-                        .map(|id| Handoff {
-                            monster_id: id.clone(),
-                            new_owner,
-                        })
-                        .collect()
-                };
-                self.hand_off_monsters(handoffs).await;
-            }
-            None => {
-                // Floor emptied: despawn everything (only monsters respawn
-                // in a shared dungeon — and this bounds live monster count).
-                // The slot index goes first; `despawn_monsters` consumes the ids.
-                {
-                    let mut index = self.dungeon_monsters.write().await;
-                    for id in &alive_ids {
-                        index.remove(id);
-                    }
-                }
-                self.despawn_monsters(alive_ids).await;
+        {
+            let mut index = self.dungeon_monsters.write().await;
+            for id in &alive_ids {
+                index.remove(id);
             }
         }
+        self.despawn_monsters(alive_ids).await;
     }
 
     /// Periodic tick: refill expired spawn slots on occupied floors so
     /// monsters respawn while players camp a floor.
     pub async fn tick_dungeons(&self) {
-        let occupied: Vec<(String, u8, PlayerId)> = {
+        let occupied: Vec<(String, u8)> = {
             let dungeons = self.dungeons.read().await;
             dungeons
                 .iter()
                 .flat_map(|(id, rt)| {
-                    rt.floors.iter().filter_map(|(depth, fr)| {
-                        fr.players.keys().next().map(|p| (id.clone(), *depth, *p))
-                    })
+                    rt.floors
+                        .iter()
+                        .filter(|(_, fr)| !fr.players.is_empty())
+                        .map(|(depth, _)| (id.clone(), *depth))
                 })
                 .collect()
         };
-        for (entrance_id, depth, owner) in occupied {
-            self.populate_dungeon_floor(&entrance_id, depth, &owner)
-                .await;
+        for (entrance_id, depth) in occupied {
+            self.populate_dungeon_floor(&entrance_id, depth).await;
         }
     }
 

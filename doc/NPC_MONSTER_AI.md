@@ -1,5 +1,9 @@
 # NPC & Monster AI Architecture
 
+현재(2026-09-19, 프로토콜 85) 몬스터 AI는 서버 전용이다. 몬스터 소유·배정과 클라이언트 AI 실행 코드는 제거했다. agent-client는 NPC 캐릭터의 LLM·이동·전투만 담당한다. 일반 스폰은 같은 층의 주변 생존 수(`maxNearbyMonsters`, 기본 8)로 제한하고, 가시성·던전 생명주기로 제거한다. 현재 구조는 [SERVER_SIDE_MONSTER_AI.md](SERVER_SIDE_MONSTER_AI.md)를 따른다.
+
+아래는 이전 단계의 설계 기록이며, 몬스터 소유 모델과 클라이언트 AI 설명은 폐기되었다.
+
 ## 대원칙
 
 **서버는 client와 agent-client를 구분하지 않는다.** WebSocket으로 오가는 프로토콜은 완전히 동일하다. 서버 입장에서 NPC든 PC든 모두 같은 `Player`이고, 같은 `ClientMessage`/`ServerMessage`를 주고받는다.

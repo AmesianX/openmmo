@@ -142,7 +142,6 @@ impl SharedState {
                     EventUrgency::Routine
                 }
             }
-            ServerMessage::MonsterProvoked { .. } => EventUrgency::Routine,
 
             // Routine: world state changes
             ServerMessage::JoinSuccess { .. }
@@ -152,7 +151,6 @@ impl SharedState {
             | ServerMessage::PlayerAppeared { .. }
             | ServerMessage::PlayerDisappeared { .. }
             | ServerMessage::MonsterSpawned { .. }
-            | ServerMessage::MonsterAssigned { .. }
             | ServerMessage::MonsterDead { .. }
             | ServerMessage::MonsterRemoved { .. }
             | ServerMessage::XpGained { .. }
@@ -242,29 +240,6 @@ impl SharedState {
             // Auth/character events: routine (handled before game entry)
             _ => EventUrgency::Routine,
         }
-    }
-
-    fn handle_managed_monster_hit(
-        &mut self,
-        monster_id: &str,
-        player_id: &PlayerId,
-        hit: bool,
-        damage: u32,
-    ) {
-        if !self.monster_ai.manages(monster_id) {
-            return;
-        }
-
-        let world = self.world_cache.read().unwrap();
-        let commands = self.monster_ai.handle_monster_hit(
-            monster_id,
-            player_id,
-            hit,
-            damage,
-            world.passability_cache(),
-        );
-        drop(world);
-        self.pending_commands.extend(commands);
     }
 
     /// Answer a fishing beat the way a person would: after a reaction delay,
@@ -360,9 +335,6 @@ impl SharedState {
                     world.remove_dungeon_view(viewer);
                     world.remove_fence_view(viewer);
                     drop(world);
-                    for id in self.nearby_monsters.keys() {
-                        self.monster_ai.remove_monster(id);
-                    }
                     self.nearby_players.clear();
                     self.nearby_monsters.clear();
                     self.ground_items.clear();
@@ -857,28 +829,12 @@ impl SharedState {
             ServerMessage::MonsterSpawned { monster } => {
                 self.nearby_monsters
                     .insert(monster.id.clone(), monster.clone());
-                if monster.owner_id == self.self_player_id && self.self_player_id.is_some() {
-                    self.monster_ai.add_monster(monster);
-                }
-            }
-            ServerMessage::MonsterControlReleased { monster_id } => {
-                self.monster_ai.remove_monster(monster_id);
-                if let Some(monster) = self.nearby_monsters.get_mut(monster_id) {
-                    monster.owner_id = None;
-                }
-            }
-            ServerMessage::MonsterAssigned { monster } => {
-                if let Some(active) = self.nearby_monsters.get_mut(&monster.id) {
-                    *active = monster.clone();
-                    self.monster_ai.add_monster(monster);
-                }
             }
             ServerMessage::MonsterDead { monster_id, .. } => {
                 if let Some(monster) = self.nearby_monsters.get_mut(monster_id) {
                     monster.health = 0;
                     monster.state = MonsterState::Dead;
                 }
-                self.monster_ai.handle_monster_dead(monster_id);
             }
             ServerMessage::MonsterRemoved { monster_id } => {
                 self.forget_monster(monster_id);
@@ -1123,25 +1079,9 @@ impl SharedState {
                 position,
                 rotation,
                 state,
-                owner_id,
                 ..
             } => {
                 self.apply_monster_pose(monster_id, *position, *rotation, *state);
-                // The fanout names the current owner; if it isn't us, any brain
-                // we still hold is stale from a missed handoff — drop it.
-                if owner_id.is_some() && *owner_id != self.self_player_id {
-                    if let Some(m) = self
-                        .nearby_monsters
-                        .get_mut(monster_id)
-                        .filter(|m| m.owner_id != *owner_id)
-                    {
-                        m.owner_id = *owner_id;
-                        self.monster_ai.remove_monster(monster_id);
-                    }
-                } else {
-                    self.monster_ai
-                        .apply_authoritative_position(monster_id, *position);
-                }
             }
             ServerMessage::HouseSpawned { ref house } => {
                 self.world_cache.write().unwrap().add_house(house.clone());
@@ -1172,22 +1112,6 @@ impl SharedState {
                     *segment_index as usize,
                     *is_open,
                 );
-            }
-            // Notify monster AI when a managed monster is attacked
-            ServerMessage::PlayerAttacked {
-                player_id,
-                monster_id,
-                hit,
-                damage,
-                ..
-            } => {
-                self.handle_managed_monster_hit(monster_id, player_id, *hit, *damage);
-            }
-            ServerMessage::MonsterProvoked {
-                player_id,
-                monster_id,
-            } => {
-                self.handle_managed_monster_hit(monster_id, player_id, false, 0);
             }
             // Fishing reflexes: answer bites/beats mechanically; the LLM only
             // decides whether to fish. Answers carry a human reaction delay
@@ -1244,7 +1168,6 @@ impl SharedState {
         match &msg {
             ServerMessage::GameState { .. }
             | ServerMessage::MonsterSpawned { .. }
-            | ServerMessage::MonsterAssigned { .. }
             | ServerMessage::MonsterMoved { .. }
             | ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }

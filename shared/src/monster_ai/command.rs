@@ -1,11 +1,11 @@
 //! Behavior input/output types: the internal [`AiState`], the [`NearbyPlayer`]
-//! projection fed into each tick, and the [`AiCommand`]/[`TickResult`] outputs.
+//! projection fed into each tick, and [`AiCommand`] outputs.
 
 use crate::{MonsterState, PlayerId, Position};
 use serde::{Deserialize, Serialize};
 
 /// Internal behavior state (superset of network [`MonsterState`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AiState {
     #[default]
     Idle,
@@ -53,7 +53,7 @@ impl AiState {
 }
 
 /// Minimal player projection for behavior input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NearbyPlayer {
     pub id: PlayerId,
     pub position: Position,
@@ -62,8 +62,7 @@ pub struct NearbyPlayer {
 
 /// Other monsters' last-synced poses, for cell-occupancy separation
 /// (doc/MONSTER_SEPARATION.md). Caller filters out dead monsters.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct NearbyMonster {
     pub id: String,
     pub position: Position,
@@ -71,7 +70,6 @@ pub struct NearbyMonster {
     /// ([`MonsterState::is_stationary`]) occupy cells — a ~500ms-stale
     /// position is wrong for a mover.
     pub state: MonsterState,
-    #[serde(default)]
     pub path_floor: u8,
 }
 
@@ -83,12 +81,10 @@ pub struct ChaseAim {
     pub stop_range: f32,
 }
 
-/// Behavior output — translated by the caller into network messages.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+/// Behavior output applied by the server.
+#[derive(Debug, Clone)]
 pub enum AiCommand {
     Move {
-        monster_id: String,
         position: Position,
         rotation: f32,
         state: MonsterState,
@@ -103,17 +99,6 @@ pub enum AiCommand {
         chasing: Option<ChaseAim>,
     },
     Attack {
-        monster_id: String,
         target_player_id: PlayerId,
     },
-}
-
-/// Result of a single brain tick — always includes current position/rotation
-/// so the caller can update the visual even when no commands are emitted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TickResult {
-    pub commands: Vec<AiCommand>,
-    pub position: Position,
-    pub rotation: f32,
-    pub state: MonsterState,
 }

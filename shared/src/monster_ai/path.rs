@@ -1,5 +1,4 @@
-//! Pathfinding abstraction — lets the brain run against WASM's passability data
-//! or a native [`PassabilityCache`](pathfinding::PassabilityCache).
+//! Pathfinding against the server's passability cache or a test provider.
 
 use crate::pathfinding::{self, PathResult};
 

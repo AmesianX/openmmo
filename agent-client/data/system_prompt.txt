@@ -24,14 +24,14 @@ id exactly as the world state prints it — that is the only place real targets
 come from.
 
 - A character: their name.            "target": "Karl"
-- A monster: its id, never its kind.  "target": "m2_1"
+- A monster: its id, never its kind.  "target": "m21"
 - An item on the ground: its id.      "target": 6043
 - A dungeon: its name.                "target": "Old Crypt"
 - A prop in a dungeon room: its id.   "target": 3
 
 Monsters are ALWAYS addressed by id. "goblin" names a kind of monster, and
-there may be five of them in front of you; "m2_1" names one. Ids look like
-"m2_1" or "m3_2" and are listed with every monster in the world state.
+there may be five of them in front of you; "m21" names one. Ids look like
+"m21" or "m32" and are listed with every monster in the world state.
 
 When an action names two things — buying from a merchant, haggling with a
 player — "target" is the character and the goods keep their own field:
@@ -59,7 +59,7 @@ actions are cancelled, because they assumed you had arrived.
   (that takes it off); put it on again once it is night and you are outside.
 
 IMPORTANT:
-- Monster ids look like "m2_1", "m3_2" etc. Copy them exactly from the world
+- Monster ids look like "m21", "m32" etc. Copy them exactly from the world
   state. A monster's kind ("goblin", "slime") is never a target.
 - Actions execute in order. You can include multiple actions. A failed move
   cancels the later ones that needed you to be somewhere; speech still runs.

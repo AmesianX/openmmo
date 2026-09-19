@@ -1344,8 +1344,7 @@ async fn handle_client_message(
             // the start of a session and clears its friend stores there.
             responses.push(game_state.friend_list_message(&id).await);
             if rejoin_floor < 0 {
-                // Rejoining inside a dungeon: enter its floor (occupancy
-                // + lazy monster spawn with this player as AI owner).
+                // Restore floor occupancy and populate empty monster slots.
                 game_state
                     .handle_player_floor_change(&id, 0, rejoin_floor, &rejoin_pos, &rejoin_pos)
                     .await;
@@ -1442,29 +1441,6 @@ async fn handle_client_message(
             }
         }
 
-        ClientMessage::MonsterMove {
-            monster_id,
-            position,
-            rotation,
-            state: monster_state,
-            target_position,
-        } => {
-            if let Some(id) = &state.player_id {
-                game_state
-                    .update_monster_position(
-                        id,
-                        monster_id,
-                        position,
-                        rotation,
-                        monster_state,
-                        target_position,
-                    )
-                    .await;
-            } else {
-                warn!("Received monster move from client that is not in game");
-            }
-        }
-
         ClientMessage::UseAbility {
             ability,
             monster_id,
@@ -1516,19 +1492,6 @@ async fn handle_client_message(
                 game_state.stop_fishing(id).await;
             } else {
                 warn!("Received fishing stop from client that is not in game");
-            }
-        }
-
-        ClientMessage::MonsterAttack {
-            monster_id,
-            target_player_id,
-        } => {
-            if let Some(id) = &state.player_id {
-                game_state
-                    .broadcast_monster_attack(id, &monster_id, &target_player_id)
-                    .await;
-            } else {
-                warn!("Received monster attack from client that is not in game");
             }
         }
 
