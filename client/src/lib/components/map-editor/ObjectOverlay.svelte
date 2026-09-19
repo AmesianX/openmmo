@@ -38,6 +38,7 @@
     type FireParticles,
   } from '../../effects/fire-particles'
   import { getObjectModelPath } from '../../utils/modelPaths'
+  import { createSelectionBox } from '../../utils/objectSelectionBox'
   import {
     buildShopSignBoard,
     buildShopSignText,
@@ -46,10 +47,7 @@
   import type { Unsubscriber } from 'svelte/store'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 
-  const HIGHLIGHT_COLOR = new THREE.Color(0x44ccff)
   const PREVIEW_OPACITY = 0.5
-  const SELECTION_OPACITY = 0.9
-  const SELECTION_RENDER_ORDER = 999
   const GHOST_OPACITY = 0.3
 
   let tool = $state<EditorTool>('height')
@@ -258,25 +256,6 @@
         ;(child.material as THREE.Material).dispose()
       }
     })
-  }
-
-  function createSelectionBox(
-    center: THREE.Vector3,
-    size: THREE.Vector3
-  ): THREE.LineSegments {
-    const box = new THREE.BoxGeometry(size.x, size.y, size.z)
-    const geo = new THREE.EdgesGeometry(box)
-    box.dispose()
-    const mat = new THREE.LineBasicMaterial({
-      color: HIGHLIGHT_COLOR,
-      depthTest: false,
-      transparent: true,
-      opacity: SELECTION_OPACITY,
-    })
-    const lines = new THREE.LineSegments(geo, mat)
-    lines.position.copy(center)
-    lines.renderOrder = SELECTION_RENDER_ORDER
-    return lines
   }
 
   function translucentClone(m: THREE.Material, opacity: number) {

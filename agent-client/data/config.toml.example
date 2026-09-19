@@ -205,3 +205,10 @@ id = "estate_architect"
 account = "npc_estate_architect"
 gender = "male"
 llm = "codex"
+
+# ORKEA furniture shop clerk.
+[[npcs]]
+id = "grida"
+account = "npc_grida"
+gender = "female"
+llm = "codex"

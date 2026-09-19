@@ -92,6 +92,22 @@ blender -b --python-exit-code 1 -P tools/blender-scripts/export_character.py -- 
   --blend assets/estate_architect/estate_architect.blend
 ```
 
+### Grida / 그리다 — ORKEA 점원 (2026-09-20)
+
+- ORKEA에서 일할 오크 여성 점원. 캐릭터 이름은 **Grida (그리다)**, 에셋 이름은 `grida`.
+- 원화: [grida-concept.png](../images/characters/grida-concept.png), 사용자 제공 2026-09-20(원화 생성일 미확인). ComfyUI 로컬 실행, **`krea2_turbo_fp8_scaled.safetensors`** (Krea 2 Turbo FP8; 사용자 확인 및 PNG 메타데이터 일치). 기본 모델 라이선스는 [Krea 2 Community License Agreement](https://www.krea.ai/krea-2-licensing); 출력물 소유권은 §5.3, 상업 이용 조건은 §2.3을 따른다. 사용한 LoRA 정보는 원본 PNG의 ComfyUI 메타데이터에 보존.
+- 3D 생성: Meshy.ai **Premium** 등급(사용자 확인), Image to 3D API, 2026-09-20. [Meshy 유료 생성물 소유권 조건](https://help.meshy.ai/en/articles/10137554-what-is-the-ownership-of-the-generated-models) 적용. Meshy Community에 공개 게시하지 않음.
+- 생성 설정: `ai_model=meshy-7.1`, `model_type=standard`, `should_remesh=true`, `topology=triangle`, `target_polycount=10000`, A 포즈, PBR 텍스처 2048², `image_enhancement=false`로 원화 외형 유지. GLB·FBX·OBJ 요청.
+- 작업 ID: `01a0ba74-d31f-7744-bc58-31ef8c01e280`. 요청·결과 기록은 `assets/grida/generation.json`, 원화 출처 기록은 `assets/grida/concept-source.json`.
+- Meshy 원본: `assets/grida/grida_meshy.glb`, `grida_meshy.fbx`, `grida_meshy.obj`, `grida_meshy.mtl` 및 `texture_0_*.png`. OBJ의 `model.mtl`·`texture_0.png` 참조를 맞춘 Mixamo 업로드용 묶음은 `assets/grida/grida-mixamo.zip`.
+- **[미사용]** 리깅 전 검토본: `assets/grida/grida.glb`, `grida.blend`, `preview.png`, `preview-back.png`. 아래 Mixamo 리깅 모델로 교체.
+- 게임 모델: `client/public/models/characters/grida.glb` — **9,812 triangles**, 손가락 포함 **65본**, 키 1.90m, 발밑 원점, 1,972,300바이트. `Grida` 이름의 NPC 모델로 연결.
+- 리깅 원본: 사용자 제공 `/mnt/y/web_downloads/Idle (5).fbx` → `assets/grida/grida_mixamo.fbx` (Mixamo, 2026-09-20, 무료 서비스; 아래 Mixamo 라이선스 참조). 포함된 Idle 애니메이션은 제거하고 기존 게임 애니메이션 팩을 사용.
+- Blender 5.2.0 LTS에서 `tools/blender-scripts/export_character.py`로 변환. Meshy 텍스처 이름만 역할별로 정규화한 임시 GLB를 사용해 재질 이식, 면 단위 UV 최대 오차 0 확인. 키·발 원점 적용, `mixamorig:` 접두·emissive·본 scale 오차 제거. WebP q90, baseColor 2048², normal·metallicRoughness 1024². 작업 파일: `assets/grida/grida_rigged.blend`. 재현: `.venv/bin/python assets/grida/export_rig.py`.
+- 검증: GLB 본 이름·스킨 가중치·내장 텍스처·키·원점 확인. 실제 클라이언트 리타게팅으로 idle1·walk·run을 각각 12개 시점에서 검사하고 포즈 렌더 확인(`assets/grida/rig-idle1.png`, `rig-walk.png`, `rig-run.png`). 기록: `assets/grida/rig-validation.json`.
+- NPC 레지스트리 `grida` / `Grida`, 한국어 별칭 `그리다`. ORKEA 서쪽 계산 구역 옆 `(-1452.0, 1.0, 4777.0)` 근무 일정과 전시품·카트·출입구 결제 안내를 연결. 별도 개인 상점은 없으며 ORKEA의 기존 결제 흐름을 사용.
+- 생성 비용: **30 API 크레딧**(5,096 → 5,066).
+
 ## 텍스처 재패킹 (2026-08-06)
 
 Meshy/Tripo 내보내기가 노멀·metallicRoughness 맵을 2048² RGBA PNG로 임베드해

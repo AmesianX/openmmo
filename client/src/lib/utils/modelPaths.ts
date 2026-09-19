@@ -27,6 +27,7 @@ export const PINK_MAID_CHARACTER_MODEL_PATH = '/models/characters/pink_maid.glb'
 export const STEWARD_CHARACTER_MODEL_PATH = '/models/characters/steward.glb'
 export const ESTATE_ARCHITECT_CHARACTER_MODEL_PATH =
   '/models/characters/estate_architect.glb'
+export const GRIDA_CHARACTER_MODEL_PATH = '/models/characters/grida.glb'
 
 export const CHARACTER_ANIMATION_PACK_PATHS = {
   locomotion: '/models/animations/locomotion.glb',
@@ -84,6 +85,7 @@ const NPC_MODEL_OVERRIDES: Record<string, string> = {
   Cocoly: PINK_MAID_CHARACTER_MODEL_PATH,
   Aldwin: STEWARD_CHARACTER_MODEL_PATH,
   Rowan: ESTATE_ARCHITECT_CHARACTER_MODEL_PATH,
+  Grida: GRIDA_CHARACTER_MODEL_PATH,
 }
 
 export function getNpcModelPath(npcName: string): string | undefined {

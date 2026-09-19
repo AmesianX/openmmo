@@ -11,10 +11,12 @@
     estateFurnitureInteractionData,
   } from '../../utils/estateFurnitureModels'
   import { buildShopSignText, getShopSignStyle } from '../../utils/shop-sign'
+  import { createSelectionBox } from '../../utils/objectSelectionBox'
   import {
     estateFurnitureSelectionMode,
     estateFurnitureEditorActive,
     estateFurnitureCatalogOpen,
+    selectedEstateFurniture,
     selectEstateFurniture,
     beginEstateFurniturePlacementSave,
   } from '../../stores/estateFurniturePlacementStore'
@@ -447,6 +449,27 @@
     untrack(() => {
       for (const itemDefId of itemDefIds) loadModel(itemDefId)
     })
+  })
+
+  $effect(() => {
+    const selectedId = $selectedEstateFurniture?.id ?? movingFurnitureId
+    if (selectedId === undefined) return
+    const furniture = $estateChests.get(selectedId)
+    const visual = visuals.get(selectedId)
+    const source = furniture ? sources.get(furniture.item_def_id) : undefined
+    if (!visual || !source) return
+    const bounds = new THREE.Box3().setFromObject(source.scene)
+    if (bounds.isEmpty()) return
+    const selection = createSelectionBox(
+      bounds.getCenter(new THREE.Vector3()),
+      bounds.getSize(new THREE.Vector3())
+    )
+    visual.add(selection)
+    return () => {
+      selection.removeFromParent()
+      selection.geometry.dispose()
+      selection.material.dispose()
+    }
   })
 
   useTask((delta) => {
