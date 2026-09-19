@@ -511,6 +511,24 @@ class NetworkManager {
     })
   }
 
+  sendPlayerKeyboardMove(
+    position: Position,
+    rotation: number,
+    floorLevel: number,
+    forward: number,
+    sprinting: boolean
+  ) {
+    this.sendMessage({
+      PlayerKeyboardMove: {
+        position,
+        rotation,
+        floor_level: floorLevel,
+        forward,
+        sprinting,
+      },
+    })
+  }
+
   /** Floor change between waypoints — see ClientMessage::PlayerFloorChanged. */
   sendPlayerFloor(floorLevel: number) {
     this.sendMessage({ PlayerFloorChanged: { floor_level: floorLevel } })

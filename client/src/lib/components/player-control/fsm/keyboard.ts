@@ -1,151 +1,115 @@
 import {
   moveHorse,
   resolveHorseSteps,
-  angleDelta,
+  keyboardRotation,
+  KEYBOARD_TURN_RATE,
+  BACKWARD_SPEED,
 } from '../../../utils/horseMovement'
 import type { MovementConfig, Position } from '../../../utils/movementUtils'
-import { shortestWrappedDeltaX } from '../../../terrain/world-wrap'
+import { shortestWrappedDeltaX, wrapWorldX } from '../../../terrain/world-wrap'
 import type { InteractionExitKind } from './interaction'
-import type { SendPlayerMove } from './movement-substrate'
 
-// ───────────────────────────────────────────────────────────────────────────
-// Throttled move sender (server needs ~5Hz waypoints, not 3cm per-frame steps)
-// ───────────────────────────────────────────────────────────────────────────
+export interface KeyboardInput {
+  forward: number
+  turn: number
+}
 
-/** Distance between network samples; ≈7 sends/s at walk speed, matching the
- *  server's 5Hz movement tick. */
-const KEYBOARD_SEND_INTERVAL = 0.5
+export interface KeyboardTarget {
+  position: Position
+  rotation: number
+  forward: number
+}
 
 export interface KeyboardMoveSender {
-  /** Per-frame position after a successful step. Sends a replace on the first
-   *  step of a session, then appends a path sample every send interval. */
-  step(position: Position, rotation: number, turning?: boolean): void
-  /** Send the resting position once when the session ends (keys released or
-   *  step blocked) so the server converges on the exact stop point. */
-  flush(position: Position, rotation?: number): void
-  /** Drop the session without sending (another mover owns the queue). */
+  target(
+    position: Position,
+    rotation: number,
+    input: KeyboardInput,
+    speed: number,
+    dt: number,
+    mounted: boolean
+  ): KeyboardTarget
+  commitTarget(): void
+  flush(position: Position, rotation: number): void
   reset(): void
 }
 
 export function createKeyboardMoveSender(
-  send: SendPlayerMove,
-  turn?: (rotation: number, stop?: boolean) => void
+  send: (position: Position, rotation: number, forward: number) => void
 ): KeyboardMoveSender {
-  let lastSent: Position | null = null
-  let lastRotation = 0
-  let wasTurning = false
+  let target: KeyboardTarget | null = null
+  let sent: KeyboardTarget | null = null
+  let lastInput: KeyboardInput | null = null
+  let lastMounted = false
+  let walkingRotation = 0
+  let lastSpeed = 0
+  let elapsed = 0
   return {
-    step(position, rotation, turning = false) {
-      const changedDirection =
-        Math.abs(angleDelta(lastRotation, rotation)) > 0.01
-      lastRotation = rotation
-      if (turning) {
-        if (!wasTurning || changedDirection) {
-          if (turn) turn(rotation)
-          else send(position, rotation)
-        }
-        lastSent = { ...position }
-        wasTurning = true
-        return
+    target(position, rotation, input, speed, dt, mounted) {
+      elapsed += dt
+      const lookahead = Math.max(4, speed * 0.5)
+      const inputChanged =
+        lastInput === null ||
+        lastMounted !== mounted ||
+        lastInput.forward !== input.forward ||
+        lastInput.turn !== input.turn
+      if (!mounted && inputChanged) {
+        walkingRotation = rotation + Math.atan2(-input.turn, input.forward)
       }
-      if (wasTurning || lastSent === null) {
-        send(position, rotation)
-        lastSent = { ...position }
-        wasTurning = false
-        return
-      }
-      const dx = shortestWrappedDeltaX(lastSent.x, position.x)
-      const dz = position.z - lastSent.z
+      const forward = mounted ? input.forward : 1
       if (
-        dx * dx + dz * dz >=
-        KEYBOARD_SEND_INTERVAL * KEYBOARD_SEND_INTERVAL
+        target === null ||
+        inputChanged ||
+        lastSpeed !== speed ||
+        (mounted && input.turn !== 0 && elapsed >= 0.1) ||
+        (forward !== 0 &&
+          Math.hypot(
+            shortestWrappedDeltaX(position.x, target.position.x),
+            target.position.z - position.z
+          ) <=
+            lookahead / 2)
       ) {
-        send(position, rotation, undefined, true)
-        lastSent = { ...position }
+        const facing = mounted
+          ? rotation - input.turn * KEYBOARD_TURN_RATE * 0.15
+          : walkingRotation
+        target = {
+          position: {
+            x: wrapWorldX(position.x + Math.sin(facing) * lookahead * forward),
+            y: position.y,
+            z: position.z + Math.cos(facing) * lookahead * forward,
+          },
+          rotation: facing,
+          forward,
+        }
+        lastInput = { ...input }
+        lastMounted = mounted
+        lastSpeed = speed
+        elapsed = 0
+      }
+      return target
+    },
+    commitTarget() {
+      if (target !== null && target !== sent) {
+        send(target.position, target.rotation, target.forward)
+        sent = target
       }
     },
     flush(position, rotation) {
-      if (wasTurning && rotation !== undefined && turn) {
-        turn(rotation, true)
-        lastSent = null
-        wasTurning = false
-        return
-      }
-      if (lastSent === null) return
-      if (rotation !== undefined) {
-        if (turn && position.x === lastSent.x && position.z === lastSent.z)
-          turn(rotation)
-        else send(position, rotation)
-      } else if (position.x !== lastSent.x || position.z !== lastSent.z) {
-        send(position, lastRotation, undefined, true)
-      }
-      lastSent = null
+      if (sent !== null) send(position, rotation, sent.forward)
+      target = null
+      sent = null
+      elapsed = 0
     },
     reset() {
-      wasTurning = false
-      lastSent = null
+      target = null
+      sent = null
+      elapsed = 0
+      lastInput = null
     },
   }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// Tap-step tracker (a short tap completes one clean walking step)
-// ───────────────────────────────────────────────────────────────────────────
-
-/** Total distance of one tap step; a session shorter than this glides the
- *  rest of the way after release. */
-export const KEYBOARD_TAP_STEP = 0.5
-
-export interface KeyboardTapTracker {
-  /** Feed every pressed frame to record the session start and direction. */
-  track(position: Position, direction: KeyboardDirection | null): void
-  /** End the session. Returns a glide target (XZ) when the session moved but
-   *  stayed under the step distance; null otherwise. */
-  release(position: Position | null): { x: number; z: number } | null
-}
-
-export function createKeyboardTapTracker(): KeyboardTapTracker {
-  let start: Position | null = null
-  let lastDir: KeyboardDirection | null = null
-  return {
-    track(position, direction) {
-      if (start === null) start = { ...position }
-      if (direction) lastDir = direction
-    },
-    release(position) {
-      const s = start
-      const d = lastDir
-      start = null
-      lastDir = null
-      if (!s || !d || !position) return null
-      const dx = shortestWrappedDeltaX(s.x, position.x)
-      const dz = position.z - s.z
-      const moved = Math.hypot(dx, dz)
-      // No actual step (blocked at a wall, interaction-exit tap): don't
-      // conjure movement the player never started.
-      if (moved <= 1e-3) return null
-      const remaining = KEYBOARD_TAP_STEP - moved
-      if (remaining <= 0.01) return null
-      const len = Math.hypot(d.x, d.z) || 1
-      return {
-        x: position.x + (d.x / len) * remaining,
-        z: position.z + (d.z / len) * remaining,
-      }
-    },
-  }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Keyboard movement integrator (delta-time step with accel ramp, no waypoints)
-// ───────────────────────────────────────────────────────────────────────────
-
-export interface KeyboardDirection {
-  x: number
-  z: number
-}
-
-// Session-scoped speed ramp so keyboard starts match the click-move
-// acceleration curve instead of snapping to full speed.
+// Keyboard starts use the click-move acceleration curve.
 export interface KeyboardSpeedRamp {
   advance(config: MovementConfig, deltaTimeSeconds: number): number
   reset(): void
@@ -169,7 +133,9 @@ export function createKeyboardSpeedRamp(): KeyboardSpeedRamp {
 
 interface KeyboardMovementInput {
   currentPos: Position
-  direction: KeyboardDirection
+  input: KeyboardInput
+  rotation: number
+  backwardSpeed?: number
   config: MovementConfig
   deltaTimeSeconds: number
   speedRamp: KeyboardSpeedRamp
@@ -189,11 +155,7 @@ interface KeyboardMovementInput {
     dirZ: number
   ) => boolean
   writePlayerPosition: (position: Position, rotation: number) => void
-  sendPlayerMove: (
-    position: Position,
-    rotation: number,
-    turning?: boolean
-  ) => void
+  moveSender: KeyboardMoveSender
 }
 
 export type KeyboardMovementOutcome =
@@ -207,7 +169,9 @@ export type KeyboardMovementOutcome =
 
 export function applyKeyboardMovement({
   currentPos,
-  direction,
+  input,
+  rotation,
+  backwardSpeed = BACKWARD_SPEED,
   config,
   deltaTimeSeconds,
   speedRamp,
@@ -215,78 +179,80 @@ export function applyKeyboardMovement({
   isMovementBlocked,
   isUphillTooSteep,
   writePlayerPosition,
-  sendPlayerMove,
+  moveSender,
 }: KeyboardMovementInput): KeyboardMovementOutcome {
-  // Clamp tab-switch delta spikes so one frame can't teleport the player.
-  const dt = Math.min(deltaTimeSeconds, 0.1)
-  const desiredRotation = Math.atan2(direction.x, direction.z)
-  if (config.mountRotation !== undefined) {
+  const dt = Math.max(0, Math.min(deltaTimeSeconds, 0.1))
+  const mounted = config.mountRotation !== undefined
+  const speed = mounted && input.forward < 0 ? backwardSpeed : config.maxSpeed
+  const target = moveSender.target(
+    currentPos,
+    rotation,
+    input,
+    speed,
+    dt,
+    mounted
+  )
+  if (mounted && input.forward === 0) {
+    speedRamp.reset()
+    const facing = keyboardRotation(rotation, target.rotation, dt)
+    writePlayerPosition(currentPos, facing)
+    moveSender.commitTarget()
+    return { kind: 'moved', currentSpeed: 0, playerRotation: facing }
+  }
+  if (mounted) {
+    const reverseAngle = input.forward < 0 ? Math.PI : 0
     const result = moveHorse(
       currentPos,
-      config.mountRotation,
-      config.maxSpeed,
+      rotation + reverseAngle,
+      speed,
       dt,
-      desiredRotation,
+      target.position,
       config.mountTurnRadius
     )
-    const path = resolveHorseSteps(
-      result.mountSteps ?? [],
-      currentPos,
-      config.mountRotation,
-      { sampleHeight, isMovementBlocked, isUphillTooSteep }
-    )
+    const steps = result.mountSteps ?? []
+    for (const step of steps) step.rotation -= reverseAngle
+    const path = resolveHorseSteps(steps, currentPos, rotation, {
+      sampleHeight,
+      isMovementBlocked,
+      isUphillTooSteep,
+    })
     writePlayerPosition(path.position, path.rotation)
     if (path.blocked) return { kind: path.blocked }
-    sendPlayerMove(
-      path.position,
-      desiredRotation,
-      Math.abs(angleDelta(path.rotation, desiredRotation)) > 0.01
-    )
+    moveSender.commitTarget()
     return {
       kind: 'moved',
       currentSpeed: result.newSpeed,
       playerRotation: path.rotation,
     }
   }
-
   const currentSpeed = speedRamp.advance(config, dt)
-  const speed = currentSpeed * dt
-  const newX = currentPos.x + direction.x * speed
-  const newZ = currentPos.z + direction.z * speed
-
+  const dx = shortestWrappedDeltaX(currentPos.x, target.position.x)
+  const dz = target.position.z - currentPos.z
+  const distance = Math.hypot(dx, dz)
+  const fraction =
+    distance > 0 ? Math.min(1, (currentSpeed * dt) / distance) : 0
+  const newX = currentPos.x + dx * fraction
+  const newZ = currentPos.z + dz * fraction
   if (isMovementBlocked(currentPos.x, currentPos.z, newX, newZ, currentPos.y)) {
     return { kind: 'blocked' }
   }
-
   if (
+    distance > 0 &&
     isUphillTooSteep(
       currentPos.x,
       currentPos.z,
       currentPos.y,
-      direction.x,
-      direction.z
+      dx / distance,
+      dz / distance
     )
   ) {
     return { kind: 'slope_blocked' }
   }
-
-  const groundY = sampleHeight(newX, newZ)
-  const playerRotation = desiredRotation
-  const position = { x: newX, y: groundY, z: newZ }
-
-  writePlayerPosition(position, playerRotation)
-  sendPlayerMove(position, playerRotation)
-
-  return {
-    kind: 'moved',
-    currentSpeed,
-    playerRotation,
-  }
+  const facing = target.rotation
+  writePlayerPosition({ x: newX, y: sampleHeight(newX, newZ), z: newZ }, facing)
+  moveSender.commitTarget()
+  return { kind: 'moved', currentSpeed, playerRotation: facing }
 }
-
-// ───────────────────────────────────────────────────────────────────────────
-// Keyboard movement outcome application
-// ───────────────────────────────────────────────────────────────────────────
 
 export interface KeyboardMovementOutcomeActions {
   stopMovement: () => void
@@ -323,10 +289,6 @@ export function applyKeyboardMovementOutcome(
   }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// Keyboard frame (per-frame WASD step with click-move / combat preemption)
-// ───────────────────────────────────────────────────────────────────────────
-
 interface KeyboardFramePlayer {
   position: Position
 }
@@ -339,18 +301,17 @@ export interface KeyboardFrameActions extends KeyboardMovementOutcomeActions {
   markMoving: () => void
   setKeyboardIdleRuntime: () => void
   emitKeyboardPlayerState: () => void
-  /** Start a click-move to `target` to finish a tap step. */
-  requestMove: (target: { x: number; z: number }) => void
 }
 
 interface RunKeyboardFrameInput {
   currentPlayer: KeyboardFramePlayer | null
-  hasKeysPressed: boolean
   isKeyboardMoving: boolean
   interactionExit: InteractionExitKind
   hasMovementTarget: boolean
   isInCombat: boolean
-  direction: KeyboardDirection | null
+  input: KeyboardInput | null
+  rotation: number
+  backwardSpeed?: number
   config: MovementConfig
   deltaTimeSeconds: number
   sampleHeight: (x: number, z: number) => number
@@ -370,19 +331,19 @@ interface RunKeyboardFrameInput {
   ) => boolean
   writePlayerPosition: (position: Position, rotation: number) => void
   moveSender: KeyboardMoveSender
-  tapTracker: KeyboardTapTracker
   speedRamp: KeyboardSpeedRamp
   actions: KeyboardFrameActions
 }
 
 export function runKeyboardFrame({
   currentPlayer,
-  hasKeysPressed,
   isKeyboardMoving,
   interactionExit,
   hasMovementTarget,
   isInCombat,
-  direction,
+  input,
+  rotation,
+  backwardSpeed,
   config,
   deltaTimeSeconds,
   sampleHeight,
@@ -390,38 +351,23 @@ export function runKeyboardFrame({
   isUphillTooSteep,
   writePlayerPosition,
   moveSender,
-  tapTracker,
   speedRamp,
   actions,
 }: RunKeyboardFrameInput) {
-  if (!currentPlayer || !hasKeysPressed) {
-    const releasedTarget = tapTracker.release(currentPlayer?.position ?? null)
-    const tapTarget = config.mountRotation === undefined ? releasedTarget : null
+  if (!currentPlayer || !input) {
     speedRamp.reset()
-    // Session over: a click-path or combat chase owns the movement queue now
-    // (their replace supersedes us), so hand off without sending.
     if (!currentPlayer || hasMovementTarget || isInCombat) {
       moveSender.reset()
       return
     }
-    if (tapTarget) {
-      // A short tap finishes one clean step via the click-move pipeline; its
-      // replace send supersedes any pending sample.
-      moveSender.reset()
-      actions.requestMove(tapTarget)
-    } else {
-      moveSender.flush(currentPlayer.position, config.mountRotation)
-      // Long-hold release has no glide arrival to settle the machine, so it
-      // must leave keyboard_moving itself or the run animation loops forever.
-      if (isKeyboardMoving) {
-        actions.setKeyboardIdleRuntime()
-        actions.emitKeyboardPlayerState()
-      }
+    moveSender.flush(currentPlayer.position, rotation)
+    moveSender.reset()
+    if (isKeyboardMoving) {
+      actions.setKeyboardIdleRuntime()
+      actions.emitKeyboardPlayerState()
     }
     return
   }
-
-  tapTracker.track(currentPlayer.position, direction)
 
   if (interactionExit !== 'none') {
     if (interactionExit === 'pickup') {
@@ -440,39 +386,35 @@ export function runKeyboardFrame({
     actions.cancelCombat()
   }
 
-  if (direction) {
-    const outcome = applyKeyboardMovement({
-      currentPos: {
-        x: currentPlayer.position.x,
-        y: currentPlayer.position.y,
-        z: currentPlayer.position.z,
-      },
-      direction,
-      config,
-      deltaTimeSeconds,
-      speedRamp,
-      sampleHeight,
-      isMovementBlocked,
-      isUphillTooSteep,
-      writePlayerPosition: (position, rotation) => {
-        writePlayerPosition(position, rotation)
-        actions.markMoving()
-      },
-      sendPlayerMove: moveSender.step,
-    })
+  const outcome = applyKeyboardMovement({
+    currentPos: {
+      x: currentPlayer.position.x,
+      y: currentPlayer.position.y,
+      z: currentPlayer.position.z,
+    },
+    input,
+    rotation,
+    backwardSpeed,
+    config,
+    deltaTimeSeconds,
+    speedRamp,
+    sampleHeight,
+    isMovementBlocked,
+    isUphillTooSteep,
+    writePlayerPosition: (position, facing) => {
+      rotation = facing
+      writePlayerPosition(position, facing)
+      actions.markMoving()
+    },
+    moveSender,
+  })
 
-    const keyboardApplication = applyKeyboardMovementOutcome(outcome, actions)
-    if (keyboardApplication.kind === 'handled') {
-      // Blocked against a wall or slope: sync the stop point so the server
-      // doesn't keep walking to a stale sample. Reset the ramp too, or holding
-      // into an obstacle charges it to full and the next clear step launches.
-      speedRamp.reset()
-      moveSender.flush(currentPlayer.position, config.mountRotation)
-      return
-    }
-  } else {
+  const keyboardApplication = applyKeyboardMovementOutcome(outcome, actions)
+  if (keyboardApplication.kind === 'handled') {
+    // Stop at the last safe point and discard acceleration into the obstacle.
     speedRamp.reset()
-    actions.setKeyboardIdleRuntime()
+    moveSender.flush(currentPlayer.position, rotation)
+    return
   }
 
   actions.emitKeyboardPlayerState()

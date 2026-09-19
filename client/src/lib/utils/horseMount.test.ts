@@ -27,6 +27,103 @@ function headClip(name: string, yaw: number) {
   ])
 }
 
+describe('continuous horse turns', () => {
+  it.each([
+    { degrees: 90, duration: 2.5, rates: [75, 150] },
+    { degrees: 180, duration: 3.8, rates: [200, 225] },
+  ])(
+    'paces the $degrees degree animation by actual rotation',
+    ({ degrees, duration, rates }) => {
+      for (const rate of rates) {
+        const horse = mount([
+          new THREE.AnimationClip(`turn_left_${degrees}`, duration, [
+            new THREE.NumberKeyframeTrack(
+              'Head.position[x]',
+              [0, duration],
+              [0, 1]
+            ),
+          ]),
+        ])
+        horse.update(0, 0, 0)
+        for (let angle = 1; angle <= degrees; angle++) {
+          horse.update(1 / rate, 0, THREE.MathUtils.degToRad(angle))
+        }
+        expect(horse.root.getObjectByName('Head')!.position.x).toBeCloseTo(
+          0.4,
+          5
+        )
+        horse.dispose()
+      }
+    }
+  )
+
+  it.each([
+    { side: -1, degrees: 90, rate: 2.6, speed: 0 },
+    { side: 1, degrees: 90, rate: 2.6, speed: 0 },
+    { side: -1, degrees: 180, rate: 4, speed: 1.5 },
+    { side: 1, degrees: 180, rate: 4, speed: 1.5 },
+  ])(
+    'keeps the head turned without snapping: %o',
+    ({ side, degrees, rate, speed }) => {
+      for (const fps of [30, 120]) {
+        const horse = mount([
+          headClip('idle', 0),
+          headClip(
+            `turn_${side < 0 ? 'right' : 'left'}_${degrees}`,
+            side * 0.8
+          ),
+        ])
+        const head = horse.root.getObjectByName('Head')!
+        horse.update(0, 0, 0)
+        const previous = head.quaternion.clone()
+        for (let i = 1; i <= fps * 4; i++) {
+          horse.update(1 / fps, speed, (side * i * rate) / fps)
+          expect(head.quaternion.angleTo(previous)).toBeLessThan(8 / fps)
+          previous.copy(head.quaternion)
+          if (i > fps) {
+            const yaw = new THREE.Euler().setFromQuaternion(
+              head.quaternion,
+              'YXZ'
+            ).y
+            expect(side * yaw).toBeGreaterThan(0.35)
+          }
+        }
+        for (let i = 0; i < fps; i++) {
+          horse.update(1 / fps, 0, side * 4 * rate)
+          expect(head.quaternion.angleTo(previous)).toBeLessThan(8 / fps)
+          previous.copy(head.quaternion)
+        }
+        expect(
+          new THREE.Euler().setFromQuaternion(head.quaternion, 'YXZ').y
+        ).toBeCloseTo(0)
+        horse.dispose()
+      }
+    }
+  )
+
+  it('blends a change of direction during a repeated turn', () => {
+    const horse = mount([
+      headClip('idle', 0),
+      headClip('turn_left_90', 0.8),
+      headClip('turn_right_90', -0.8),
+    ])
+    const head = horse.root.getObjectByName('Head')!
+    horse.update(0, 0, 0)
+    let rotation = 0
+    const previous = head.quaternion.clone()
+    for (let i = 0; i < 180; i++) {
+      rotation += ((i < 80 ? 1 : -1) * 2.6) / 60
+      horse.update(1 / 60, 0, rotation)
+      expect(head.quaternion.angleTo(previous)).toBeLessThan(0.15)
+      previous.copy(head.quaternion)
+    }
+    expect(
+      new THREE.Euler().setFromQuaternion(head.quaternion, 'YXZ').y
+    ).toBeLessThan(-0.35)
+    horse.dispose()
+  })
+})
+
 describe('rider facing follows the animated horse head', () => {
   it.each([-0.8, 0, 0.8])(
     'follows turn yaw %s including neck rotation, pitch and a transformed parent',
@@ -53,13 +150,13 @@ describe('rider facing follows the animated horse head', () => {
         headClip(`turn_${side < 0 ? 'right' : 'left'}_90`, side * 0.8),
       ])
       horse.update(0, 0, 0)
-      for (let i = 1; i <= 18; i++) horse.update(1 / 60, 1, side * i * 0.04)
+      for (let i = 1; i <= 45; i++) horse.update(1 / 60, 1, side * i * 0.04)
       const peak = Math.abs(horse.riderFacingYaw)
       expect(peak).toBeGreaterThan(0.3)
       expect(peak).toBeLessThan(0.8)
-      horse.update(1 / 60, 0, side * 18 * 0.04)
+      horse.update(1 / 60, 0, side * 45 * 0.04)
       expect(Math.abs(horse.riderFacingYaw)).toBeGreaterThan(peak * 0.9)
-      for (let i = 0; i < 90; i++) horse.update(1 / 60, 0, side * 18 * 0.04)
+      for (let i = 0; i < 90; i++) horse.update(1 / 60, 0, side * 45 * 0.04)
       expect(horse.riderFacingYaw).toBeCloseTo(0, 3)
       horse.dispose()
     }

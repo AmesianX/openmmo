@@ -286,6 +286,267 @@ async fn horse_sprint_drains_streamed_waypoints_after_a_turn() {
 }
 
 #[tokio::test]
+async fn keyboard_reverse_and_stationary_turns_preserve_facing_and_speed_limits() {
+    use onlinerpg_shared::mount_movement::{angle_delta, BACKWARD_SPEED};
+    for mounted in [false, true] {
+        let game = make_game_state_with("keyboard_controls", FlatLand, SeaOnlyWater);
+        let id = rider(&game).await;
+        game.players.write().await.get_mut(&id).unwrap().position.y = 5.0;
+        if mounted {
+            game.use_item(&id, 1).await;
+        }
+        let start = game.players.read().await[&id].position;
+        game.players.write().await.get_mut(&id).unwrap().rotation = std::f32::consts::FRAC_PI_2;
+        let reverse = MoveCommand {
+            position: Position {
+                x: start.x - 4.0,
+                ..start
+            },
+            rotation: std::f32::consts::FRAC_PI_2,
+            floor_level: 0,
+            append: true,
+            sprinting: true,
+        };
+        for _ in 0..10 {
+            game.update_keyboard_movement(&id, reverse, -1).await;
+        }
+        assert_eq!(game.movement_intents.read().await[&id].len(), 1);
+        game.tick_player_movement(0.2).await;
+        let backed = game.players.read().await[&id].clone();
+        assert!((backed.position.x - (start.x - BACKWARD_SPEED * 0.2)).abs() < 0.001);
+        assert!((backed.position.z - start.z).abs() < 0.001);
+        assert!(angle_delta(backed.rotation, reverse.rotation).abs() < 0.001);
+
+        let facing = backed.rotation - 0.3;
+        game.update_keyboard_movement(
+            &id,
+            MoveCommand {
+                position: backed.position,
+                rotation: facing,
+                ..reverse
+            },
+            0,
+        )
+        .await;
+        game.tick_player_movement(0.2).await;
+        let turned = game.players.read().await[&id].clone();
+        assert_eq!(turned.position, backed.position);
+        assert!(angle_delta(turned.rotation, facing).abs() < 0.001);
+        assert!(!game.movement_intents.read().await.contains_key(&id));
+
+        game.update_keyboard_movement(&id, reverse, 2).await;
+        assert!(!game.movement_intents.read().await.contains_key(&id));
+        let click_target = Position {
+            x: start.x + 10.0,
+            ..start
+        };
+        game.update_player_position(&id, move_cmd(click_target, false), false)
+            .await;
+        assert_eq!(
+            game.movement_intents.read().await[&id][0].target.x,
+            click_target.x
+        );
+        game.tick_player_movement(0.2).await;
+        assert!(game.players.read().await[&id].position.x > turned.position.x);
+    }
+}
+
+#[tokio::test]
+async fn keyboard_turns_settle_at_the_clients_stop_position_after_delayed_travel() {
+    for mounted in [false, true] {
+        let game = make_game_state_with("keyboard_turn_stop", FlatLand, SeaOnlyWater);
+        let id = rider(&game).await;
+        game.players.write().await.get_mut(&id).unwrap().position.y = 5.0;
+        if mounted {
+            game.use_item(&id, 1).await;
+        }
+        let start = game.players.read().await[&id].position;
+        let stop = Position {
+            z: start.z + 2.0,
+            y: 5.0,
+            ..start
+        };
+        let command = MoveCommand {
+            position: Position {
+                z: start.z + 8.0,
+                y: 5.0,
+                ..start
+            },
+            rotation: 0.0,
+            floor_level: 0,
+            append: false,
+            sprinting: true,
+        };
+        game.update_keyboard_movement(&id, command, 1).await;
+        game.tick_player_movement(0.2).await;
+        game.update_keyboard_movement(
+            &id,
+            MoveCommand {
+                position: stop,
+                rotation: -0.4,
+                ..command
+            },
+            0,
+        )
+        .await;
+        for _ in 0..10 {
+            let before = game.players.read().await[&id].position;
+            game.tick_player_movement(0.2).await;
+            let after = game.players.read().await[&id].position;
+            let limit: f32 = if mounted { 1.8 } else { 0.6 };
+            assert!(after.dist_xz_sq(&before) <= (limit + 0.001).powi(2));
+        }
+        let player = game.players.read().await[&id].clone();
+        assert!(player.position.dist_xz_sq(&stop) < 0.0001);
+        assert!(
+            onlinerpg_shared::mount_movement::angle_delta(player.rotation, -0.4).abs() < 0.0001
+        );
+        assert!(!game.movement_intents.read().await.contains_key(&id));
+    }
+}
+
+#[tokio::test]
+async fn keyboard_backsteps_stop_at_solid_furniture() {
+    for mounted in [false, true] {
+        let game = make_test_game_state("keyboard_backstep_collision");
+        let id = rider(&game).await;
+        let start = Position {
+            x: 0.5,
+            y: 5.0,
+            z: 4.5,
+        };
+        {
+            let mut players = game.players.write().await;
+            let player = players.get_mut(&id).unwrap();
+            player.position = start;
+            player.rotation = std::f32::consts::PI;
+        }
+        if mounted {
+            game.use_item(&id, 1).await;
+        }
+        game.sync_region_furniture(0, 0, &[table_placement(0.5, 5.5)]);
+        game.update_keyboard_movement(
+            &id,
+            MoveCommand {
+                position: Position { z: 8.5, ..start },
+                rotation: std::f32::consts::PI,
+                floor_level: 0,
+                append: false,
+                sprinting: true,
+            },
+            -1,
+        )
+        .await;
+        for _ in 0..10 {
+            game.tick_player_movement(0.2).await;
+        }
+        let player = game.players.read().await[&id].clone();
+        assert!(player.position.z < 5.0, "{mounted}: {:?}", player.position);
+        assert!(
+            onlinerpg_shared::mount_movement::angle_delta(player.rotation, std::f32::consts::PI)
+                .abs()
+                < 0.001
+        );
+        assert!(!game.movement_intents.read().await.contains_key(&id));
+    }
+}
+
+#[tokio::test]
+async fn keyboard_targets_match_the_web_replay_without_queue_growth() {
+    #[derive(serde::Deserialize)]
+    struct Command {
+        tick: usize,
+        position: Position,
+        rotation: f32,
+        sprinting: bool,
+        forward: i8,
+    }
+    #[derive(serde::Deserialize)]
+    struct Checkpoint {
+        tick: usize,
+        position: Position,
+    }
+    #[derive(serde::Deserialize)]
+    struct Replay {
+        mounted: bool,
+        start: Position,
+        rotation: f32,
+        ticks: usize,
+        commands: Vec<Command>,
+        checkpoints: Vec<Checkpoint>,
+    }
+    let replays: Vec<Replay> = serde_json::from_str(include_str!(
+        "../../../../client/src/lib/components/player-control/fsm/__fixtures__/mounted-keyboard.json"
+    ))
+    .unwrap();
+    for replay in replays {
+        for delay in [0, 1, 2] {
+            let game = make_game_state_with("horse_keyboard_targets", FlatLand, SeaOnlyWater);
+            let id = rider(&game).await;
+            {
+                let mut players = game.players.write().await;
+                let player = players.get_mut(&id).unwrap();
+                player.position = replay.start;
+                player.rotation = replay.rotation;
+            }
+            if replay.mounted {
+                game.use_item(&id, 1).await;
+            }
+            let max_speed = if replay.mounted { 13.5 } else { 4.5 };
+            let mut rx = game.register_direct_channel(&id).await;
+            let mut commands = replay.commands.iter().peekable();
+            let mut checkpoints = replay.checkpoints.iter().peekable();
+            for tick in 1..=replay.ticks + delay {
+                while commands
+                    .peek()
+                    .is_some_and(|command| command.tick + delay <= tick)
+                {
+                    let command = commands.next().unwrap();
+                    game.update_keyboard_movement(
+                        &id,
+                        MoveCommand {
+                            position: command.position,
+                            rotation: command.rotation,
+                            floor_level: 0,
+                            append: false,
+                            sprinting: command.sprinting,
+                        },
+                        command.forward,
+                    )
+                    .await;
+                    assert_eq!(game.movement_intents.read().await[&id].len(), 1);
+                }
+                let before = game.players.read().await[&id].position;
+                game.tick_player_movement(0.2).await;
+                let player = game.players.read().await[&id].clone();
+                assert_eq!(player.is_mounted(), replay.mounted);
+                assert!(player.position.dist_xz_sq(&before).sqrt() <= max_speed * 0.2 + 0.01);
+                if checkpoints
+                    .peek()
+                    .is_some_and(|checkpoint| checkpoint.tick == tick)
+                {
+                    let checkpoint = checkpoints.next().unwrap();
+                    let error = player.position.dist_xz_sq(&checkpoint.position).sqrt();
+                    // Steering updates can fall anywhere within a 200ms server tick.
+                    let tick_margin = (max_speed * 0.2_f32).max(1.0);
+                    assert!(
+                        error <= tick_margin + max_speed * 0.2 * delay as f32,
+                        "mounted {}, tick {tick}, delay {delay}: client/server distance {error}",
+                        replay.mounted
+                    );
+                }
+            }
+            assert!(!game.movement_intents.read().await.contains_key(&id));
+            let stop = replay.checkpoints.last().unwrap().position;
+            assert!(game.players.read().await[&id].position.dist_xz_sq(&stop) <= 1.0);
+            assert!(!drain(&mut rx)
+                .iter()
+                .any(|message| matches!(message, ServerMessage::PositionCorrected { .. })));
+        }
+    }
+}
+
+#[tokio::test]
 async fn horse_stops_within_one_metre_without_snapping_or_correcting() {
     let game = make_test_game_state("horse_arrival_radius");
     let id = rider(&game).await;

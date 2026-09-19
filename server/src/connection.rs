@@ -1384,6 +1384,30 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::PlayerKeyboardMove {
+            position,
+            rotation,
+            floor_level,
+            forward,
+            sprinting,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .update_keyboard_movement(
+                        id,
+                        crate::game_state::MoveCommand {
+                            position,
+                            rotation,
+                            floor_level,
+                            append: false,
+                            sprinting,
+                        },
+                        forward,
+                    )
+                    .await;
+            }
+        }
+
         ClientMessage::PlayerMove {
             position,
             rotation,

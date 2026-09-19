@@ -251,6 +251,16 @@ export interface HoverContext {
   ownerName: (playerId: number) => string | null
 }
 
+export function movementInput(keys: ReadonlySet<string>) {
+  const forward =
+    Number(keys.has('KeyW') || keys.has('ArrowUp')) -
+    Number(keys.has('KeyS') || keys.has('ArrowDown'))
+  const turn =
+    Number(keys.has('KeyD') || keys.has('ArrowRight')) -
+    Number(keys.has('KeyA') || keys.has('ArrowLeft'))
+  return forward === 0 && turn === 0 ? null : { forward, turn }
+}
+
 class InputHandler {
   private keysPressed = new Set<string>()
   private _interactJustPressed = false
@@ -274,7 +284,7 @@ class InputHandler {
   }
 
   get hasKeysPressed(): boolean {
-    return this.getMovementDirection() !== null
+    return this.getMovementInput() !== null
   }
 
   get isSprintRequested(): boolean {
@@ -297,28 +307,8 @@ class InputHandler {
     return false
   }
 
-  getMovementDirection(): { x: number; z: number } | null {
-    let moveX = 0
-    let moveZ = 0
-
-    if (this.keysPressed.has('KeyW') || this.keysPressed.has('ArrowUp'))
-      moveZ -= 1
-    if (this.keysPressed.has('KeyS') || this.keysPressed.has('ArrowDown'))
-      moveZ += 1
-    if (this.keysPressed.has('KeyA') || this.keysPressed.has('ArrowLeft'))
-      moveX -= 1
-    if (this.keysPressed.has('KeyD') || this.keysPressed.has('ArrowRight'))
-      moveX += 1
-
-    if (moveX === 0 && moveZ === 0) return null
-
-    // Normalize diagonal movement
-    if (moveX !== 0 && moveZ !== 0) {
-      moveX *= 0.707 // 1/sqrt(2)
-      moveZ *= 0.707
-    }
-
-    return { x: moveX, z: moveZ }
+  getMovementInput(): { forward: number; turn: number } | null {
+    return movementInput(this.keysPressed)
   }
 
   /** Cast the click ray plus the 4 offset rays against `meshes`, returning the

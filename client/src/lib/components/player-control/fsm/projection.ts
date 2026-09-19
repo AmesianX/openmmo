@@ -27,6 +27,7 @@ export function projectPlayerState({
   attackCounter,
   isSprinting,
 }: PlayerStateProjectionInput): PlayerState {
+  isMoving &&= currentSpeed > 0
   const movementMode = isMoving
     ? getMovementMode(totalDistance, hasTorch, isSprinting, isInCombat)
     : undefined

@@ -163,6 +163,8 @@ impl LayoutGrind {
 #[derive(Clone, serde::Serialize)]
 pub(super) struct MoveIntent {
     request: Option<movement_audit::Request>,
+    keyboard_forward: Option<i8>,
+    keyboard_speed: f32,
     turn_only: bool,
     recovery: Option<movement_audit::RecoveryRequest>,
     pub(super) target: Position,
@@ -934,6 +936,32 @@ impl super::GameState {
         cmd: MoveCommand,
         is_official_npc: bool,
     ) {
+        self.queue_player_move(player_id, cmd, is_official_npc, None)
+            .await;
+    }
+
+    pub async fn update_keyboard_movement(
+        &self,
+        player_id: &PlayerId,
+        mut cmd: MoveCommand,
+        forward: i8,
+    ) {
+        if !(-1..=1).contains(&forward) {
+            return;
+        }
+        cmd.append = false;
+        cmd.sprinting &= forward > 0;
+        self.queue_player_move(player_id, cmd, false, Some(forward))
+            .await;
+    }
+
+    async fn queue_player_move(
+        &self,
+        player_id: &PlayerId,
+        cmd: MoveCommand,
+        is_official_npc: bool,
+        keyboard_forward: Option<i8>,
+    ) {
         let received_ms = Self::now_ms();
         let MoveCommand {
             position: mut new_position,
@@ -1076,6 +1104,10 @@ impl super::GameState {
         }
         let queue = queues.entry(*player_id).or_default();
         let queue_before = queue.len();
+        let keyboard_speed = queue
+            .front()
+            .filter(|intent| keyboard_forward == Some(1) && intent.keyboard_forward == Some(1))
+            .map_or(0.0, |intent| intent.keyboard_speed);
         let replaced = !append
             || queue
                 .front()
@@ -1111,6 +1143,8 @@ impl super::GameState {
         let request = self.movement_audit.request(*player_id, request);
         queue.push_back(MoveIntent {
             request: Some(request),
+            keyboard_forward,
+            keyboard_speed,
             turn_only: false,
             recovery: None,
             target: new_position,
@@ -1281,6 +1315,8 @@ impl super::GameState {
         if let Some(target) = target {
             queues.entry(*player_id).or_default().push_back(MoveIntent {
                 request: None,
+                keyboard_forward: None,
+                keyboard_speed: 0.0,
                 turn_only: false,
                 recovery: Some(request),
                 target,
@@ -1343,6 +1379,8 @@ impl super::GameState {
         queue.clear();
         queue.push_back(MoveIntent {
             request: None,
+            keyboard_forward: None,
+            keyboard_speed: 0.0,
             turn_only: true,
             recovery: None,
             target: player.position,
@@ -1411,15 +1449,24 @@ impl super::GameState {
                 let mount_mult = player
                     .mount
                     .map_or(1.0, onlinerpg_shared::mount::MountKind::speed_mult);
-                let base_step = if recovery.is_some() {
+                let backward = waypoints.front().is_some_and(|intent| intent.keyboard_forward == Some(-1));
+                let base_step = if recovery.is_some() || backward {
                     onlinerpg_shared::mount_movement::BACKWARD_SPEED * dt.max(0.0) / mount_mult
                 } else {
                     base_step
                 };
-                let max_step = base_step
+                let mut max_step = base_step
                     * hunger_mult
                     * mount_mult
                     * onlinerpg_shared::hunger::sprint_move_mult(sprinting);
+                if !player.is_mounted() {
+                    if let Some(intent) = waypoints.front_mut().filter(|intent| intent.keyboard_forward == Some(1)) {
+                        let max_speed = max_step / dt.max(f32::EPSILON);
+                        // Matches the browser's 0.5-second keyboard acceleration ramp.
+                        intent.keyboard_speed = (intent.keyboard_speed + max_speed * 2.0 * dt.max(0.0)).min(max_speed);
+                        max_step = intent.keyboard_speed * dt.max(0.0);
+                    }
+                }
                 let tick_from = Pose::from(&*player);
                 let tick_request_id = waypoints.front().and_then(|i| i.request.map(|r| r.id));
                 let mut last_request_id = tick_request_id;
@@ -1432,12 +1479,29 @@ impl super::GameState {
                 let speed = max_step / dt.max(f32::EPSILON);
                 let mut blocked = false;
                 while let Some(intent) = waypoints.front() {
+                    if intent.keyboard_forward == Some(0) && time_left <= 1e-7 {
+                        break;
+                    }
                     last_request_id = intent.request.map(|r| r.id);
                     let target = &intent.target;
                     let dx = shortest_world_delta_x(player.position.x, target.x);
                     let dz = target.z - player.position.z;
                     let dist = (dx * dx + dz * dz).sqrt();
-                    let (step_x, step_y, step_z, facing, snap) = if intent.recovery.is_some() {
+                    let (step_x, step_y, step_z, facing, snap) = if intent.keyboard_forward == Some(0) {
+                        use onlinerpg_shared::mount_movement::{angle_delta, keyboard_rotation, STEP_SECONDS};
+                        let step_time = if player.is_mounted() { time_left.min(STEP_SECONDS) } else { time_left };
+                        let rotation = keyboard_rotation(player.rotation, intent.rotation, step_time);
+                        let travel = (speed * step_time).min(dist);
+                        let fraction = if dist > 1e-5 { travel / dist } else { 1.0 };
+                        time_left -= step_time;
+                        (
+                            player.position.x + dx * fraction,
+                            player.position.y + (target.y - player.position.y) * fraction,
+                            player.position.z + dz * fraction,
+                            rotation,
+                            travel >= dist && angle_delta(rotation, intent.rotation).abs() < 1e-5,
+                        )
+                    } else if intent.recovery.is_some() {
                         if time_left <= 1e-7 {
                             break;
                         }
@@ -1478,8 +1542,10 @@ impl super::GameState {
                         } else {
                             turn_radius.min(dist / 4.0)
                         };
+                        let reverse_angle = if backward { std::f32::consts::PI } else { 0.0 };
                         let (arc_x, arc_z, rotation) =
-                            arc_step(player.rotation, desired, speed, step_time, radius);
+                            arc_step(player.rotation + reverse_angle, desired, speed, step_time, radius);
+                        let rotation = rotation - reverse_angle;
                         time_left -= step_time;
                         let arrived = if intent.turn_only {
                             angle_delta(rotation, desired).abs() < 1e-5

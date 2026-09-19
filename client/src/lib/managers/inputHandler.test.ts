@@ -11,6 +11,7 @@ vi.mock('../wasm/onlinerpg_shared', () => ({
 
 import {
   inputHandler,
+  movementInput,
   shouldSuppressContextMenu,
   type RaycastContext,
 } from './inputHandler'
@@ -20,6 +21,118 @@ import {
   openInstrumentPanel,
 } from '../stores/instrumentStore'
 import { alwaysRun } from '../stores/movementSettings'
+import {
+  applyKeyboardMovement,
+  createKeyboardMoveSender,
+  createKeyboardSpeedRamp,
+} from '../components/player-control/fsm/keyboard'
+import { DEFAULT_MOVEMENT_CONFIG } from '../utils/movementUtils'
+import { angleDelta } from '../utils/horseMovement'
+
+describe('relative movement keys', () => {
+  beforeEach(() => {
+    vi.stubGlobal('HTMLElement', class {})
+    resetFishingStore()
+    closeInstrumentPanel()
+    inputHandler.clearTransientInput()
+  })
+
+  afterEach(() => {
+    inputHandler.clearTransientInput()
+    vi.unstubAllGlobals()
+  })
+
+  it.each([
+    ['ArrowUp', 'KeyW', 1, 0],
+    ['ArrowDown', 'KeyS', -1, 0],
+    ['ArrowLeft', 'KeyA', 0, -1],
+    ['ArrowRight', 'KeyD', 0, 1],
+  ] as const)(
+    'maps %s and %s to the same controls',
+    (arrow, key, forward, turn) => {
+      expect(movementInput(new Set([arrow]))).toEqual({ forward, turn })
+      expect(movementInput(new Set([key]))).toEqual({ forward, turn })
+      expect(movementInput(new Set([arrow, key]))).toEqual({ forward, turn })
+    }
+  )
+
+  it('combines travel and steering independently and cancels opposing keys', () => {
+    expect(movementInput(new Set(['KeyW', 'ArrowRight']))).toEqual({
+      forward: 1,
+      turn: 1,
+    })
+    expect(movementInput(new Set(['ArrowDown', 'KeyA']))).toEqual({
+      forward: -1,
+      turn: -1,
+    })
+    expect(
+      movementInput(new Set(['KeyW', 'ArrowDown', 'KeyA', 'ArrowRight']))
+    ).toBeNull()
+    expect(movementInput(new Set(['ShiftLeft']))).toBeNull()
+  })
+
+  it.each([
+    ['ArrowUp', 'KeyW', 0],
+    ['ArrowDown', 'KeyS', Math.PI],
+    ['ArrowLeft', 'KeyA', Math.PI / 2],
+    ['ArrowRight', 'KeyD', -Math.PI / 2],
+  ] as const)(
+    'drives %s and %s relative to the character through real key events',
+    (arrow, key, offset) => {
+      for (const initialRotation of [0, Math.PI / 2, Math.PI]) {
+        const paths = [arrow, key].map((code) => {
+          inputHandler.clearTransientInput()
+          const event = {
+            code,
+            target: null,
+            ctrlKey: false,
+            repeat: false,
+          } as KeyboardEvent
+          inputHandler.handleKeyDown(event)
+          let position = { x: 0, y: 0, z: 0 }
+          let rotation = initialRotation
+          const send = vi.fn()
+          const moveSender = createKeyboardMoveSender(send)
+          const speedRamp = createKeyboardSpeedRamp()
+          for (let frame = 0; frame < 120; frame++) {
+            inputHandler.handleKeyDown({
+              ...event,
+              repeat: true,
+            } as KeyboardEvent)
+            applyKeyboardMovement({
+              currentPos: position,
+              input: inputHandler.getMovementInput()!,
+              rotation,
+              config: DEFAULT_MOVEMENT_CONFIG,
+              deltaTimeSeconds: 1 / 60,
+              speedRamp,
+              sampleHeight: () => 0,
+              isMovementBlocked: () => false,
+              isUphillTooSteep: () => false,
+              writePlayerPosition: (next, facing) => {
+                position = next
+                rotation = facing
+              },
+              moveSender,
+            })
+          }
+          inputHandler.handleKeyUp(event)
+          expect(inputHandler.hasKeysPressed).toBe(false)
+          const facing = initialRotation + offset
+          expect(angleDelta(facing, rotation)).toBeCloseTo(0)
+          expect(
+            position.x * Math.cos(facing) - position.z * Math.sin(facing)
+          ).toBeCloseTo(0)
+          expect(
+            position.x * Math.sin(facing) + position.z * Math.cos(facing)
+          ).toBeGreaterThan(5)
+          return { position, rotation, commands: send.mock.calls }
+        })
+        expect(paths[0]).toEqual(paths[1])
+      }
+    }
+  )
+})
 
 const RECT = { left: 0, top: 0, width: 100, height: 100 }
 

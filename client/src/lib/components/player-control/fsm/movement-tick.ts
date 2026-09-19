@@ -296,12 +296,15 @@ export function runPlayerMovementTick({
   // destructured above are now stale, so let the next frame walk the new one.
   if (combatApplication.kind === 'handled') return
 
-  if (!isMoving || !movementTarget || !currentPlayer || !movementState) {
+  if (!isMoving || !currentPlayer) {
     if (currentSpeed > 0) {
       actions.resetStoppedSpeed()
     }
     return
   }
+
+  // Keyboard movement has speed but no click path.
+  if (!movementTarget || !movementState) return
 
   runMovementFrame({
     currentPos: {

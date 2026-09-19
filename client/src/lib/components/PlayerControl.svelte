@@ -142,9 +142,9 @@
   import {
     createKeyboardMoveSender,
     createKeyboardSpeedRamp,
-    createKeyboardTapTracker,
     runKeyboardFrame,
   } from './player-control/fsm/keyboard'
+  import { BACKWARD_SPEED } from '../utils/horseMovement'
   import {
     dispatchPlayerControlEvent as dispatchQueuedPlayerControlEvent,
     createCanvasIntentEvent,
@@ -502,7 +502,12 @@
     // monster outruns the player. Same satiation gate and cost as sprint.
     if (combatController.isInCombat && moving) return true
     if (clickSprinting && (startingClickMovement || moving)) return true
-    return inputHandler.isSprintRequested && inputHandler.hasKeysPressed
+    const input = inputHandler.getMovementInput()
+    return (
+      inputHandler.isSprintRequested &&
+      input !== null &&
+      (!isMounted(currentPlayer) || input.forward === 1)
+    )
   }
 
   // Called per frame — cache the scaled config so steady movement reuses one
@@ -795,7 +800,8 @@
     position: Position,
     rotation: number,
     passabilityFloor?: number,
-    append = false
+    append = false,
+    keyboardForward?: number
   ) {
     cancelMountRecovery()
     const wrappedPosition = { ...position, x: wrapWorldX(position.x) }
@@ -812,6 +818,16 @@
     }
     lastSentPosition = wrappedPosition
     lastSentFloorLevel = floorLevel
+    if (keyboardForward !== undefined) {
+      networkManager.sendPlayerKeyboardMove(
+        wrappedPosition,
+        rotation,
+        floorLevel,
+        keyboardForward,
+        isSprintingNow() && keyboardForward > 0
+      )
+      return
+    }
     networkManager.sendPlayerMove(
       wrappedPosition,
       rotation,
@@ -822,11 +838,9 @@
   }
 
   const keyboardMoveSender = createKeyboardMoveSender(
-    sendPlayerMove,
-    (rotation, stop) =>
-      networkManager.sendPlayerMountTurn(rotation, stop, isSprintingNow())
+    (position, rotation, forward) =>
+      sendPlayerMove(position, rotation, undefined, false, forward)
   )
-  const keyboardTapTracker = createKeyboardTapTracker()
   const keyboardSpeedRamp = createKeyboardSpeedRamp()
 
   function writePlayerPosition(position: Position, rotation: number) {
@@ -843,7 +857,6 @@
   function applyPositionCorrection(correction: PositionCorrection) {
     if (mountRecovery) return
     keyboardMoveSender.reset()
-    keyboardTapTracker.release(null)
     keyboardSpeedRamp.reset()
     lastSentPosition = null
     playerRotation = correction.rotation
@@ -1274,17 +1287,18 @@
       transitionTo('idle')
     },
     emitKeyboardPlayerState: () => {
-      updatePlayerState(isMovingNow() ? 100 : undefined)
+      updatePlayerState(
+        isMounted(currentPlayer) &&
+          inputHandler.getMovementInput()?.forward === -1
+          ? 0
+          : 100
+      )
     },
     stopMovement,
     triggerJumpFeedback,
     setMoved: (nextCurrentSpeed: number, nextPlayerRotation: number) => {
       currentSpeed = nextCurrentSpeed
       playerRotation = nextPlayerRotation
-    },
-    requestMove: (target: { x: number; z: number }) => {
-      const tx = wrapWorldX(target.x)
-      handleClickToMove({ x: tx, y: sampleHeight(tx, target.z), z: target.z })
     },
   }
 
@@ -1368,34 +1382,31 @@
   }
 
   function updateKeyboardMovement(deltaTime: number) {
-    if (mountRecovery && !inputHandler.hasKeysPressed) return
-    if (inputHandler.hasKeysPressed) {
+    const input = inputHandler.getMovementInput()
+    if (mountRecovery && !input) return
+    if (input) {
       cancelMountRecovery()
       cancelAutoTravel()
       clearDoorInteractionRetry()
     }
-    const rawDirection = inputHandler.getMovementDirection()
-    const direction =
-      rawDirection && currentPlayer
-        ? housingManager.assistStairMovementDirection(
-            get(playerVisualFloorLevel),
-            currentPlayer.position,
-            rawDirection
-          )
-        : rawDirection
-    if (
-      !currentPlayer ||
-      !worldView.covers(currentPlayer.position.x, currentPlayer.position.z)
-    )
+    if (!currentPlayer) {
+      keyboardMoveSender.reset()
       return
+    }
+    if (!worldView.covers(currentPlayer.position.x, currentPlayer.position.z)) {
+      keyboardMoveSender.flush(currentPlayer.position, playerRotation)
+      if (!input) keyboardMoveSender.reset()
+      return
+    }
     runKeyboardFrame({
       currentPlayer,
-      hasKeysPressed: inputHandler.hasKeysPressed,
       isKeyboardMoving: playerControlMachine.stateName === 'keyboard_moving',
       interactionExit: getInteractionExitKind(playerState),
       hasMovementTarget: movingState() !== null,
       isInCombat: combatController.isInCombat,
-      direction,
+      input,
+      rotation: playerRotation,
+      backwardSpeed: BACKWARD_SPEED * ($hungerState?.moveMult ?? 1),
       config: movementConfig(),
       deltaTimeSeconds: deltaTime / 1000,
       sampleHeight,
@@ -1403,7 +1414,6 @@
       isUphillTooSteep,
       writePlayerPosition,
       moveSender: keyboardMoveSender,
-      tapTracker: keyboardTapTracker,
       speedRamp: keyboardSpeedRamp,
       actions: keyboardFrameActions,
     })
@@ -2421,7 +2431,13 @@
     deltaTime: number,
     options: PlayerControlUpdateOptions
   ) {
-    if (options.editorMode) cancelAutoTravel()
+    if (options.editorMode) {
+      cancelAutoTravel()
+      if (currentPlayer) {
+        keyboardMoveSender.flush(currentPlayer.position, playerRotation)
+      }
+      keyboardMoveSender.reset()
+    }
     const skillState = get(daggerSkillState)
     const hasDagger = abilityEquipmentAllowed(
       DAGGER_SKILL.clip,

@@ -11,6 +11,11 @@ pub fn angle_delta(from: f32, to: f32) -> f32 {
     (to - from + PI).rem_euclid(TAU) - PI
 }
 
+pub fn keyboard_rotation(from: f32, to: f32, dt: f32) -> f32 {
+    let step = TURN_RATE * dt.max(0.0);
+    from + angle_delta(from, to).clamp(-step, step)
+}
+
 pub fn turn_duration(angle: f32) -> f32 {
     let angle = angle.abs();
     (angle - FRAC_PI_2).max(0.0) / REVERSE_RATE + angle.min(FRAC_PI_2) / TURN_RATE

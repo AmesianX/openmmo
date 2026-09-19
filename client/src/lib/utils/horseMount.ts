@@ -8,6 +8,8 @@ export const HORSE_MODEL_PATH = '/models/mounts/horse.glb'
 export const RIDING_ANIMATION_PATH = '/models/animations/riding.glb'
 const RUN_STRIDE_DURATION = 20 / 30
 const RIDER_IDLE_YAW_LIMIT = Math.PI / 6
+const TURN_LOOP_START = 0.25
+const TURN_LOOP_END = 0.65
 
 export class HorseMount {
   readonly root: THREE.Object3D
@@ -24,6 +26,7 @@ export class HorseMount {
   private readonly seatPosition = new THREE.Vector3()
   private readonly mixer: THREE.AnimationMixer
   private readonly actions = new Map<string, THREE.AnimationAction>()
+  private readonly turnRepeats = new Map<string, THREE.AnimationAction>()
   private current: THREE.AnimationAction | null = null
   private previousRotation: number | null = null
   private turnName: string | null = null
@@ -88,12 +91,12 @@ export class HorseMount {
         ? 0
         : angleDelta(this.previousRotation, rotation)
     this.previousRotation = rotation
-    const turning =
-      dt > 0 && Math.abs(yaw) / dt > 0.1 && speed < 3 && !this.reversing
+    const angularSpeed = dt > 0 ? Math.abs(yaw) / dt : 0
+    const turning = angularSpeed > 0.1 && speed < 3 && !this.reversing
     if (turning) {
       const side = yaw < 0 ? 'right' : 'left'
       if (!this.turnName?.startsWith(`turn_${side}_`)) {
-        this.turnName = `turn_${side}_${Math.abs(yaw) / dt > 3.2 ? 180 : 90}`
+        this.turnName = `turn_${side}_${angularSpeed > 3.2 ? 180 : 90}`
       }
     } else {
       this.turnName = null
@@ -101,25 +104,50 @@ export class HorseMount {
     const name =
       this.turnName ??
       (speed < 0.1 ? 'idle' : this.reversing || speed < 3 ? 'walk' : 'run')
-    const next = this.actions.get(name)
+    const continuing = this.current?.getClip().name === name
+    let next = continuing ? this.current : this.actions.get(name)
+    let repeat = false
+    if (
+      this.turnName &&
+      continuing &&
+      next &&
+      next.time >= next.getClip().duration * TURN_LOOP_END
+    ) {
+      repeat = true
+      let alternate = this.turnRepeats.get(name)
+      if (!alternate) {
+        const clip = next.getClip()
+        alternate = this.mixer.clipAction(
+          new THREE.AnimationClip(
+            clip.name,
+            clip.duration,
+            clip.tracks,
+            clip.blendMode
+          )
+        )
+        this.turnRepeats.set(name, alternate)
+      }
+      next = next === alternate ? this.actions.get(name) : alternate
+    }
     if (next && next !== this.current) {
       next.reset().setEffectiveWeight(1).play()
-      if (this.reversing) next.time = next.getClip().duration
+      if (repeat) next.time = next.getClip().duration * TURN_LOOP_START
+      else if (this.reversing) next.time = next.getClip().duration
       next.setLoop(this.turnName ? THREE.LoopOnce : THREE.LoopRepeat, Infinity)
       next.clampWhenFinished = this.turnName !== null
-      if (this.current) next.crossFadeFrom(this.current, 0.2, false)
+      if (this.current)
+        next.crossFadeFrom(this.current, repeat ? 0.15 : 0.2, false)
       this.current = next
     }
     if (this.current) {
       this.current.timeScale = this.turnName
-        ? this.current.getClip().duration / (name.endsWith('180') ? 1 : 0.6)
+        ? (this.current.getClip().duration *
+            (TURN_LOOP_END - TURN_LOOP_START) *
+            angularSpeed) /
+          (name.endsWith('180') ? Math.PI : Math.PI / 2)
         : name === 'idle'
           ? 1
           : ((this.reversing ? -1 : 1) * speed) / (name === 'walk' ? 2 : 8)
-      if (this.turnName && this.current.paused) {
-        this.current.time = this.current.getClip().duration * 0.35
-        this.current.paused = false
-      }
     }
     this.mixer.update(dt)
     let riderYaw = 0

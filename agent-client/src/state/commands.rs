@@ -52,6 +52,7 @@ impl SharedState {
         if matches!(
             &msg,
             ClientMessage::PlayerMove { .. }
+                | ClientMessage::PlayerKeyboardMove { .. }
                 | ClientMessage::PlayerMountTurn { .. }
                 | ClientMessage::PlayerAttack { .. }
         ) {

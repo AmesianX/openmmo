@@ -2,6 +2,8 @@ import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import type { Position, MovementResult } from './movementUtils'
 
 const TURN_RATE = Math.PI / 2 / 0.6
+export const KEYBOARD_TURN_RATE = TURN_RATE
+export const BACKWARD_SPEED = 1.5
 const REVERSE_RATE = Math.PI / 2 / 0.4
 const MOVE_ANGLE = Math.PI / 6
 export const HORSE_TURN_RADIUS = 0.65
@@ -11,6 +13,11 @@ const STEP_SECONDS = 1 / 60
 export function angleDelta(from: number, to: number): number {
   const tau = Math.PI * 2
   return ((((to - from + Math.PI) % tau) + tau) % tau) - Math.PI
+}
+
+export function keyboardRotation(from: number, to: number, dt: number): number {
+  const step = TURN_RATE * Math.max(0, dt)
+  return from + Math.max(-step, Math.min(step, angleDelta(from, to)))
 }
 
 export function horseTurnDuration(angle: number): number {

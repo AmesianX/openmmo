@@ -13,6 +13,23 @@ const idleState: PlayerState = {
 }
 
 describe('projectPlayerState', () => {
+  it('keeps stationary keyboard steering idle while publishing the new facing', () => {
+    const state = projectPlayerState({
+      currentPosition: idleState.position,
+      isMoving: true,
+      currentSpeed: 0,
+      playerRotation: 0.5,
+      hasTorch: false,
+      isInCombat: false,
+      attackCounter: 0,
+      isSprinting: false,
+    })
+    expect(state.state).toBe('idle')
+    expect(state.movementMode).toBeUndefined()
+    expect(state.rotation).toBe(0.5)
+    expect(shouldEmitProjectedPlayerState(idleState, state)).toBe(true)
+  })
+
   it('projects click movement mode from movement distance', () => {
     const state = projectPlayerState({
       currentPosition: { x: 1, y: 2, z: 3 },

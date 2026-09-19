@@ -173,7 +173,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v83: terrain file manifests and direct binary downloads.
 /// v84: mounts carry a kind instead of a bool.
 /// v85: server-only monster AI; remove ownership and client control messages.
-pub const PROTOCOL_VERSION: u32 = 85;
+/// v86: relative keyboard travel, stationary turns and backward movement.
+pub const PROTOCOL_VERSION: u32 = 86;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

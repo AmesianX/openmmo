@@ -7,6 +7,17 @@ import {
   type MovementOutcomeActions,
 } from './movement-tick'
 import { directPathing } from './pathing.fixture'
+import {
+  createKeyboardMoveSender,
+  createKeyboardSpeedRamp,
+  runKeyboardFrame,
+} from './keyboard'
+import { projectPlayerState } from './projection'
+import {
+  scaleMovementConfig,
+  SPRINT_SPEED_MULT,
+  type PlayerState,
+} from '../../../utils/movementUtils'
 
 function actions(): MovementOutcomeActions {
   return {
@@ -237,6 +248,123 @@ function baseInput() {
 }
 
 describe('runPlayerMovementTick', () => {
+  it.each([
+    { mounted: false, sprinting: false },
+    { mounted: false, sprinting: true },
+    { mounted: true, sprinting: false },
+    { mounted: true, sprinting: true },
+  ])(
+    'preserves keyboard animation through the full frame ($mounted, $sprinting)',
+    ({ mounted, sprinting }) => {
+      const input = baseInput()
+      input.config = scaleMovementConfig(
+        input.config,
+        (mounted ? 3 : 1) * (sprinting ? SPRINT_SPEED_MULT : 1)
+      )
+      let rotation = 0
+      let keyboardMoving = false
+      let hasKeysPressed = true
+      let forward = 1
+      let turn = 0
+      let rendered: PlayerState
+      const publish = () => {
+        rendered = projectPlayerState({
+          currentPosition: { ...input.currentPlayer.position },
+          isMoving: input.isMoving,
+          currentSpeed: input.currentSpeed,
+          playerRotation: rotation,
+          totalDistance: mounted && forward < 0 ? 0 : 100,
+          hasTorch: false,
+          isInCombat: false,
+          attackCounter: 0,
+          isSprinting: sprinting && (!mounted || forward > 0),
+        })
+      }
+      input.actions.resetStoppedSpeed.mockImplementation(() => {
+        input.currentSpeed = 0
+        publish()
+      })
+      const moveSender = createKeyboardMoveSender(vi.fn())
+      const speedRamp = createKeyboardSpeedRamp()
+      const frame = () => {
+        runKeyboardFrame({
+          ...input,
+          isKeyboardMoving: keyboardMoving,
+          interactionExit: 'none',
+          hasMovementTarget: false,
+          input: hasKeysPressed ? { forward, turn } : null,
+          rotation,
+          config: {
+            ...input.config,
+            ...(mounted ? { mountRotation: rotation } : {}),
+          },
+          deltaTimeSeconds: input.deltaTime / 1000,
+          writePlayerPosition: (position, facing) => {
+            input.currentPlayer.position = position
+            rotation = facing
+          },
+          moveSender,
+          speedRamp,
+          actions: {
+            exitPickupInteraction: vi.fn(),
+            exitObjectInteraction: vi.fn(),
+            clearClickMovement: vi.fn(),
+            cancelCombat: vi.fn(),
+            markMoving: () => {
+              keyboardMoving = input.isMoving = true
+            },
+            setKeyboardIdleRuntime: () => {
+              keyboardMoving = input.isMoving = false
+              input.currentSpeed = 0
+            },
+            emitKeyboardPlayerState: publish,
+            stopMovement: vi.fn(),
+            triggerJumpFeedback: vi.fn(),
+            setMoved: (speed, facing) => {
+              input.currentSpeed = speed
+              rotation = facing
+            },
+          },
+        })
+        runPlayerMovementTick({ ...input, playerStateName: rendered.state })
+        return rendered
+      }
+
+      for (let i = 0; i < 60; i++) {
+        const state = frame()
+        expect(state.state).toBe('moving')
+        expect(state.speed).toBeGreaterThan(0)
+        expect(state.movementMode).toBe(sprinting ? 'run' : 'jog')
+      }
+      expect(input.currentPlayer.position.z).toBeGreaterThan(0)
+      expect(input.actions.resetStoppedSpeed).not.toHaveBeenCalled()
+      expect(input.writePlayerPosition).not.toHaveBeenCalled()
+
+      forward = -1
+      const backward = frame()
+      expect(backward.state).toBe('moving')
+      expect(backward.speed).toBeCloseTo(mounted ? 1.5 : input.config.maxSpeed)
+      expect(backward.movementMode).toBe(
+        mounted ? 'walk' : sprinting ? 'run' : 'jog'
+      )
+
+      forward = 0
+      turn = 1
+      const horizontal = frame()
+      expect(horizontal.state).toBe(mounted ? 'idle' : 'moving')
+      expect(horizontal.speed).toBeCloseTo(mounted ? 0 : input.config.maxSpeed)
+      expect(horizontal.rotation).not.toBe(backward.rotation)
+
+      forward = 1
+      turn = 0
+      expect(frame().state).toBe('moving')
+      hasKeysPressed = false
+      const stopped = frame()
+      expect(stopped.state).toBe('idle')
+      expect(stopped.speed).toBe(0)
+    }
+  )
+
   it('keeps the route while waiting for the world snapshot', () => {
     const input = {
       ...baseInput(),

@@ -383,6 +383,13 @@ pub enum ClientMessage {
         request_id: u32,
         goal: Position,
     },
+    PlayerKeyboardMove {
+        position: Position,
+        rotation: f32,
+        floor_level: i8,
+        forward: i8,
+        sprinting: bool,
+    },
     PlayerMove {
         position: Position,
         rotation: f32,
