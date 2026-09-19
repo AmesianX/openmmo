@@ -15,6 +15,7 @@ struct MerchantRow {
     npc_name: String,
     #[serde(rename = "sellRatePercent")]
     sell_rate_percent: u32,
+    #[serde(default)]
     catalog: String,
 }
 
@@ -170,6 +171,9 @@ pub fn indexed_price(def: &crate::item_defs::ItemDef, index_percent: u32) -> Opt
 /// disappear once their needs are met.
 pub fn merchant_prompt_for(npc_name: &str) -> Option<String> {
     let (catalog, sell_rate_percent) = merchant_shop(npc_name)?;
+    if catalog.is_empty() {
+        return None;
+    }
 
     let mut section = String::from("## Your Shop\nItems you sell, with base prices:\n");
     for item_id in catalog {
@@ -342,6 +346,12 @@ mod tests {
         assert_eq!(rica.npc_name, "Rica");
         assert_eq!(rica.class, "merchant");
         assert!(npc_by_id("nobody").is_none());
+    }
+
+    #[test]
+    fn showroom_clerk_has_no_standard_catalog_prompt() {
+        assert_eq!(merchant_shop("Grida"), Some((Vec::new(), 40)));
+        assert!(merchant_prompt_for("Grida").is_none());
     }
 
     #[test]

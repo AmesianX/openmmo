@@ -51,6 +51,10 @@ impl TraderDef {
     pub(super) fn is_land_registrar(&self) -> bool {
         matches!(self, Self::Merchant(def) if def.id == "steward")
     }
+    fn buys_items(&self) -> bool {
+        !self.is_land_registrar()
+            && !matches!(self, Self::Merchant(def) if def.sell_rate_percent == 0)
+    }
     pub(crate) fn npc_name(&self) -> &str {
         match self {
             TraderDef::Merchant(def) => &def.npc_name,
@@ -68,8 +72,8 @@ impl TraderDef {
         item_def_id: &str,
         cha: i32,
     ) -> Result<(u32, i32), &'static str> {
-        if self.is_land_registrar() && kind == DealKind::Sell {
-            return Err("The Land Registrar does not buy items.");
+        if !self.buys_items() && kind == DealKind::Sell {
+            return Err("This trader does not buy items.");
         }
         match self {
             TraderDef::Merchant(m) => {
@@ -1161,9 +1165,9 @@ impl super::GameState {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
         };
-        if def.is_land_registrar() {
+        if !def.buys_items() {
             return self
-                .send_trade_error(player_id, "The Land Registrar does not buy items.")
+                .send_trade_error(player_id, "This trader does not buy items.")
                 .await;
         }
 
@@ -1456,9 +1460,9 @@ impl super::GameState {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
         };
-        if def.is_land_registrar() {
+        if !def.buys_items() {
             return self
-                .send_trade_error(player_id, "The Land Registrar does not buy items.")
+                .send_trade_error(player_id, "This trader does not buy items.")
                 .await;
         }
         // After the trader check, so an all-zero request to a bad trader

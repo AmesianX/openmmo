@@ -526,6 +526,7 @@ impl super::GameState {
     ) -> bool {
         self.sync_region_bridges(rx, rz, placements);
         self.sync_respawn_beds(rx, rz, placements);
+        self.sync_beds(rx, rz, placements);
         self.sync_dining(rx, rz, placements);
         let key = furniture::region_cache_key(rx, rz);
         let mut cache = self.passability_write();

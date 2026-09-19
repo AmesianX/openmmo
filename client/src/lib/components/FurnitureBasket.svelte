@@ -44,7 +44,9 @@
       </div>
     {/each}
     <div class="total">Total <GoldAmount copper={$furnitureBasketTotal} /></div>
-    <small>Pay at the exit to unpack or trade these items.</small>
+    <small
+      >Click Grida to check out. Unpaid items are returned when you leave.</small
+    >
   </div>
 {/if}
 

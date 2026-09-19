@@ -581,6 +581,9 @@ pub enum ClientMessage {
         furniture_id: i64,
         text: String,
     },
+    SelectFurnitureDisplay {
+        display_id: u32,
+    },
     CheckoutFurniture {
         items: Vec<crate::furniture_shop::FurnitureOrderLine>,
         expected_gold: i64,
@@ -1655,9 +1658,13 @@ pub enum ServerMessage {
     TradeBusy {
         busy: bool,
     },
-    /// Direct to a trading NPC: a player completed a buy/sell against it,
-    /// so its LLM can react in conversation. `kind` is from the player's
-    /// perspective (Buy = the player bought from the NPC).
+    /// An unpaid showroom selection, delivered only to the clerk.
+    FurnitureSelectionNotice {
+        player_id: PlayerId,
+        player_name: String,
+        item_def_id: String,
+    },
+    /// Completed trade; Buy means the player bought from the NPC.
     TradeNotice {
         player_name: String,
         item_def_id: String,
@@ -2009,6 +2016,7 @@ impl ServerMessage {
             | Self::BuybackUpdated { .. }
             | Self::TradeBusy { .. }
             | Self::TradeNotice { .. }
+            | Self::FurnitureSelectionNotice { .. }
             | Self::TradeDeclined { .. }
             | Self::DealResult { .. }
             | Self::MountRecovery { .. }

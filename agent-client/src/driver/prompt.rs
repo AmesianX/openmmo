@@ -443,6 +443,30 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
              at {applied_modifier_pct}% — {message}",
             if *accepted { "GRANTED" } else { "REJECTED" }
         )),
+        ServerMessage::FurnitureSelectionNotice {
+            player_id,
+            player_name,
+            item_def_id,
+        } => {
+            if !player_within_event_range(state, player_id) {
+                return None;
+            }
+            use onlinerpg_shared::furniture_shop::FurnitureTip;
+            let advice = match FurnitureTip::for_item(item_def_id)? {
+                FurnitureTip::StorageChest =>
+                    "The Wooden Storage Chest must be placed on the customer's own estate \
+                     before it can be used; it holds up to 50 kg.",
+                FurnitureTip::Bed =>
+                    "Sleeping in a bed for a full 16 seconds doubles natural HP and mana recovery. \
+                     Normal recovery restrictions still apply; the bed must be placed on the customer's own estate.",
+            };
+            Some(format!(
+                "[FurnitureSelection] {player_name} added {item_def_id} from a display to their \
+                 unpaid basket. Briefly explain this tip in one friendly sentence, addressing \
+                 that customer in their language: {advice} This is not a completed purchase. \
+                 Do not open a trade window or repeat the checkout instructions."
+            ))
+        }
         ServerMessage::TradeNotice {
             player_name,
             item_def_id,
@@ -721,6 +745,41 @@ mod tests {
     use crate::state::tests::{test_player, test_state};
     use crate::state::EVENT_DELIVERY_RADIUS;
     use onlinerpg_shared::{PlayerId, ServerMessage};
+
+    #[test]
+    fn furniture_selections_prompt_advice_without_claiming_a_purchase() {
+        let (mut state, _rx) = test_state();
+        let shopper = test_player(2.0, 0.0);
+        let id = shopper.id;
+        state.nearby_players.insert(id, shopper);
+        for (item, expected) in [
+            ("storage_chest", "own estate"),
+            ("furniture_bed", "doubles natural HP and mana recovery"),
+            (
+                "furniture_rustic_bed",
+                "doubles natural HP and mana recovery",
+            ),
+        ] {
+            let event = ServerMessage::FurnitureSelectionNotice {
+                player_id: id,
+                player_name: "Shopper".into(),
+                item_def_id: item.into(),
+            };
+            assert_eq!(
+                state.push_event(event.clone()),
+                crate::state::EventUrgency::Urgent
+            );
+            let text = format_event(&state, &event).unwrap();
+            assert!(
+                text.contains(expected) && text.contains("unpaid basket"),
+                "{text}"
+            );
+            assert!(text.contains("not a completed purchase"), "{text}");
+            state.nearby_players.remove(&id);
+            assert!(format_event(&state, &event).is_none());
+            state.nearby_players.insert(id, test_player(2.0, 0.0));
+        }
+    }
 
     /// Drained conversation returns as RECENT CONVERSATION in the next
     /// prompt — replayed as context, while transient events (a death, a

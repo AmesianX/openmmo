@@ -13,8 +13,6 @@
     furnitureShop,
     furnitureBasket,
     furnitureShopHover,
-    furnitureCheckoutOpen,
-    furnitureAtCheckout,
     furniturePurchasePending,
     displayProduct,
     addFurnitureToBasket,
@@ -22,6 +20,7 @@
   } from '../../stores/furnitureShopStore'
   import { playerVisualFloorLevel } from '../../stores/housingStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
+  import { networkManager } from '../../network/socket'
 
   let {
     player,
@@ -107,7 +106,8 @@
       if (!target) return
       event.preventDefault()
       event.stopImmediatePropagation()
-      addFurnitureToBasket(target.displayId)
+      if (addFurnitureToBasket(target.displayId))
+        networkManager.sendSelectFurnitureDisplay(target.displayId)
     }
     canvas.addEventListener('pointermove', move)
     canvas.addEventListener('pointerleave', leave)
@@ -122,16 +122,6 @@
 
   useTask(() => {
     const position = player?.position
-    const atCheckout = !!(
-      shoppingAllowed() &&
-      position &&
-      Math.hypot(
-        position.x - furnitureShop.checkout.x,
-        position.z - furnitureShop.checkout.z
-      ) <= 3
-    )
-    const wasAtCheckout = get(furnitureAtCheckout)
-    if (atCheckout !== wasAtCheckout) furnitureAtCheckout.set(atCheckout)
     if (get(furnitureBasket).length && !get(furniturePurchasePending)) {
       if (
         !shoppingAllowed() ||
@@ -142,7 +132,6 @@
         position.z > furnitureShop.bounds[3] + 2
       )
         clearFurnitureBasket()
-      else if (atCheckout && !wasAtCheckout) furnitureCheckoutOpen.set(true)
     }
     updateHover()
   })

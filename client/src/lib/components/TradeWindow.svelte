@@ -10,6 +10,17 @@
     type BuybackEntry,
     type DealKind,
   } from '../stores/tradeStore'
+  import {
+    furnitureShop,
+    furnitureBasket,
+    furnitureBasketTotal,
+    furnitureCart,
+    furniturePurchasePending,
+    furnitureShopError,
+    furnitureProduct,
+    addFurnitureItemToBasket,
+    removeFurnitureItemFromBasket,
+  } from '../stores/furnitureShopStore'
   import { gameStore } from '../stores/gameStore'
   import { remotePlayerManager } from '../managers/remotePlayerManager'
   import { inventoryStore, playerGold } from '../stores/inventoryStore'
@@ -39,6 +50,17 @@
   } from './inventoryGroups'
 
   const session = $derived($shopSession)
+  const isFurnitureShop = $derived(
+    session?.merchantName === furnitureShop.clerkNpcName
+  )
+  const furnitureCheckoutPending = $derived(
+    isFurnitureShop && $furniturePurchasePending
+  )
+  const buyCatalog = $derived(
+    isFurnitureShop
+      ? furnitureShop.products.map((product) => product.itemDefId)
+      : (session?.catalog ?? [])
+  )
   const isRegistrar = $derived(
     session !== null &&
       getNpcCapabilities(session.merchantName).traderId === 'steward'
@@ -92,6 +114,9 @@
   }
 
   let cart = $state<CartEntry[]>([])
+  const cartEntries: CartEntry[] = $derived(
+    isFurnitureShop ? [...$furnitureCart, ...cart] : cart
+  )
   let pendingAdd = $state<PendingAdd | null>(null)
   let portraitFailed = $state(false)
   let now = $state(Date.now())
@@ -102,6 +127,7 @@
     if (id !== lastMerchantId) {
       lastMerchantId = id
       cart = []
+      pendingAdd = null
       portraitFailed = false
     }
   })
@@ -173,7 +199,7 @@
   })
 
   function dealPct(itemDefId: string, kind: DealKind): number {
-    if (!session) return 0
+    if (!session || (isFurnitureShop && kind === 'buy')) return 0
     const deal = $shopDeals[dealKey(session.merchantPlayerId, itemDefId, kind)]
     if (!deal || deal.expiresAt <= now) return 0
     return deal.modifierPct
@@ -206,19 +232,23 @@
   }
 
   const buyTotal = $derived(
-    cart.reduce(
+    cartEntries.reduce(
       (sum, e) => (e.kind !== 'sell' ? sum + e.unitPrice * e.qty : sum),
       0
     )
   )
   const sellTotal = $derived(
-    cart.reduce(
+    cartEntries.reduce(
       (sum, e) => (e.kind === 'sell' ? sum + e.unitPrice * e.qty : sum),
       0
     )
   )
   const netCost = $derived(buyTotal - sellTotal)
-  const canConfirm = $derived(cart.length > 0 && netCost <= $playerGold)
+  const canConfirm = $derived(
+    cartEntries.length > 0 &&
+      netCost <= $playerGold &&
+      !furnitureCheckoutPending
+  )
 
   const DEFAULT_BUY_QTY = 10
 
@@ -227,6 +257,10 @@
   }
 
   function addBuy(itemDefId: string, def: ItemDefinition, stockMax?: number) {
+    if (isFurnitureShop) {
+      addFurnitureItemToBasket(itemDefId)
+      return
+    }
     // The first added unit carries any haggled deal (single-use server-side).
     const pct = dealPct(itemDefId, 'buy')
     const hasDealEntry = cart.some(
@@ -352,6 +386,10 @@
   }
 
   function removeOne(entry: CartEntry) {
+    if (isFurnitureShop && entry.kind === 'buy') {
+      removeFurnitureItemFromBasket(entry.itemDefId)
+      return
+    }
     entry.qty -= 1
     if (entry.qty <= 0) {
       cart = cart.filter((e) => e !== entry)
@@ -378,6 +416,7 @@
 
   function onConfirm() {
     if (!session || !canConfirm) return
+    pendingAdd = null
     const allocator = createGroupAllocator()
     const sellItems = dealsFirst(cart.filter((e) => e.kind === 'sell'))
       .filter((e) => e.groupKey !== undefined)
@@ -395,10 +434,21 @@
       .filter((e) => e.kind === 'buyback' && e.entryId !== undefined)
       .map((e) => e.entryId!)
 
-    // Sells first so their proceeds can fund the buys — each is its own
-    // all-or-nothing batch; the connection processes them in send order.
+    // Sell first so the proceeds can fund purchases.
     if (sellItems.length > 0) {
       networkManager.sendSellItems(session.merchantPlayerId, sellItems)
+    }
+    if (isFurnitureShop && $furnitureBasket.length > 0) {
+      furniturePurchasePending.set(true)
+      furnitureShopError.set(null)
+      networkManager.sendCheckoutFurniture(
+        $furnitureBasket.map((line) => ({
+          display_id: line.displayId,
+          quantity: line.quantity,
+        })),
+        $playerGold + sellTotal,
+        $furnitureBasketTotal
+      )
     }
     if (buyItems.length > 0) {
       networkManager.sendBuyItems(session.merchantPlayerId, buyItems)
@@ -447,12 +497,13 @@
           {isRegistrar ? 'Estate supplies' : 'Buy'}
         </div>
         <div class="item-list">
-          {#each session.catalog as itemDefId (itemDefId)}
+          {#each buyCatalog as itemDefId (itemDefId)}
             {@const def = getItemDef(itemDefId)}
             {#if def}
               {@const pct = dealPct(itemDefId, 'buy')}
               <button
                 class="item-row"
+                disabled={furnitureCheckoutPending}
                 onclick={() => addBuy(itemDefId, def)}
                 use:itemTooltip={{ def, side: 'left' }}
               >
@@ -469,7 +520,11 @@
                   >
                 {/if}
                 <span class="item-price"
-                  ><GoldAmount copper={buyPrice(def, pct)} /></span
+                  ><GoldAmount
+                    copper={isFurnitureShop
+                      ? (furnitureProduct(itemDefId)?.price ?? 0)
+                      : buyPrice(def, pct)}
+                  /></span
                 >
               </button>
             {/if}
@@ -515,7 +570,8 @@
               {#if def}
                 <button
                   class="item-row"
-                  disabled={inCartBuyback(entry.entryId)}
+                  disabled={inCartBuyback(entry.entryId) ||
+                    furnitureCheckoutPending}
                   onclick={() => addBuyback(entry)}
                   use:itemTooltip={{ def, side: 'left' }}
                 >
@@ -562,11 +618,12 @@
         {/if}
         <div class="column-title">{isRegistrar ? 'Purchase' : 'Cart'}</div>
         <div class="item-list">
-          {#each cart as entry (entry.kind + ':' + (entry.groupKey ?? entry.entryId ?? entry.itemDefId) + (entry.dealPct ? ':deal' : ''))}
+          {#each cartEntries as entry (entry.kind + ':' + (entry.groupKey ?? entry.entryId ?? entry.itemDefId) + (entry.dealPct ? ':deal' : ''))}
             {@const def = getItemDef(entry.itemDefId)}
             {#if def}
               <button
                 class="item-row"
+                disabled={furnitureCheckoutPending}
                 onclick={() => removeOne(entry)}
                 use:itemTooltip={{ def, side: 'left' }}
               >
@@ -605,6 +662,9 @@
           {/each}
         </div>
         <div class="cart-footer">
+          {#if isFurnitureShop && $furnitureShopError}
+            <p class="checkout-error" role="status">{$furnitureShopError}</p>
+          {/if}
           <div class="cart-line">
             <span class="cart-label">Total</span>
             <span class="cart-total" class:earn={netCost < 0}>
@@ -622,14 +682,16 @@
             disabled={!canConfirm}
             onclick={onConfirm}
           >
-            Confirm
+            {furnitureCheckoutPending ? 'Paying…' : 'Confirm'}
           </button>
         </div>
       </div>
 
       {#if !isRegistrar}
         <div class="trade-column">
-          <div class="column-title">Sell ({session.sellRatePercent}%)</div>
+          <div class="column-title">
+            Sell ({session.sellRatePercent}%)
+          </div>
           <div class="item-list">
             {#each sellEntries as group (group.key)}
               {@const def = getItemDef(group.itemDefId)}
@@ -638,7 +700,8 @@
                 {@const pct = dealPct(group.itemDefId, 'sell')}
                 <button
                   class="item-row"
-                  disabled={reserved >= group.totalQty}
+                  disabled={reserved >= group.totalQty ||
+                    furnitureCheckoutPending}
                   onclick={() => addSell(group, def)}
                   use:itemTooltip={{
                     def,
@@ -703,6 +766,9 @@
 />
 
 <style>
+  .checkout-error {
+    color: #f0b8b8;
+  }
   .estate-window .trade-column {
     width: 260px;
   }

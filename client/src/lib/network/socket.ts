@@ -811,6 +811,10 @@ class NetworkManager {
     })
   }
 
+  sendSelectFurnitureDisplay(displayId: number) {
+    this.sendMessage({ SelectFurnitureDisplay: { display_id: displayId } })
+  }
+
   sendCheckoutFurniture(
     items: { display_id: number; quantity: number }[],
     expectedGold: number,

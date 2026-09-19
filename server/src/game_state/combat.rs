@@ -556,6 +556,7 @@ impl super::GameState {
         monster_id: String,
         auth: Option<&crate::auth::AuthService>,
     ) {
+        self.stop_bed_rest(player_id).await;
         let audit = self.combat_audit.player_attack(*player_id, &monster_id);
         let context = match self.validate_player_attack(player_id, &monster_id).await {
             Ok(ctx) => ctx,
@@ -620,6 +621,7 @@ impl super::GameState {
         monster_id: String,
         auth: Option<&crate::auth::AuthService>,
     ) {
+        self.stop_bed_rest(player_id).await;
         let character_id = self
             .player_characters
             .read()
@@ -1356,6 +1358,7 @@ impl super::GameState {
             }
         }
 
+        self.stop_bed_rest(target_player_id).await;
         if result.hit {
             self.cancel_live_instrument_if_active(target_player_id)
                 .await;
@@ -1426,6 +1429,7 @@ impl super::GameState {
     }
 
     pub async fn tick_regeneration(&self) {
+        self.end_invalid_bed_rests().await;
         self.tick_mana_regeneration().await;
         let mut updates = Vec::new();
 
@@ -1435,8 +1439,7 @@ impl super::GameState {
             let now = Self::now_ms();
 
             for (player_id, player) in players.iter() {
-                // Only regenerate if alive and wounded
-                if player.health > 0 && player.health < player.max_health {
+                if player.is_damageable(now) && player.health < player.max_health {
                     if now.saturating_sub(player.last_combat_at) < super::OUT_OF_COMBAT_MS {
                         continue;
                     }
@@ -1475,9 +1478,17 @@ impl super::GameState {
             let mut players = self.players.write().await;
             for (player_id, amount) in updates {
                 if let Some(player) = players.get_mut(&player_id) {
-                    if player.health > 0 && player.health < player.max_health {
+                    if player.is_damageable(Self::now_ms())
+                        && player.health < player.max_health
+                        && Self::now_ms().saturating_sub(player.last_combat_at)
+                            >= super::OUT_OF_COMBAT_MS
+                    {
                         let old_health = player.health;
-                        player.health = (player.health + amount).min(player.max_health);
+                        let multiplier = self.bed_rest_multiplier(player).await;
+                        player.health = player
+                            .health
+                            .saturating_add(amount * multiplier)
+                            .min(player.max_health);
                         self.combat_audit.health(old_health, player, "natural");
 
                         if player.health != old_health {
@@ -1512,6 +1523,7 @@ impl super::GameState {
     /// then the XP penalty. One chokepoint so future death sources can't
     /// forget a side effect.
     pub(super) async fn on_player_died(&self, player_id: &PlayerId, cause: &str) {
+        self.stop_bed_rest(player_id).await;
         self.combat_audit.death(player_id);
         if let Some((position, _, floor_level, name)) = self.player_pose(player_id).await {
             let place = crate::dungeon_defs::place_label(&position, floor_level);

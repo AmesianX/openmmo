@@ -893,6 +893,7 @@ impl super::GameState {
         player_id: &PlayerId,
         instance_id: u64,
     ) -> Option<AuthenticatedUseAction> {
+        self.stop_bed_rest(player_id).await;
         let inventories = self.inventories.read().await;
         let item = inventories
             .get(player_id)?
@@ -907,6 +908,7 @@ impl super::GameState {
     /// Use a consumable from the bag: resolve its effect and dispatch to the
     /// matching handler (healing potion, return scroll, ...).
     pub async fn use_item(&self, player_id: &PlayerId, instance_id: u64) {
+        self.stop_bed_rest(player_id).await;
         if self
             .reject_if_trade_reserved(player_id, instance_id, "use")
             .await

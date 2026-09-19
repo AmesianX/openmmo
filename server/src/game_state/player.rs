@@ -413,6 +413,7 @@ impl super::GameState {
         self.remove_dungeon_discoveries(player_id).await;
         self.forget_hunger(player_id).await;
         self.mana.write().await.remove(player_id);
+        self.bed_rest_started.write().await.remove(player_id);
     }
 
     /// Serializes account replacement and character deletion with game entry.
@@ -848,6 +849,7 @@ impl super::GameState {
     }
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
+        self.bed_rest_started.write().await.remove(player_id);
         self.clear_player_movement(player_id, "disconnect").await;
         self.player_movement_versions
             .write()
@@ -2225,6 +2227,7 @@ impl super::GameState {
             return;
         }
         new_position.x = wrap_world_x(new_position.x);
+        self.stop_bed_rest(player_id).await;
         self.apply_player_position(
             player_id,
             new_position,
@@ -2300,6 +2303,7 @@ impl super::GameState {
                     player.object_id = None;
                 }
             }
+            self.update_bed_rest(player).await;
             (old_floor, old_position, player.clone())
         };
 
@@ -2507,6 +2511,7 @@ impl super::GameState {
             } else if let Some(player) = players.get_mut(player_id) {
                 player.object_type = object_type.clone();
                 player.object_id = object_id;
+                self.update_bed_rest(player).await;
                 Ok(Some((player.position, player.floor_level)))
             } else {
                 Ok(None)

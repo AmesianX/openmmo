@@ -568,6 +568,7 @@ impl super::GameState {
         self.dirty_players.write().await.extend(ids.iter());
         self.party_vitals_dirty.write().await.extend(ids);
         for hit in hits {
+            self.stop_bed_rest(&hit.pid).await;
             self.publish_nearby(
                 &hit.position,
                 hit.floor,

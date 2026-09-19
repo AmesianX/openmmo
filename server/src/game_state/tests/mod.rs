@@ -15,6 +15,7 @@ use tokio::sync::mpsc::error::TryRecvError as MpscTryRecvError;
 
 mod ability_tests;
 mod ambient_spawn_tests;
+mod bed_rest_tests;
 mod cape_dye_tests;
 mod cape_texture_tests;
 mod chat_tests;

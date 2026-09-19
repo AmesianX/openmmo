@@ -177,7 +177,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v86: relative keyboard travel, stationary turns and backward movement.
 /// v87: ORKEA checkout and editable estate decorations.
 /// v88: moving placed estate furniture.
-pub const PROTOCOL_VERSION: u32 = 88;
+/// v89: showroom selections notify the furniture clerk.
+pub const PROTOCOL_VERSION: u32 = 89;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

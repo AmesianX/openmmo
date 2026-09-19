@@ -1,6 +1,82 @@
 use super::*;
 
 #[tokio::test]
+async fn grida_buys_player_items_at_ricas_rate_and_supports_buyback() {
+    let game = make_test_game_state("grida_checkout_shop");
+    let (mut rx, _npc_rx) = setup_haggle(&game, 10, 0).await;
+    let buyer = pid("buyer");
+    let clerk = pid("npc_grida");
+    game.add_player(make_npc("npc_grida", "Grida", 0.0, 0.0))
+        .await;
+    game.inventories.write().await.insert(
+        buyer,
+        PlayerInventory {
+            bag: vec![
+                bag_item(11, "iron_sword", 1),
+                bag_item(12, "message_in_a_bottle", 2),
+                bag_item(13, "apple", 2),
+                bag_item(14, "furniture_chair", 1),
+            ],
+            ..Default::default()
+        },
+    );
+    game.open_shop(&buyer, &clerk, true).await;
+    assert!(drain(&mut rx).iter().any(|message| matches!(message,
+        ServerMessage::ShopState { merchant_name, catalog, sell_rate_percent, .. }
+        if merchant_name == "Grida" && catalog.is_empty() && *sell_rate_percent == 40
+    )));
+    game.sell_item(&buyer, &clerk, 11).await;
+    assert_eq!(game.get_player_gold(&buyer).await, 4000);
+    game.sell_items(
+        &buyer,
+        &clerk,
+        vec![
+            onlinerpg_shared::messages::BagLineItem {
+                instance_id: 12,
+                qty: 2,
+            },
+            onlinerpg_shared::messages::BagLineItem {
+                instance_id: 13,
+                qty: 2,
+            },
+            onlinerpg_shared::messages::BagLineItem {
+                instance_id: 14,
+                qty: 1,
+            },
+        ],
+    )
+    .await;
+    assert_eq!(game.get_player_gold(&buyer).await, 4334);
+    assert!(game.inventories.read().await[&buyer].bag.is_empty());
+    let buybacks = game.buybacks.read().await[&(1, "Grida".to_string())]
+        .iter()
+        .map(|entry| entry.entry.entry_id)
+        .collect();
+    game.buyback_items(&buyer, &clerk, buybacks).await;
+    assert_eq!(game.get_player_gold(&buyer).await, 0);
+    let inventory = game.get_player_inventory(&buyer).await.unwrap();
+    for (item, expected) in [
+        ("iron_sword", 1),
+        ("message_in_a_bottle", 2),
+        ("apple", 2),
+        ("furniture_chair", 1),
+    ] {
+        assert_eq!(
+            inventory
+                .bag
+                .iter()
+                .filter(|i| i.item_def_id == item)
+                .map(|i| i.quantity)
+                .sum::<u32>(),
+            expected
+        );
+    }
+    assert!(!drain(&mut rx)
+        .iter()
+        .any(|message| matches!(message, ServerMessage::TradeError { .. })));
+}
+
+#[tokio::test]
 async fn item_lock_blocks_single_sales_and_mixed_batch_sales() {
     let game = make_test_game_state("item_lock_shop");
     let (mut rx, _npc_rx) = setup_haggle(&game, 12, 0).await;
@@ -66,7 +142,7 @@ async fn steward_sells_land_deeds_and_burns_the_purchase_gold() {
     game_state.open_shop(&buyer, &steward, true).await;
     match buyer_rx.try_recv().unwrap() {
         ServerMessage::ShopState { catalog, .. } => {
-            assert_eq!(catalog, vec!["land_deed", "storage_chest"]);
+            assert_eq!(catalog, vec!["land_deed"]);
         }
         other => panic!("Expected Aldwin's shop, got {other:?}"),
     }

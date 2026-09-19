@@ -5,17 +5,11 @@ use std::sync::LazyLock;
 #[serde(rename_all = "camelCase")]
 pub struct FurnitureShop {
     pub name: String,
+    pub clerk_npc_name: String,
     pub house_id: String,
     pub region: [i32; 2],
     pub bounds: [f32; 4],
-    pub checkout: Checkout,
     pub products: Vec<FurnitureProduct>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Checkout {
-    pub x: f32,
-    pub z: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +25,22 @@ pub struct FurnitureProduct {
 pub struct FurnitureOrderLine {
     pub display_id: u32,
     pub quantity: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FurnitureTip {
+    StorageChest,
+    Bed,
+}
+
+impl FurnitureTip {
+    pub fn for_item(item_def_id: &str) -> Option<Self> {
+        match item_def_id {
+            "storage_chest" => Some(Self::StorageChest),
+            "furniture_bed" | "furniture_rustic_bed" => Some(Self::Bed),
+            _ => None,
+        }
+    }
 }
 
 pub static SHOP: LazyLock<FurnitureShop> = LazyLock::new(|| {
@@ -68,14 +78,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_displays_sell_placeable_decorations() {
+    fn all_displays_sell_placeable_furniture() {
         let mut displays = std::collections::HashSet::new();
         assert_eq!(SHOP.products.len(), 23);
         for product in &SHOP.products {
             let definition =
                 crate::estate_storage::estate_storage_def(&product.item_def_id).unwrap();
             assert_eq!(definition.model_id, product.object_type);
-            assert_eq!(definition.capacity_kg, 0.0);
+            assert_eq!(
+                definition.capacity_kg,
+                if product.item_def_id == "storage_chest" {
+                    50.0
+                } else {
+                    0.0
+                }
+            );
             assert!(product.price > 0);
             for id in &product.display_ids {
                 assert!(displays.insert(id));
@@ -92,6 +109,7 @@ mod tests {
             quantity,
         };
         assert_eq!(quote(&[line(103, 2), line(106, 1)]), Ok(600));
+        assert_eq!(quote(&[line(94, 1)]), Ok(1200));
         for lines in [
             vec![],
             vec![line(84, 1)],

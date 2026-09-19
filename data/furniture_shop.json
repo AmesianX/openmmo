@@ -1,5 +1,6 @@
 {
   "name": "ORKEA",
+  "clerkNpcName": "Grida",
   "houseId": "r-23_+74_5",
   "region": [
     -2,
@@ -11,10 +12,6 @@
     -1442,
     4784
   ],
-  "checkout": {
-    "x": -1453,
-    "z": 4778
-  },
   "products": [
     {
       "objectType": "bed",
@@ -81,9 +78,9 @@
       ]
     },
     {
-      "objectType": "chest",
-      "itemDefId": "furniture_chest",
-      "price": 900,
+      "objectType": "chest_animated",
+      "itemDefId": "storage_chest",
+      "price": 1200,
       "displayIds": [
         94
       ]

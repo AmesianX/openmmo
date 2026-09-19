@@ -15,6 +15,7 @@ use crate::types::{
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use onlinerpg_shared::deserialize_client_msg;
+use onlinerpg_shared::furniture_shop::{FurnitureTip, SHOP};
 use onlinerpg_shared::inventory::EquipSlot;
 use onlinerpg_shared::VisibleEquipment;
 use std::net::{IpAddr, SocketAddr};
@@ -200,6 +201,7 @@ struct ConnectionState {
     last_party_positions_poll: Option<Instant>,
     /// Last answered friend-presence poll (spam clamp).
     last_friends_online_poll: Option<Instant>,
+    last_furniture_tip: std::collections::HashMap<FurnitureTip, Instant>,
     /// An `EnvReport` was already logged; later ones are dropped (spam clamp).
     env_reported: bool,
     /// Credential this connection uploads cape textures with. Lives exactly
@@ -218,6 +220,7 @@ const PARTY_POSITIONS_MIN_INTERVAL: Duration = Duration::from_secs(2);
 /// every 15s with its panel open and every 60s without; this only bounds what
 /// a rewritten client can ask for.
 const FRIENDS_ONLINE_MIN_INTERVAL: Duration = Duration::from_secs(5);
+const FURNITURE_TIP_INTERVAL: Duration = Duration::from_secs(300);
 
 /// True at most once per clamp window; a clamped poll does not refresh the
 /// window, so spam cannot starve refreshes.
@@ -251,6 +254,7 @@ impl ConnectionState {
             is_admin: false,
             last_party_positions_poll: None,
             last_friends_online_poll: None,
+            last_furniture_tip: Default::default(),
             env_reported: false,
             cape_upload_token: None,
             instrument_batch_limiter: InstrumentBatchLimiter::new(),
@@ -262,6 +266,12 @@ impl ConnectionState {
             &mut self.last_party_positions_poll,
             PARTY_POSITIONS_MIN_INTERVAL,
         )
+    }
+
+    fn furniture_tip_due(&self, tip: FurnitureTip) -> bool {
+        self.last_furniture_tip
+            .get(&tip)
+            .is_none_or(|last| last.elapsed() >= FURNITURE_TIP_INTERVAL)
     }
 
     fn friends_online_poll_due(&mut self) -> bool {
@@ -1351,6 +1361,7 @@ async fn handle_client_message(
             }
 
             state.player_id = Some(id);
+            state.last_furniture_tip.clear();
             state.character_name = Some(selected_character.name.clone());
             game_state
                 .begin_account_activity(id, &authed_account_name, auth_service)
@@ -1868,6 +1879,20 @@ async fn handle_client_message(
                 game_state
                     .start_landscaping_mode(id, auth_service, tool, state.is_admin)
                     .await;
+            }
+        }
+        ClientMessage::SelectFurnitureDisplay { display_id } => {
+            let tip = SHOP
+                .products
+                .iter()
+                .find(|product| product.display_ids.contains(&display_id))
+                .and_then(|product| FurnitureTip::for_item(&product.item_def_id));
+            if let (Some(id), Some(tip)) = (state.player_id, tip) {
+                if state.furniture_tip_due(tip)
+                    && game_state.notify_furniture_selection(&id, display_id).await
+                {
+                    state.last_furniture_tip.insert(tip, Instant::now());
+                }
             }
         }
         ClientMessage::CheckoutFurniture {
@@ -2630,6 +2655,28 @@ mod tests {
         assert!(!state.party_positions_poll_due());
         state.last_party_positions_poll = Some(Instant::now() - PARTY_POSITIONS_MIN_INTERVAL);
         assert!(state.party_positions_poll_due());
+    }
+
+    #[test]
+    fn furniture_tips_are_limited_per_customer_and_item_kind() {
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        assert!(state.furniture_tip_due(FurnitureTip::StorageChest));
+        state
+            .last_furniture_tip
+            .insert(FurnitureTip::StorageChest, Instant::now());
+        assert!(!state.furniture_tip_due(FurnitureTip::StorageChest));
+        assert!(state.furniture_tip_due(FurnitureTip::Bed));
+        assert_eq!(
+            FurnitureTip::for_item("furniture_bed"),
+            FurnitureTip::for_item("furniture_rustic_bed")
+        );
+        let other = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        assert!(other.furniture_tip_due(FurnitureTip::StorageChest));
+        state.last_furniture_tip.insert(
+            FurnitureTip::StorageChest,
+            Instant::now() - FURNITURE_TIP_INTERVAL,
+        );
+        assert!(state.furniture_tip_due(FurnitureTip::StorageChest));
     }
 
     #[test]

@@ -117,9 +117,9 @@ impl SharedState {
 
             // Urgent: a player traded with us, or our trade request failed —
             // both deserve an in-character reaction.
-            ServerMessage::TradeNotice { .. } | ServerMessage::TradeError { .. } => {
-                EventUrgency::Urgent
-            }
+            ServerMessage::TradeNotice { .. }
+            | ServerMessage::FurnitureSelectionNotice { .. }
+            | ServerMessage::TradeError { .. } => EventUrgency::Urgent,
 
             // State-only: tracked on SharedState, shown in the world state.
             ServerMessage::GoldUpdate { .. }

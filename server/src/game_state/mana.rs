@@ -116,9 +116,17 @@ impl GameState {
                     && now_ms.saturating_sub(player.last_combat_at) >= super::OUT_OF_COMBAT_MS
                     && now >= data.regen_after
                 {
+                    let multiplier = if now
+                        >= data.regen_after
+                            + Duration::from_millis(onlinerpg_shared::mana::MANA_REGEN_INTERVAL_MS)
+                    {
+                        self.bed_rest_multiplier(player).await
+                    } else {
+                        1
+                    };
                     data.mana = data
                         .mana
-                        .saturating_add(mana_regen_amount(attrs.wis, player.level))
+                        .saturating_add(mana_regen_amount(attrs.wis, player.level) * multiplier)
                         .min(data.max_mana);
                 }
                 if recalculated || before != data.mana {

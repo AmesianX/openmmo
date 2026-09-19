@@ -13,7 +13,7 @@ pub struct MerchantDefinition {
     #[serde(rename = "sellRatePercent")]
     pub sell_rate_percent: u32,
     /// Item def ids the merchant sells (unlimited stock).
-    #[serde(deserialize_with = "crate::semicolon_list::deserialize")]
+    #[serde(default, deserialize_with = "crate::semicolon_list::deserialize")]
     pub catalog: Vec<String>,
 }
 

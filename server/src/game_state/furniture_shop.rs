@@ -7,9 +7,85 @@ use crate::{
     auth::AuthService,
     types::{PlayerId, ServerMessage},
 };
-use onlinerpg_shared::furniture_shop::{quote, FurnitureOrderLine, SHOP};
+use onlinerpg_shared::furniture::FurniturePlacement;
+use onlinerpg_shared::furniture_shop::{
+    quote, FurnitureOrderLine, FurnitureProduct, FurnitureTip, SHOP,
+};
+
+fn find_display<'a>(
+    displays: &'a [FurniturePlacement],
+    display_id: u32,
+    product: &FurnitureProduct,
+) -> Option<&'a FurniturePlacement> {
+    displays.iter().find(|display| {
+        display.id == display_id
+            && display.type_id == product.object_type
+            && display.floor_level == 0
+            && (SHOP.bounds[0]..=SHOP.bounds[2]).contains(&display.x)
+            && (SHOP.bounds[1]..=SHOP.bounds[3]).contains(&display.z)
+    })
+}
 
 impl GameState {
+    pub async fn notify_furniture_selection(&self, player_id: &PlayerId, display_id: u32) -> bool {
+        let Some(product) = SHOP.products.iter().find(|product| {
+            product.display_ids.contains(&display_id)
+                && FurnitureTip::for_item(&product.item_def_id).is_some()
+        }) else {
+            return false;
+        };
+        let Ok(raw) = self
+            .terrain_io
+            .read_object(SHOP.region[0], SHOP.region[1])
+            .await
+        else {
+            return false;
+        };
+        let Ok(displays) = Self::parse_region_furniture(&raw) else {
+            return false;
+        };
+        let Some(display) = find_display(&displays, display_id, product) else {
+            return false;
+        };
+        let (clerk_id, player_name) = {
+            let players = self.players.read().await;
+            let Some(player) = players.get(player_id) else {
+                return false;
+            };
+            if player.is_official_npc
+                || player.health == 0
+                || player.floor_level != 0
+                || !(0.0..=4.0).contains(&player.position.y)
+                || (player.position.x - display.x).hypot(player.position.z - display.z) > 3.5
+            {
+                return false;
+            }
+            let Some(clerk) = players.values().find(|npc| {
+                npc.is_official_npc
+                    && npc.name == SHOP.clerk_npc_name
+                    && npc.health > 0
+                    && npc.floor_level == 0
+                    && (0.0..=4.0).contains(&npc.position.y)
+                    && (SHOP.bounds[0]..=SHOP.bounds[2]).contains(&npc.position.x)
+                    && (SHOP.bounds[1]..=SHOP.bounds[3]).contains(&npc.position.z)
+                    && !self.is_npc_asleep(&npc.name)
+            }) else {
+                return false;
+            };
+            (clerk.id, player.name.clone())
+        };
+        self.send_direct_message(
+            &clerk_id,
+            ServerMessage::FurnitureSelectionNotice {
+                player_id: *player_id,
+                player_name,
+                item_def_id: product.item_def_id.clone(),
+            },
+        )
+        .await;
+        true
+    }
+
     pub async fn checkout_furniture(
         &self,
         player_id: &PlayerId,
@@ -57,18 +133,26 @@ impl GameState {
             .get_player_save_data(player_id)
             .await
             .ok_or("Character not found.")?;
-        {
+        let clerk_id = {
             let players = self.players.read().await;
             let player = players.get(player_id).ok_or("Character not found.")?;
             if player.health == 0
                 || player.floor_level != 0
-                || (player.position.x - SHOP.checkout.x).hypot(player.position.z - SHOP.checkout.z)
-                    > 4.0
+                || player.position.x < SHOP.bounds[0] - 4.0
+                || player.position.x > SHOP.bounds[2] + 2.0
+                || player.position.z < SHOP.bounds[1] - 2.0
+                || player.position.z > SHOP.bounds[3] + 2.0
                 || !(0.0..=4.0).contains(&player.position.y)
             {
-                return Err("Visit the ORKEA exit to pay for your furniture.");
+                return Err("Visit Grida at ORKEA to pay for your furniture.");
             }
-        }
+            players
+                .values()
+                .find(|npc| npc.is_official_npc && npc.name == SHOP.clerk_npc_name)
+                .map(|npc| npc.id)
+                .ok_or("Grida is not available to check out your furniture.")?
+        };
+        self.validate_trader(player_id, &clerk_id).await?;
         let raw = self
             .terrain_io
             .read_object(SHOP.region[0], SHOP.region[1])
@@ -77,15 +161,7 @@ impl GameState {
         let displays = Self::parse_region_furniture(&raw)
             .map_err(|_| "The showroom is temporarily unavailable.")?;
         for (line, product) in &order {
-            if !displays.iter().any(|p| {
-                p.id == line.display_id
-                    && p.type_id == product.object_type
-                    && p.x >= SHOP.bounds[0]
-                    && p.x <= SHOP.bounds[2]
-                    && p.z >= SHOP.bounds[1]
-                    && p.z <= SHOP.bounds[3]
-                    && p.floor_level == 0
-            }) {
+            if find_display(&displays, line.display_id, product).is_none() {
                 return Err(
                     "A selected display is no longer available. Remove it from your basket.",
                 );

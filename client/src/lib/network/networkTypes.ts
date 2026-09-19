@@ -296,6 +296,7 @@ export type ClientMessage =
       }
     }
   | { SetEstateFurnitureText: { furniture_id: number; text: string } }
+  | { SelectFurnitureDisplay: { display_id: number } }
   | {
       CheckoutFurniture: {
         items: { display_id: number; quantity: number }[]

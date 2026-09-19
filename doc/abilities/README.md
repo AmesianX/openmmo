@@ -2,7 +2,7 @@
 
 어빌리티별 장착 조건, 효과, 타이밍, UI와 네트워크 동작을 정리한다.
 
-[마나·스킬·마법 설계 초안](../MANA_SKILLS_MAGIC.md): Mana/MP 명칭, 마법 전용 자원, 습득·회복·UI와 전환 계획. 최대량·저장·자연 회복·게이지와 Guardian Ward의 MP 비용은 구현되어 있다. 물약·침대 회복·공격 마법은 후속 단계다.
+[마나·스킬·마법 설계 초안](../MANA_SKILLS_MAGIC.md): Mana/MP 명칭, 마법 전용 자원, 습득·회복·UI와 전환 계획. 최대량·저장·자연 회복·침대 수면 중 HP·MP 회복 2배·게이지와 Guardian Ward의 MP 비용은 구현되어 있다. 물약·공격 마법은 후속 단계다.
 
 - [Guardian Ward](GUARDIAN_WARD.md): Sword/Mace + Shield 파티 방어 버프.
 - [Double Slash](DOUBLE_SLASH.md): Dagger 전용 2연격.

@@ -209,6 +209,7 @@ mod dungeon;
 mod estate_return;
 mod estate_storage;
 pub(crate) use estate_storage::EstateFurnitureMove;
+mod bed_rest;
 mod fence;
 mod friends;
 mod furniture_shop;
@@ -431,6 +432,8 @@ pub struct GameState {
     rain_shelters: Arc<std::sync::RwLock<weather::RainShelterIndex>>,
     /// The configured respawn beds, refreshed with their region's objects.
     respawn_beds: Arc<std::sync::RwLock<Vec<onlinerpg_shared::furniture::FurniturePlacement>>>,
+    beds: Arc<std::sync::RwLock<bed_rest::BedIndex>>,
+    bed_rest_started: Arc<RwLock<HashMap<PlayerId, tokio::time::Instant>>>,
     /// Chairs and tables by region, so a served plate lands on a table top.
     dining: Arc<std::sync::RwLock<meal::DiningIndex>>,
     /// When each player was last sent a `PositionCorrected`. Only touched when
@@ -728,6 +731,8 @@ impl GameState {
             bridge_decks: Arc::new(std::sync::RwLock::new(HashMap::new())),
             rain_shelters: Arc::new(std::sync::RwLock::new(HashMap::new())),
             respawn_beds: Arc::new(std::sync::RwLock::new(Vec::new())),
+            beds: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            bed_rest_started: Arc::new(RwLock::new(HashMap::new())),
             dining: Arc::new(std::sync::RwLock::new(HashMap::new())),
             no_spawn_zones,
             inventories: Arc::new(RwLock::new(HashMap::new())),

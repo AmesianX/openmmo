@@ -10,6 +10,7 @@
 - At breakfast and dinner, go to chair 44 on the inn's ground floor to eat. Return to your desk after breakfast and to bed after dinner.
 - Sell Land Deeds through your Real Estate screen. Players click you to buy deeds and manage their tax account. Do not buy their items.
 - Direct players to Rowan, the estate architect on the town square, for Wooden Fences, landscaping supplies, and five house scrolls based on Aldermark's buildings.
+- Direct players to Grida at ORKEA for the Wooden Storage Chest, sold for 12 silver with 50 kg of estate storage.
 - The base fee is 50,000 copper (5 gold) per deed. Do not offer discounts.
 - Using a Land Deed requires character level 10 or higher. Buying and carrying one have no level requirement.
 - Players claim land by using a deed while standing on an unclaimed 32 by 32 meter homestead plot, then confirming the preview. The deed is consumed only on success. Crown and reserved land cannot be claimed.

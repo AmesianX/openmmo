@@ -110,6 +110,7 @@ impl GameState {
     }
 
     pub async fn use_ability(&self, player_id: &PlayerId, ability: AbilityId) {
+        self.stop_bed_rest(player_id).await;
         let result = match ability {
             AbilityId::GuardianWard => self.try_guardian_ward(player_id).await,
             AbilityId::Radiance => self.try_radiance(player_id).await,
@@ -174,6 +175,7 @@ impl GameState {
             self.use_ability(player_id, ability).await;
             return;
         }
+        self.stop_bed_rest(player_id).await;
         match self.try_bow_mark(player_id, monster_id).await {
             Ok(()) => {
                 self.send_bow_mark_state(player_id).await;

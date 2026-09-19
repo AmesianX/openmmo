@@ -465,7 +465,7 @@ async fn estate_furniture_moves_preserve_five_centimeter_adjustments() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn estate_beds_support_exclusive_sleep_and_cannot_be_recovered_while_occupied() {
     for item_id in ["furniture_bed", "furniture_rustic_bed"] {
         let game = make_flat_world_game_state(item_id);
@@ -500,6 +500,20 @@ async fn estate_beds_support_exclusive_sleep_and_cannot_be_recovered_while_occup
             game.players.read().await[&owner].object_type.as_deref(),
             Some(item_id)
         );
+        game.register_hunger(&owner, 500).await;
+        game.players
+            .write()
+            .await
+            .get_mut(&owner)
+            .unwrap()
+            .max_health = 100;
+        let hp = game.players.read().await[&owner].health;
+        let player = game.players.read().await[&owner].clone();
+        game.register_mana(&player, 10, Some(0)).await;
+        tokio::time::advance(std::time::Duration::from_secs(26)).await;
+        game.tick_regeneration().await;
+        assert_eq!(game.players.read().await[&owner].health, hp + 6);
+        assert_eq!(game.mana.read().await[&owner].mana, 4);
 
         let guest = pid("Guest");
         game.add_player(make_player("Guest", 3.0, 3.0)).await;
@@ -597,6 +611,93 @@ async fn estate_bed_interactions_validate_type_distance_floor_and_health() {
     }
 }
 
+async fn add_furniture_clerk(game: &GameState) {
+    let mut clerk = make_player("Grida", -1452.0, 4777.0);
+    clerk.position.y = 1.0;
+    clerk.is_official_npc = true;
+    game.add_player(clerk).await;
+}
+
+#[tokio::test]
+async fn furniture_selection_only_notifies_the_available_clerk_about_nearby_tip_items() {
+    let game = make_flat_world_game_state("furniture_selection");
+    add_furniture_clerk(&game).await;
+    let mut clerk_rx = game.register_direct_channel(&pid("Grida")).await;
+    let mut shopper = make_player("Shopper", -1451.0, 4782.0);
+    shopper.position.y = 1.0;
+    game.add_player(shopper).await;
+    let id = pid("Shopper");
+    let mut shopper_rx = game.register_direct_channel(&id).await;
+    let placements = serde_json::json!({"placements": [
+        {"id":94,"type":"chest_animated","x":-1453.0,"y":1.0,"z":4783.0,"floorLevel":0},
+        {"id":85,"type":"bed","x":-1450.0,"y":1.0,"z":4783.0,"floorLevel":0},
+        {"id":98,"type":"rustic_bed","x":-1449.0,"y":1.0,"z":4783.0,"floorLevel":0},
+        {"id":103,"type":"scroll","x":-1451.0,"y":1.0,"z":4783.0,"floorLevel":0}
+    ]});
+    game.terrain_io
+        .write_object(-2, 4, &placements)
+        .await
+        .unwrap();
+    for (display, item) in [
+        (94, "storage_chest"),
+        (85, "furniture_bed"),
+        (98, "furniture_rustic_bed"),
+    ] {
+        assert!(game.notify_furniture_selection(&id, display).await);
+        assert!(drain(&mut clerk_rx).iter().any(|m| matches!(m,
+            ServerMessage::FurnitureSelectionNotice { player_id, player_name, item_def_id }
+            if *player_id == id && player_name == "Shopper" && item_def_id == item
+        )));
+        assert!(drain(&mut shopper_rx).is_empty());
+    }
+    for display in [84, 103, 999] {
+        assert!(!game.notify_furniture_selection(&id, display).await);
+    }
+    for (x, floor, health) in [(-1440.0, 0, 10), (-1451.0, 1, 10), (-1451.0, 0, 0)] {
+        {
+            let mut players = game.players.write().await;
+            let shopper = players.get_mut(&id).unwrap();
+            shopper.position.x = x;
+            shopper.floor_level = floor;
+            shopper.health = health;
+        }
+        assert!(!game.notify_furniture_selection(&id, 94).await);
+    }
+    game.players.write().await.get_mut(&id).unwrap().health = 10;
+    for (official, x) in [(false, -1452.0), (true, -1500.0)] {
+        {
+            let mut players = game.players.write().await;
+            let clerk = players.get_mut(&pid("Grida")).unwrap();
+            clerk.is_official_npc = official;
+            clerk.position.x = x;
+        }
+        assert!(!game.notify_furniture_selection(&id, 94).await);
+    }
+    game.players
+        .write()
+        .await
+        .get_mut(&pid("Grida"))
+        .unwrap()
+        .position
+        .x = -1452.0;
+    game.set_npc_schedule(
+        "Grida",
+        vec![onlinerpg_shared::schedule::ScheduleEntry {
+            at: "0:00".into(),
+            action: Some("bed".into()),
+            ..Default::default()
+        }],
+    );
+    assert!(!game.notify_furniture_selection(&id, 94).await);
+    game.set_npc_schedule("Grida", vec![]);
+    game.terrain_io
+        .write_object(-2, 4, &serde_json::json!({"placements": []}))
+        .await
+        .unwrap();
+    assert!(!game.notify_furniture_selection(&id, 94).await);
+    assert!(drain(&mut clerk_rx).is_empty());
+}
+
 #[tokio::test]
 async fn furniture_checkout_and_decoration_placement_are_persistent() {
     use onlinerpg_shared::furniture_shop::FurnitureOrderLine;
@@ -622,10 +723,18 @@ async fn furniture_checkout_and_decoration_placement_are_persistent() {
         "remote purchases must fail"
     );
     game.players.write().await.get_mut(&id).unwrap().position = Position {
-        x: -1453.0,
+        x: -1448.0,
         y: 1.0,
-        z: 4778.0,
+        z: 4777.0,
     };
+    game.checkout_furniture(&id, order(), 5000, 400, &auth)
+        .await;
+    assert_eq!(
+        game.get_player_gold(&id).await,
+        5000,
+        "checkout needs Grida"
+    );
+    add_furniture_clerk(&game).await;
     game.checkout_furniture(&id, order(), 5000, 400, &auth)
         .await;
     assert_eq!(game.get_player_gold(&id).await, 4600);
@@ -691,11 +800,233 @@ async fn furniture_checkout_and_decoration_placement_are_persistent() {
 }
 
 #[tokio::test]
+async fn furniture_checkout_sells_a_functional_storage_chest() {
+    use onlinerpg_shared::furniture_shop::FurnitureOrderLine;
+    let game = make_flat_world_game_state("showroom_storage_chest");
+    let auth = make_test_auth("showroom_storage_chest");
+    let character_id = storage_owner(&game, &auth, "Keeper").await;
+    let id = pid("Keeper");
+    add_furniture_clerk(&game).await;
+    game.inventories
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .bag
+        .retain(|item| item.item_def_id != "storage_chest");
+    game.player_gold.write().await.insert(id, 5000);
+    game.players.write().await.get_mut(&id).unwrap().position = Position {
+        x: -1453.0,
+        y: 1.0,
+        z: 4778.0,
+    };
+    let mut displays = serde_json::json!({"placements": [
+        {"id":94,"type":"chest","x":-1453.0351,"y":0.95,"z":4783.4509,"rotation":0,"floorLevel":0}
+    ]});
+    let order = || {
+        vec![FurnitureOrderLine {
+            display_id: 94,
+            quantity: 1,
+        }]
+    };
+    game.terrain_io
+        .write_object(-2, 4, &displays)
+        .await
+        .unwrap();
+    game.checkout_furniture(&id, order(), 5000, 1200, &auth)
+        .await;
+    assert_eq!(game.get_player_gold(&id).await, 5000);
+    displays["placements"][0]["type"] = "chest_animated".into();
+    game.terrain_io
+        .write_object(-2, 4, &displays)
+        .await
+        .unwrap();
+    game.checkout_furniture(&id, order(), 5000, 1200, &auth)
+        .await;
+    assert_eq!(game.get_player_gold(&id).await, 3800);
+    let inventory = game.get_player_inventory(&id).await.unwrap();
+    assert_eq!(item_quantity(&inventory, "storage_chest"), 1);
+    assert_eq!(item_quantity(&inventory, "furniture_chest"), 0);
+    let instance_id = inventory
+        .bag
+        .iter()
+        .find(|item| item.item_def_id == "storage_chest")
+        .unwrap()
+        .instance_id;
+    game.players.write().await.get_mut(&id).unwrap().position = Position {
+        x: 1.5,
+        y: 5.05,
+        z: 1.5,
+    };
+    game.place_estate_chest(
+        &id,
+        instance_id,
+        Position {
+            x: 2.5,
+            y: 5.0,
+            z: 2.5,
+        },
+        0.0,
+        0,
+        &auth,
+    )
+    .await;
+    let chest = auth.load_estate_chests().unwrap().remove(0);
+    assert_eq!(chest.item_def_id, "storage_chest");
+    game.transfer_estate_items(
+        &id,
+        chest.id,
+        vec![BagLineItem {
+            instance_id: 3,
+            qty: 2,
+        }],
+        vec![],
+        chest.revision,
+        &auth,
+    )
+    .await;
+    let stored = auth
+        .estate_chest_state(chest.id, character_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.max_weight, 500.0);
+    assert_eq!(stored.items.len(), 1);
+    assert_eq!(stored.items[0].item_def_id, "apple");
+    assert_eq!(stored.items[0].quantity, 2);
+}
+
+#[tokio::test]
+async fn furniture_checkout_can_use_grida_sale_proceeds() {
+    use onlinerpg_shared::furniture_shop::FurnitureOrderLine;
+    let game = make_flat_world_game_state("furniture_sale_proceeds");
+    let auth = make_test_auth("furniture_sale_proceeds");
+    let character_id = storage_owner(&game, &auth, "Shopper").await;
+    let id = pid("Shopper");
+    add_furniture_clerk(&game).await;
+    game.players.write().await.get_mut(&id).unwrap().position = Position {
+        x: -1453.0,
+        y: 1.0,
+        z: 4778.0,
+    };
+    game.player_gold.write().await.insert(id, 0);
+    game.inventories.write().await.insert(
+        id,
+        PlayerInventory {
+            bag: vec![bag_item(11, "iron_sword", 1)],
+            ..Default::default()
+        },
+    );
+    game.terrain_io.write_object(-2, 4, &serde_json::json!({"placements": [
+        {"id":103,"type":"scroll","x":-1450.6,"y":1.8,"z":4781.3,"rotation":270,"floorLevel":0}
+    ]})).await.unwrap();
+    game.sell_items(
+        &id,
+        &pid("Grida"),
+        vec![BagLineItem {
+            instance_id: 11,
+            qty: 1,
+        }],
+    )
+    .await;
+    assert_eq!(game.get_player_gold(&id).await, 4000);
+    game.checkout_furniture(
+        &id,
+        vec![FurnitureOrderLine {
+            display_id: 103,
+            quantity: 2,
+        }],
+        4000,
+        400,
+        &auth,
+    )
+    .await;
+    assert_eq!(game.get_player_gold(&id).await, 3600);
+    let inventory = game.get_player_inventory(&id).await.unwrap();
+    assert_eq!(item_quantity(&inventory, "iron_sword"), 0);
+    assert_eq!(item_quantity(&inventory, "furniture_scroll"), 2);
+    let saved = auth.load_inventory(character_id).unwrap();
+    assert!(saved.iter().all(|row| row.item_def_id != "iron_sword"));
+    assert_eq!(
+        saved
+            .iter()
+            .filter(|row| row.item_def_id == "furniture_scroll")
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn furniture_checkout_rejects_an_unavailable_clerk() {
+    use onlinerpg_shared::furniture_shop::FurnitureOrderLine;
+    let game = make_flat_world_game_state("furniture_clerk_unavailable");
+    let auth = make_test_auth("furniture_clerk_unavailable");
+    storage_owner(&game, &auth, "Shopper").await;
+    let id = pid("Shopper");
+    game.players.write().await.get_mut(&id).unwrap().position = Position {
+        x: -1453.0,
+        y: 1.0,
+        z: 4778.0,
+    };
+    game.player_gold.write().await.insert(id, 5000);
+    add_furniture_clerk(&game).await;
+    let mut rx = game.register_direct_channel(&id).await;
+    for (official, floor, x, asleep, expected) in [
+        (false, 0, -1452.0, false, "not available"),
+        (true, 1, -1452.0, false, "another floor"),
+        (true, 0, -1440.0, false, "Too far"),
+        (true, 0, -1452.0, true, "asleep"),
+    ] {
+        {
+            let mut players = game.players.write().await;
+            let clerk = players.get_mut(&pid("Grida")).unwrap();
+            clerk.is_official_npc = official;
+            clerk.floor_level = floor;
+            clerk.position.x = x;
+        }
+        game.set_npc_schedule(
+            "Grida",
+            vec![onlinerpg_shared::schedule::ScheduleEntry {
+                at: "0:00".to_string(),
+                action: asleep.then(|| "bed".to_string()),
+                ..Default::default()
+            }],
+        );
+        game.checkout_furniture(
+            &id,
+            vec![FurnitureOrderLine {
+                display_id: 103,
+                quantity: 1,
+            }],
+            5000,
+            200,
+            &auth,
+        )
+        .await;
+        assert!(
+            drain(&mut rx).iter().any(|message| matches!(message,
+                ServerMessage::FurniturePurchaseResult { error: Some(error) }
+                if error.contains(expected)
+            )),
+            "expected checkout error containing {expected}"
+        );
+        assert_eq!(game.get_player_gold(&id).await, 5000);
+        assert_eq!(
+            item_quantity(
+                &game.get_player_inventory(&id).await.unwrap(),
+                "furniture_scroll"
+            ),
+            0
+        );
+    }
+}
+
+#[tokio::test]
 async fn furniture_checkout_failures_leave_gold_and_inventory_unchanged() {
     use onlinerpg_shared::furniture_shop::FurnitureOrderLine;
     let game = make_flat_world_game_state("furniture_checkout_failures");
     let auth = make_test_auth("furniture_checkout_failures");
     let character_id = storage_owner(&game, &auth, "Shopper").await;
+    add_furniture_clerk(&game).await;
     let id = pid("Shopper");
     game.players.write().await.get_mut(&id).unwrap().position = Position {
         x: -1453.0,
