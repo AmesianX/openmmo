@@ -23,6 +23,11 @@
     stopEstateChestMode,
   } from '../stores/estateStorageStore'
   import { inventoryStore } from '../stores/inventoryStore'
+  import {
+    estateFurniturePlacementRotation,
+    rotateEstateFurniturePlacement,
+    selectedEstateFurniture,
+  } from '../stores/estateFurniturePlacementStore'
   import { estateStorageDefs } from '../data/estateFurnitureDefs'
   import { getItemDef, itemDisplayName } from '../data/itemDefs'
   import { playerVisualFloorLevel } from '../stores/housingStore'
@@ -36,16 +41,31 @@
 
   type EditorTab = Exclude<LandscapingTool, 'Fence'> | 'Objects'
 
+  let panelElement = $state<HTMLDivElement>()
+  const selectedFurnitureId = $derived($selectedEstateFurniture?.id)
+  $effect(() => {
+    if (selectedFurnitureId !== undefined && panelElement)
+      panelElement.scrollTop = 0
+  })
+
   const tabs: EditorTab[] = ['Ground', 'Road', 'Objects', 'House']
   const editorOpen = $derived(
-    $landscapingMode !== null || $estateChestMode !== null
+    $landscapingMode !== null ||
+      $estateChestMode !== null ||
+      $selectedEstateFurniture !== null
   )
   const activeTab = $derived<EditorTab>(
-    $estateChestMode || $landscapingMode?.tool === 'Fence'
+    $estateChestMode ||
+      $selectedEstateFurniture ||
+      $landscapingMode?.tool === 'Fence'
       ? 'Objects'
       : ($landscapingMode?.tool ?? 'Objects')
   )
   const fenceDefinition = getItemDef('wooden_fence')
+  const rotationStep = $derived(
+    estateStorageDefs.get($estateChestMode?.item_def_id ?? '')?.rotationStep ??
+      90
+  )
   const storageObjects = $derived(
     [...estateStorageDefs.values()].map((definition) => {
       const items = $inventoryStore.bag.filter(
@@ -61,7 +81,7 @@
   )
 
   function selectTab(tab: EditorTab) {
-    if (tab === activeTab) return
+    if (tab === activeTab || $estateChestPending) return
     if (tab === 'Objects') {
       selectFence()
       return
@@ -69,15 +89,17 @@
     if (tab !== 'House') {
       stopHouseInteraction()
     }
-    if ($estateChestMode) networkManager.sendStartLandscapingMode(tab)
-    else selectLandscapingTool(tab)
+    if ($estateChestMode || $selectedEstateFurniture) {
+      stopEstateChestMode()
+      networkManager.sendStartLandscapingMode(tab)
+    } else selectLandscapingTool(tab)
   }
 
   function selectFence() {
-    if ($fenceMode) return
+    if ($fenceMode || $estateChestPending) return
     stopHouseInteraction()
+    stopEstateChestMode()
     if ($landscapingMode) {
-      stopEstateChestMode()
       selectLandscapingTool('Fence')
     } else {
       networkManager.sendStartLandscapingMode('Fence')
@@ -90,7 +112,18 @@
     networkManager.sendUseItem(instanceId)
   }
 
+  function editSelected(action: 'move' | 'recover') {
+    const selected = $selectedEstateFurniture
+    if (!selected || $estateChestPending) return
+    estateChestPending.set(true)
+    estateChestError.set(null)
+    if (action === 'move')
+      networkManager.sendStartEstateFurnitureMove(selected.id)
+    else networkManager.sendRecoverEstateChest(selected.id)
+  }
+
   function close() {
+    if ($estateChestPending) return
     stopHouseInteraction()
     stopFenceMode()
     stopEstateChestMode()
@@ -98,24 +131,33 @@
 </script>
 
 {#if editorOpen}
-  {@const status = $estateChestMode
-    ? $estateChestPending
-      ? 'Saving…'
-      : ($estateChestError ?? 'Point inside your estate and click to place')
-    : $landscapingMode?.tool === 'House'
-      ? null
-      : $landscapingMode?.tool === 'Fence'
-        ? $fencePending
-          ? 'Saving…'
-          : ($fenceError ?? $fenceTarget?.reason)
-        : $landscapingPending
-          ? 'Saving…'
-          : ($landscapingError ?? $landscapingHint)}
-  <div class="landscaping-panel" use:draggablePanel={'landscaping'}>
+  {@const status =
+    $estateChestMode || $selectedEstateFurniture
+      ? $estateChestPending
+        ? 'Saving…'
+        : ($estateChestError ??
+          ($estateChestMode
+            ? 'Point inside your estate and click to place'
+            : 'Choose Move or Recover for the selected furniture'))
+      : $landscapingMode?.tool === 'House'
+        ? null
+        : $landscapingMode?.tool === 'Fence'
+          ? $fencePending
+            ? 'Saving…'
+            : ($fenceError ?? $fenceTarget?.reason)
+          : $landscapingPending
+            ? 'Saving…'
+            : ($landscapingError ?? $landscapingHint)}
+  <div
+    class="landscaping-panel"
+    bind:this={panelElement}
+    use:draggablePanel={'landscaping'}
+  >
     <div class="panel-header" data-drag-handle>
       <strong>Estate Editor</strong>
       <button
         class="close-btn"
+        disabled={$estateChestPending}
         aria-label="Close estate editor"
         title="Close (Esc)"
         onclick={close}>×</button
@@ -127,7 +169,8 @@
           role="tab"
           aria-selected={activeTab === tab}
           class:active={activeTab === tab}
-          disabled={tab !== 'Objects' && !$hasLandscapingToolbox}
+          disabled={$estateChestPending ||
+            (tab !== 'Objects' && !$hasLandscapingToolbox)}
           title={tab !== 'Objects' && !$hasLandscapingToolbox
             ? "Carry a Landscaper's Toolbox to use this tool"
             : tab}
@@ -139,7 +182,59 @@
       <HousePlacementPanel />
     {:else if activeTab === 'Objects'}
       <div class="object-content">
+        {#if $selectedEstateFurniture}
+          <div class="selected-furniture">
+            <strong
+              >{itemDisplayName($selectedEstateFurniture.item_def_id)}</strong
+            >
+            {#if $estateChestMode?.kind === 'move'}
+              <small>Choose a new position. Esc cancels the move.</small>
+              <button
+                disabled={$estateChestPending}
+                onclick={stopEstateChestMode}>Cancel move</button
+              >
+            {:else}
+              <div class="furniture-actions">
+                <button
+                  disabled={$estateChestPending}
+                  onclick={() => editSelected('move')}>Move</button
+                >
+                <button
+                  disabled={$estateChestPending}
+                  onclick={() => editSelected('recover')}>Recover</button
+                >
+                <button
+                  disabled={$estateChestPending}
+                  onclick={stopEstateChestMode}>Cancel</button
+                >
+              </div>
+              <small
+                >Move keeps stored items and sign text. Empty storage before
+                recovering.</small
+              >
+            {/if}
+          </div>
+        {/if}
         <strong>Placeable Objects</strong>
+        {#if $estateChestMode}
+          <div class="rotation-controls">
+            <button
+              disabled={$estateChestPending}
+              aria-label="Rotate left {rotationStep} degrees"
+              title="Rotate left (Shift + R)"
+              onclick={() => rotateEstateFurniturePlacement(-1)}
+              >↶ {rotationStep}°</button
+            >
+            <span>Rotation {$estateFurniturePlacementRotation.degrees}°</span>
+            <button
+              disabled={$estateChestPending}
+              aria-label="Rotate right {rotationStep} degrees"
+              title="Rotate right (R)"
+              onclick={() => rotateEstateFurniturePlacement(1)}
+              >↷ {rotationStep}°</button
+            >
+          </div>
+        {/if}
         <div class="object-list">
           <button
             class="object-row"
@@ -182,12 +277,19 @@
         {#if $estateChestMode}
           <small
             >{$playerVisualFloorLevel + 1}F · Left-click to place · Right-click
-            to move · Mouse wheel rotates · Esc to finish</small
+            to move · R / Shift + R or mouse wheel rotates {rotationStep}° ·
+            Shift + wheel adjusts decoration height · Right-click placed
+            furniture to move or recover · Esc to finish</small
           >
         {:else if $fenceMode}
           <small
             >Left-click to place or recover · Right-click to move · Esc to
             finish</small
+          >
+        {/if}
+        {#if !$estateChestMode}
+          <small
+            >Right-click placed furniture nearby to move or recover it.</small
           >
         {/if}
       </div>
@@ -214,10 +316,29 @@
     max-width: calc(100vw - 32px);
     max-height: calc(100vh - 120px);
     overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(171, 147, 103, 0.5) transparent;
     border-radius: 8px;
     background: #211c16ed;
     color: #f3e8d2;
     pointer-events: auto;
+  }
+  .landscaping-panel::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .landscaping-panel::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .landscaping-panel::-webkit-scrollbar-thumb {
+    background: rgba(171, 147, 103, 0.5);
+    border-radius: 999px;
+  }
+  .landscaping-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(205, 178, 128, 0.7);
+  }
+  .landscaping-panel::-webkit-scrollbar-corner {
+    background: transparent;
   }
   .panel-header {
     display: flex;
@@ -300,6 +421,28 @@
     display: grid;
     gap: 5px;
     min-width: 280px;
+  }
+  .selected-furniture {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid rgba(226, 185, 59, 0.3);
+    border-radius: 6px;
+    background: rgba(226, 185, 59, 0.08);
+  }
+  .selected-furniture small {
+    max-width: 300px;
+    color: #aaa;
+  }
+  .furniture-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .rotation-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
   .object-row {
     display: grid;

@@ -28,6 +28,7 @@ import {
 } from '../components/player-control/fsm/keyboard'
 import { DEFAULT_MOVEMENT_CONFIG } from '../utils/movementUtils'
 import { angleDelta } from '../utils/horseMovement'
+import { estateFurnitureInteractionData } from '../utils/estateFurnitureModels'
 
 describe('relative movement keys', () => {
   beforeEach(() => {
@@ -188,6 +189,46 @@ describe('processCanvasClick cast-vs-walk', () => {
     closeInstrumentPanel()
     inputHandler.clearTransientInput()
     alwaysRun.set(false)
+  })
+
+  it.each([
+    ['furniture_bed', 0.78],
+    ['furniture_rustic_bed', 0.56],
+  ] as const)('clicks a rotated %s to approach and sleep', (itemId, height) => {
+    const visual = new THREE.Group()
+    visual.add(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 2.2)))
+    visual.rotation.y = Math.PI / 2
+    Object.assign(
+      visual.userData,
+      estateFurnitureInteractionData({
+        id: 7,
+        item_def_id: itemId,
+        estate_id: 1,
+        owner_id: 1,
+        position: { x: 0, y: 0, z: 0 },
+        rotation_deg: 90,
+        floor_level: 0,
+        overdue: false,
+        revision: 0,
+      })
+    )
+    visual.updateMatrixWorld(true)
+
+    const intent = inputHandler.processCanvasClick(
+      centerClick(),
+      contextWith({
+        objectMeshes: [visual],
+        playerPosition: { x: 12, y: 0, z: 0 },
+      })
+    )
+    expect(intent).toMatchObject({
+      type: 'interact_object',
+      objectType: itemId,
+      objectId: 7,
+      interaction: 'sleep',
+      rotation: Math.PI / 2,
+      interactOffset: { y: height },
+    })
   })
 
   it('ignores canvas movement while the instrument keyboard owns input', () => {

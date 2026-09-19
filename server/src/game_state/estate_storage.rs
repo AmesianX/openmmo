@@ -6,7 +6,8 @@ use super::{
 use crate::auth::{AuthError, AuthService, EstateDeposit};
 use crate::types::{PlayerId, Position, ServerMessage};
 use onlinerpg_shared::estate_storage::{
-    estate_storage_def, is_estate_storage_item, EstateChest, INTERACTION_RANGE,
+    estate_storage_def, is_estate_storage_item, EstateChest, EstateStorageDefinition,
+    INTERACTION_RANGE,
 };
 use onlinerpg_shared::furniture::{
     self, occupancy_fits_house_floor, point_in_house_floor, FurniturePlacement,
@@ -16,6 +17,14 @@ use onlinerpg_shared::messages::BagLineItem;
 use std::collections::{HashMap, HashSet};
 
 const MAX_TRANSFER_LINES: usize = 128;
+
+pub(crate) struct EstateFurnitureMove {
+    pub furniture_id: i64,
+    pub expected_revision: u64,
+    pub position: Position,
+    pub rotation_deg: f32,
+    pub floor_level: i8,
+}
 
 #[derive(Default)]
 pub(super) struct EstateChestIndex {
@@ -56,7 +65,7 @@ impl EstateChestIndex {
         Some(chest)
     }
 
-    fn get(&self, id: i64) -> Option<&EstateChest> {
+    pub(super) fn get(&self, id: i64) -> Option<&EstateChest> {
         self.by_id.get(&id)
     }
 
@@ -69,10 +78,10 @@ impl EstateChestIndex {
             .collect()
     }
 
-    fn overlaps(&self, candidate: &FurniturePlacement) -> bool {
+    fn overlaps(&self, candidate: &FurniturePlacement, excluding: Option<i64>) -> bool {
         self.by_id.values().any(|chest| {
             let existing = placement(chest);
-            furniture::placements_overlap(candidate, &existing)
+            Some(chest.id) != excluding && furniture::placements_overlap(candidate, &existing)
         })
     }
 
@@ -126,6 +135,163 @@ fn placement(chest: &EstateChest) -> FurniturePlacement {
 }
 
 impl GameState {
+    async fn movable_estate_furniture(
+        &self,
+        player_id: &PlayerId,
+        furniture_id: i64,
+    ) -> Result<EstateChest, &'static str> {
+        let furniture = self.accessible_chest(player_id, furniture_id).await?;
+        let owner_id = self
+            .player_characters
+            .read()
+            .await
+            .get(player_id)
+            .map(|entry| entry.0)
+            .ok_or("Character not found.")?;
+        if furniture.owner_id != owner_id || furniture.overdue {
+            return Err("You can only move furniture on your active estate.");
+        }
+        let players = self.players.read().await;
+        let player = players.get(player_id).ok_or("Character not found.")?;
+        if player.health == 0 || player.is_mounted() {
+            return Err("Stand alive and dismounted to move furniture.");
+        }
+        if players.values().any(|player| {
+            player.object_type.as_deref() == Some(furniture.item_def_id.as_str())
+                && player.object_id.map(i64::from) == Some(furniture_id)
+        }) {
+            return Err("Someone is using this furniture. Wait until they get up.");
+        }
+        Ok(furniture)
+    }
+
+    pub async fn start_estate_furniture_move(
+        &self,
+        player_id: &PlayerId,
+        furniture_id: i64,
+        auth: &AuthService,
+    ) {
+        self.tick_land_taxes(auth).await;
+        let result = async {
+            let furniture = self
+                .movable_estate_furniture(player_id, furniture_id)
+                .await?;
+            let owner_id = furniture.owner_id;
+            let auth = auth.clone();
+            let plots = auth_db(move || auth.estate_storage_plots(owner_id))
+                .await
+                .map_err(|_| "Furniture editing is temporarily unavailable.")?;
+            Ok::<_, &'static str>(ServerMessage::EstateFurnitureMoveMode { furniture, plots })
+        }
+        .await;
+        self.send_direct_message(
+            player_id,
+            result.unwrap_or_else(|error| ServerMessage::EstateChestEditResult {
+                error: Some(error.to_string()),
+            }),
+        )
+        .await;
+    }
+
+    pub async fn move_estate_furniture(
+        &self,
+        player_id: &PlayerId,
+        request: EstateFurnitureMove,
+        auth: &AuthService,
+    ) {
+        let error = self
+            .try_move_estate_furniture(player_id, request, auth)
+            .await
+            .err()
+            .map(str::to_string);
+        self.send_direct_message(player_id, ServerMessage::EstateChestEditResult { error })
+            .await;
+    }
+
+    async fn try_move_estate_furniture(
+        &self,
+        player_id: &PlayerId,
+        request: EstateFurnitureMove,
+        auth: &AuthService,
+    ) -> Result<(), &'static str> {
+        let EstateFurnitureMove {
+            furniture_id,
+            expected_revision,
+            position: requested,
+            rotation_deg,
+            floor_level,
+        } = request;
+        self.tick_land_taxes(auth).await;
+        let _persistence = self.persistence_lock.lock().await;
+        if self.reject_if_trading(player_id, "move furniture").await {
+            return Err("Finish your player trade first.");
+        }
+        let mut furniture = self
+            .movable_estate_furniture(player_id, furniture_id)
+            .await?;
+        if furniture.revision != expected_revision {
+            return Err("The furniture changed. Select it again.");
+        }
+        let definition = estate_storage_def(&furniture.item_def_id)
+            .ok_or("This furniture has an unknown type.")?;
+        let (position, rotation_deg) = self
+            .validate_estate_furniture_placement(
+                player_id,
+                definition,
+                requested,
+                rotation_deg,
+                floor_level,
+                Some(furniture_id),
+            )
+            .await?;
+        let players = self.players.read().await;
+        if players.values().any(|player| {
+            player.object_type.as_deref() == Some(furniture.item_def_id.as_str())
+                && player.object_id.map(i64::from) == Some(furniture_id)
+        }) {
+            return Err("Someone is using this furniture. Wait until they get up.");
+        }
+        let owner_id = furniture.owner_id;
+        let auth = auth.clone();
+        let estate_id = auth_db(move || {
+            auth.move_estate_furniture(
+                furniture_id,
+                owner_id,
+                expected_revision,
+                position,
+                rotation_deg,
+                floor_level,
+            )
+        })
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "Failed to move estate furniture");
+            "The furniture could not be moved. Its original position was kept."
+        })??;
+        let old_key = EstateChestIndex::bucket(&furniture.position);
+        furniture.estate_id = estate_id;
+        furniture.position = position;
+        furniture.rotation_deg = rotation_deg;
+        furniture.floor_level = floor_level;
+        furniture.revision += 1;
+        let new_key = EstateChestIndex::bucket(&position);
+        let mut chests = self.estate_chests.write().await;
+        chests.insert(furniture.clone());
+        let old_group = chests.group(old_key);
+        let new_group = chests.group(new_key);
+        drop(chests);
+        self.sync_estate_chest_bucket(old_key, &old_group);
+        if new_key != old_key {
+            self.sync_estate_chest_bucket(new_key, &new_group);
+        }
+        drop(players);
+        self.publish_subject_change(ServerMessage::EstateChestVisibility {
+            added: vec![furniture],
+            removed: vec![],
+        });
+        Ok(())
+    }
+
     pub(super) async fn house_contains_estate_chest(
         &self,
         house: &onlinerpg_shared::housing::HouseData,
@@ -208,9 +374,9 @@ impl GameState {
             return false;
         };
         if self
-            .reject_if_defeated(player_id, "You must be alive to place storage.")
+            .reject_if_defeated(player_id, "You must be alive to place furniture.")
             .await
-            || self.reject_if_trading(player_id, "place storage").await
+            || self.reject_if_trading(player_id, "place furniture").await
         {
             return true;
         }
@@ -246,7 +412,7 @@ impl GameState {
                 tracing::warn!(%error, "Failed to load estate storage permissions");
                 self.send_system_message(
                     player_id,
-                    "Storage placement is temporarily unavailable.",
+                    "Furniture placement is temporarily unavailable.",
                 )
                 .await;
             }
@@ -288,12 +454,12 @@ impl GameState {
         floor_level: i8,
         auth: &AuthService,
     ) -> Result<(), &'static str> {
-        if !requested.x.is_finite() || !requested.z.is_finite() || !rotation_deg.is_finite() {
-            return Err("Invalid chest placement.");
+        if !requested.is_finite() || !rotation_deg.is_finite() {
+            return Err("Invalid furniture placement.");
         }
         self.tick_land_taxes(auth).await;
         let _persistence = self.persistence_lock.lock().await;
-        if self.reject_if_trading(player_id, "place storage").await {
+        if self.reject_if_trading(player_id, "place furniture").await {
             return Err("Finish your player trade first.");
         }
         let item_def_id = self
@@ -308,104 +474,23 @@ impl GameState {
                     .find(|item| item.instance_id == instance_id && item.quantity > 0)
             })
             .map(|item| item.item_def_id.clone())
-            .ok_or("That storage chest is no longer in your bag.")?;
+            .ok_or("That furnishing is no longer in your bag.")?;
         let definition =
-            estate_storage_def(&item_def_id).ok_or("That item is not an estate storage chest.")?;
+            estate_storage_def(&item_def_id).ok_or("That item is not placeable furniture.")?;
         let mut character = self
             .get_player_save_data(player_id)
             .await
             .ok_or("Character not found.")?;
-        let (player_health, player_floor, player_position) = {
-            let players = self.players.read().await;
-            let player = players.get(player_id).ok_or("Character not found.")?;
-            (player.health, player.floor_level, player.position)
-        };
-        if player_health == 0
-            || floor_level < definition.min_floor
-            || floor_level > definition.max_floor
-            || player_floor != floor_level
-        {
-            return Err("Stand alive on the floor where you want to place the chest.");
-        }
-        let snapped_rotation = ((rotation_deg / definition.rotation_step).round()
-            * definition.rotation_step)
-            .rem_euclid(360.0);
-        let mut position = Position {
-            x: onlinerpg_shared::wrap_world_x(
-                (requested.x / definition.snap_step).round() * definition.snap_step,
-            ),
-            y: requested.y,
-            z: (requested.z / definition.snap_step).round() * definition.snap_step,
-        };
-        let houses = self.housing_io.read_all_houses().await.map_err(|error| {
-            tracing::warn!(%error, "Failed to read housing for furniture placement");
-            "Housing is temporarily unavailable."
-        })?;
-        let floor = floor_level as u8;
-        let player_house = houses
-            .iter()
-            .find(|house| point_in_house_floor(house, player_position.x, player_position.z, floor));
-        let target_house = houses
-            .iter()
-            .find(|house| point_in_house_floor(house, position.x, position.z, floor));
-        if let Some(house) = player_house {
-            let occupancy = furniture::solid_occupancy(&definition.model_id)
-                .ok_or("Chest placement data is unavailable.")?;
-            if !occupancy_fits_house_floor(
-                house,
-                &occupancy,
-                position.x,
-                position.z,
-                snapped_rotation,
-                floor,
-                definition.floor_edge_clearance,
-            ) {
-                return Err("Keep the whole chest inside the current building floor.");
-            }
-        } else if target_house.is_some() || floor_level > 0 {
-            return Err("Enter the building floor before placing furniture there.");
-        }
-        position.y = if player_house.is_some() {
-            onlinerpg_shared::pathfinding::get_floor_y_base(
-                &self.passability_read(),
-                position.x,
-                position.z,
-                floor,
+        let (position, snapped_rotation) = self
+            .validate_estate_furniture_placement(
+                player_id,
+                definition,
+                requested,
+                rotation_deg,
+                floor_level,
+                None,
             )
-            .ok_or("Place the chest on the current building floor.")?
-        } else {
-            self.height_sampler
-                .sample_height(position.x, position.z)
-                .await
-                .map_err(|_| "Terrain is unavailable here.")?
-        };
-        let candidate = FurniturePlacement {
-            id: 0,
-            type_id: definition.model_id.clone(),
-            x: position.x,
-            y: position.y,
-            z: position.z,
-            rotation_deg: snapped_rotation,
-            floor_level: floor,
-        };
-        if self.estate_chests.read().await.overlaps(&candidate) {
-            return Err("Another storage chest already occupies this space.");
-        }
-        let collision_radius = if player_house.is_some() {
-            definition.indoor_collision_radius
-        } else {
-            definition.outdoor_collision_radius
-        };
-        if onlinerpg_shared::pathfinding::is_circle_blocked_on_floor(
-            &self.passability_read(),
-            position.x,
-            position.z,
-            collision_radius,
-            floor_level as u8,
-            Some(position.y),
-        ) {
-            return Err("Something blocks the chest here.");
-        }
+            .await?;
         let mut inventories = self.inventories.write().await;
         let inventory = inventories
             .get_mut(player_id)
@@ -415,7 +500,7 @@ impl GameState {
             .bag
             .iter()
             .position(|item| item.instance_id == instance_id && item.item_def_id == item_def_id)
-            .ok_or("That storage chest is no longer in your bag.")?;
+            .ok_or("That furnishing is no longer in your bag.")?;
         if updated.bag[index].quantity > 1 {
             updated.bag[index].quantity -= 1;
         } else {
@@ -439,7 +524,7 @@ impl GameState {
         .await
         .map_err(|error| {
             tracing::warn!(%error, "Failed to place estate chest");
-            "The chest could not be saved. Your inventory was not changed."
+            "The furniture could not be saved. Your inventory was not changed."
         })??;
         *inventory = updated.clone();
         let key = EstateChestIndex::bucket(&chest.position);
@@ -459,6 +544,153 @@ impl GameState {
         Ok(())
     }
 
+    async fn validate_estate_furniture_placement(
+        &self,
+        player_id: &PlayerId,
+        definition: &EstateStorageDefinition,
+        requested: Position,
+        rotation_deg: f32,
+        floor_level: i8,
+        excluding: Option<i64>,
+    ) -> Result<(Position, f32), &'static str> {
+        if !requested.is_finite() || !rotation_deg.is_finite() {
+            return Err("Invalid furniture placement.");
+        }
+        let (player_health, player_floor, player_position) = {
+            let players = self.players.read().await;
+            let player = players.get(player_id).ok_or("Character not found.")?;
+            (player.health, player.floor_level, player.position)
+        };
+        if player_health == 0
+            || floor_level < definition.min_floor
+            || floor_level > definition.max_floor
+            || player_floor != floor_level
+        {
+            return Err("Stand alive on the floor where you want to place the furniture.");
+        }
+        let snapped_rotation = ((rotation_deg / definition.rotation_step).round()
+            * definition.rotation_step)
+            .rem_euclid(360.0);
+        let mut position = Position {
+            x: onlinerpg_shared::wrap_world_x(
+                (requested.x / definition.snap_step).round() * definition.snap_step,
+            ),
+            y: requested.y,
+            z: (requested.z / definition.snap_step).round() * definition.snap_step,
+        };
+        let houses = self.housing_io.read_all_houses().await.map_err(|error| {
+            tracing::warn!(%error, "Failed to read housing for furniture placement");
+            "Housing is temporarily unavailable."
+        })?;
+        let floor = floor_level as u8;
+        let player_house = houses
+            .iter()
+            .find(|house| point_in_house_floor(house, player_position.x, player_position.z, floor));
+        let target_house = houses
+            .iter()
+            .find(|house| point_in_house_floor(house, position.x, position.z, floor));
+        if let Some(house) = player_house {
+            let occupancy = definition.footprint();
+            if !occupancy_fits_house_floor(
+                house,
+                &occupancy,
+                position.x,
+                position.z,
+                snapped_rotation,
+                floor,
+                definition.floor_edge_clearance,
+            ) {
+                return Err("Keep the whole furnishing inside the current building floor.");
+            }
+        } else if target_house.is_some() || floor_level > 0 {
+            return Err("Enter the building floor before placing furniture there.");
+        }
+        position.y = if player_house.is_some() {
+            onlinerpg_shared::pathfinding::get_floor_y_base(
+                &self.passability_read(),
+                position.x,
+                position.z,
+                floor,
+            )
+            .ok_or("Place the furniture on the current building floor.")?
+        } else {
+            self.height_sampler
+                .sample_height(position.x, position.z)
+                .await
+                .map_err(|_| "Terrain is unavailable here.")?
+        };
+        if definition.max_height_offset > 0.0 {
+            let offset = requested.y - position.y;
+            if !(-0.15..=definition.max_height_offset + 0.05).contains(&offset) {
+                return Err("Keep decorations within three meters of the current floor.");
+            }
+            position.y += offset.clamp(0.0, definition.max_height_offset);
+        }
+        let candidate = FurniturePlacement {
+            id: 0,
+            type_id: definition.model_id.clone(),
+            x: position.x,
+            y: position.y,
+            z: position.z,
+            rotation_deg: snapped_rotation,
+            floor_level: floor,
+        };
+        if self
+            .estate_chests
+            .read()
+            .await
+            .overlaps(&candidate, excluding)
+        {
+            return Err("Another furnishing already occupies this space.");
+        }
+        let collision_radius = if player_house.is_some() {
+            definition.indoor_collision_radius
+        } else {
+            definition.outdoor_collision_radius
+        };
+        if furniture::is_solid(&definition.model_id) {
+            let replacement = if let Some(id) = excluding {
+                let chests = self.estate_chests.read().await;
+                chests.get(id).map(|chest| {
+                    let key = EstateChestIndex::bucket(&chest.position);
+                    let others: Vec<_> = chests
+                        .group(key)
+                        .iter()
+                        .filter(|other| other.id != id)
+                        .map(placement)
+                        .collect();
+                    (
+                        cache_key(key),
+                        furniture::build_furniture_passability_for_placements(&others),
+                    )
+                })
+            } else {
+                None
+            };
+            let cache = self.passability_read();
+            let entries = cache
+                .iter()
+                .filter(|(key, _)| {
+                    replacement
+                        .as_ref()
+                        .is_none_or(|(replaced, _)| *key != replaced)
+                })
+                .map(|(_, entry)| entry)
+                .chain(replacement.as_ref().and_then(|(_, rest)| rest.as_ref()));
+            if onlinerpg_shared::pathfinding::is_circle_blocked_by_passability(
+                entries,
+                position.x,
+                position.z,
+                collision_radius,
+                floor,
+                Some(position.y),
+            ) {
+                return Err("Something blocks the furniture here.");
+            }
+        }
+        Ok((position, snapped_rotation))
+    }
+
     async fn accessible_chest(
         &self,
         player_id: &PlayerId,
@@ -470,11 +702,11 @@ impl GameState {
         let chest = chests
             .get(chest_id)
             .cloned()
-            .ok_or("That storage chest is not here.")?;
+            .ok_or("That furnishing is not here.")?;
         if chest.floor_level != player.floor_level
             || chest.position.dist_xz_sq(&player.position) > INTERACTION_RANGE.powi(2)
         {
-            return Err("Move closer to the storage chest.");
+            return Err("Move closer to the furniture.");
         }
         Ok(chest)
     }
@@ -525,6 +757,66 @@ impl GameState {
         }
         self.send_estate_chest_state(player_id, chest_id, auth)
             .await;
+    }
+
+    pub async fn set_estate_furniture_text(
+        &self,
+        player_id: &PlayerId,
+        furniture_id: i64,
+        text: String,
+        auth: &AuthService,
+    ) {
+        let result = self
+            .try_set_estate_furniture_text(player_id, furniture_id, text, auth)
+            .await;
+        self.send_direct_message(
+            player_id,
+            ServerMessage::EstateChestEditResult {
+                error: result.err().map(str::to_string),
+            },
+        )
+        .await;
+    }
+
+    async fn try_set_estate_furniture_text(
+        &self,
+        player_id: &PlayerId,
+        furniture_id: i64,
+        text: String,
+        auth: &AuthService,
+    ) -> Result<(), &'static str> {
+        if text.chars().count() > 120 || text.chars().any(|c| c.is_control() && c != '\n') {
+            return Err("Sign text must be at most 120 characters.");
+        }
+        let _persistence = self.persistence_lock.lock().await;
+        let mut furniture = self.accessible_chest(player_id, furniture_id).await?;
+        if !estate_storage_def(&furniture.item_def_id).is_some_and(|d| d.text_label) {
+            return Err("This furniture has no text label.");
+        }
+        let owner_id = self
+            .player_characters
+            .read()
+            .await
+            .get(player_id)
+            .map(|entry| entry.0)
+            .ok_or("Character not found.")?;
+        let text = text.trim().to_string();
+        let saved_text = text.clone();
+        let auth = auth.clone();
+        if !auth_db(move || auth.set_estate_furniture_text(furniture_id, owner_id, &saved_text))
+            .await
+            .map_err(|_| "The sign could not be saved.")?
+        {
+            return Err("You can only edit signs on your active estate.");
+        }
+        furniture.text = Some(text);
+        furniture.revision += 1;
+        self.estate_chests.write().await.insert(furniture.clone());
+        self.publish_subject_change(ServerMessage::EstateChestVisibility {
+            added: vec![furniture],
+            removed: vec![],
+        });
+        Ok(())
     }
 
     pub async fn transfer_estate_items(
@@ -765,7 +1057,7 @@ impl GameState {
         let auth = auth.clone();
         let deposits = deposit_plans;
         let withdrawals = withdrawals.to_vec();
-        auth_db(move || {
+        let revision = auth_db(move || {
             auth.transfer_estate_items(
                 &character,
                 &rows,
@@ -783,6 +1075,19 @@ impl GameState {
         *inventory = updated.clone();
         drop(gold);
         drop(inventories);
+        let furniture = {
+            let mut chests = self.estate_chests.write().await;
+            chests.by_id.get_mut(&chest_id).map(|chest| {
+                chest.revision = revision;
+                chest.clone()
+            })
+        };
+        if let Some(furniture) = furniture {
+            self.publish_subject_change(ServerMessage::EstateChestVisibility {
+                added: vec![furniture],
+                removed: vec![],
+            });
+        }
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, updated).await;
         Ok(())
@@ -821,6 +1126,12 @@ impl GameState {
             .await
             .ok_or("Character not found.")?;
         let players = self.players.read().await;
+        if players.values().any(|player| {
+            player.object_type.as_deref() == Some(chest.item_def_id.as_str())
+                && player.object_id.map(i64::from) == Some(chest_id)
+        }) {
+            return Err("Someone is using this furniture. Wait until they get up.");
+        }
         let mut inventories = self.inventories.write().await;
         let inventory = inventories
             .get_mut(player_id)
@@ -896,6 +1207,7 @@ mod index_tests {
             floor_level,
             overdue: false,
             revision: 0,
+            text: None,
         }
     }
 

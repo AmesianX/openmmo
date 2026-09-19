@@ -330,8 +330,9 @@
     return terrainGeometry!.clone()
   }
 
-  /** Return a geometry to the pool for reuse. */
-  function releaseGeometry(geo: THREE.BufferGeometry) {
+  function releaseGeometry(tileId: string, geo: THREE.BufferGeometry) {
+    const [tileX, tileZ] = tileId.split('_').map(Number)
+    heightManager?.unregisterGeometry(tileX, tileZ)
     geometryPool.push(geo)
   }
 
@@ -419,6 +420,9 @@
     brushUnsubs.forEach((u) => u())
     brushUnsubs = []
     holeUnsub()
+    for (const [id, geo] of geoMap) releaseGeometry(id, geo)
+    geoMap.clear()
+    materialMap.clear()
   })
 
   // ── Geometry management (SvelteMap, needed for template) ──────
@@ -488,7 +492,7 @@
     // Remove data for tiles no longer in the list, return to pools
     for (const [id, geo] of geoMap) {
       if (!currentTileIds.has(id)) {
-        releaseGeometry(geo)
+        releaseGeometry(id, geo)
         geoMap.delete(id)
         delete meshById[id]
         const mat = materialMap.get(id)

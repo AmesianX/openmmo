@@ -599,9 +599,11 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::CharacterRenameRequired { .. } => "CharacterRenameRequired",
         ServerMessage::CharacterRenamed { .. } => "CharacterRenamed",
         ServerMessage::EstateChestMode { .. } => "EstateChestMode",
+        ServerMessage::EstateFurnitureMoveMode { .. } => "EstateFurnitureMoveMode",
         ServerMessage::EstateChestVisibility { .. } => "EstateChestVisibility",
         ServerMessage::EstateChestEditResult { .. } => "EstateChestEditResult",
         ServerMessage::EstateChestState { .. } => "EstateChestState",
+        ServerMessage::FurniturePurchaseResult { .. } => "FurniturePurchaseResult",
     }
 }
 

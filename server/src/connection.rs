@@ -3,8 +3,8 @@ use crate::conn_limit::{resolve_client_ip, ConnectLimiter};
 use crate::game::character_attributes::roll_character_attributes;
 use crate::game::character_hp::{level_one_max_hp, DEFAULT_CHARACTER_RACE};
 use crate::game_state::{
-    encode_server_msg, parse_admin_command, parse_notice_command, restored_floor_level, GameState,
-    KickNotice,
+    encode_server_msg, parse_admin_command, parse_notice_command, restored_floor_level,
+    EstateFurnitureMove, GameState, KickNotice,
 };
 use crate::google_auth::GoogleAuthVerifier;
 use crate::item_defs::AuthenticatedUseAction;
@@ -1870,6 +1870,24 @@ async fn handle_client_message(
                     .await;
             }
         }
+        ClientMessage::CheckoutFurniture {
+            items,
+            expected_gold,
+            expected_total,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .checkout_furniture(id, items, expected_gold, expected_total, auth_service)
+                    .await;
+            }
+        }
+        ClientMessage::SetEstateFurnitureText { furniture_id, text } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .set_estate_furniture_text(id, furniture_id, text, auth_service)
+                    .await;
+            }
+        }
         ClientMessage::PlaceEstateChest {
             instance_id,
             position,
@@ -1900,6 +1918,36 @@ async fn handle_client_message(
             if let Some(id) = &state.player_id {
                 game_state
                     .open_estate_chest(id, chest_id, auth_service)
+                    .await;
+            }
+        }
+        ClientMessage::StartEstateFurnitureMove { furniture_id } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .start_estate_furniture_move(id, furniture_id, auth_service)
+                    .await;
+            }
+        }
+        ClientMessage::MoveEstateFurniture {
+            furniture_id,
+            expected_revision,
+            position,
+            rotation_deg,
+            floor_level,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .move_estate_furniture(
+                        id,
+                        EstateFurnitureMove {
+                            furniture_id,
+                            expected_revision,
+                            position,
+                            rotation_deg,
+                            floor_level,
+                        },
+                        auth_service,
+                    )
                     .await;
             }
         }

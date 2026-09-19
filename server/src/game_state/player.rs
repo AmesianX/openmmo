@@ -4,6 +4,9 @@ use crate::auth::{AuthError, AuthService, CharacterSaveData, ItemRow};
 use crate::types::{CharacterAttributes, Player, PlayerId, Position, ServerMessage};
 use crate::world_config::world_config;
 use bytes::Bytes;
+use onlinerpg_shared::estate_storage::{
+    estate_storage_def, is_estate_storage_item, INTERACTION_RANGE,
+};
 use onlinerpg_shared::housing::MAX_FLOOR_LEVEL;
 use onlinerpg_shared::inventory::{EquipSlot, PlayerInventory};
 use onlinerpg_shared::{
@@ -2267,6 +2270,7 @@ impl super::GameState {
             let taken: Vec<u32> = players
                 .values()
                 .filter(|p| p.id != *player_id)
+                .filter(|p| !p.object_type.as_deref().is_some_and(is_estate_storage_item))
                 .filter_map(|p| p.object_id)
                 .collect();
             let free_bed = beds.iter().find(|bed| !taken.contains(&bed.id));
@@ -2458,14 +2462,48 @@ impl super::GameState {
     ) {
         let rejected_or_position = {
             let mut players = self.players.write().await;
+            let estate_definition = object_type.as_deref().and_then(estate_storage_def);
+            let invalid_estate = if let Some(definition) = estate_definition {
+                let chests = self.estate_chests.read().await;
+                match (
+                    players.get(player_id),
+                    object_id.and_then(|id| chests.get(i64::from(id))),
+                ) {
+                    (Some(player), Some(chest))
+                        if chest.item_def_id == definition.id
+                            && matches!(
+                                definition.model_id.as_str(),
+                                "bed" | "rustic_bed" | "chair"
+                            ) =>
+                    {
+                        if player.health == 0 || player.is_mounted() {
+                            Some("You cannot use furniture right now.")
+                        } else if chest.floor_level != player.floor_level
+                            || chest.position.dist_xz_sq(&player.position)
+                                > (INTERACTION_RANGE + 0.5).powi(2)
+                        {
+                            Some("Move closer to the furniture.")
+                        } else {
+                            None
+                        }
+                    }
+                    _ => Some("That furniture is no longer available."),
+                }
+            } else {
+                None
+            };
 
-            // Reject if the specific object is already occupied
-            if object_id.is_some_and(|fid| {
-                players
-                    .values()
-                    .any(|p| p.id != *player_id && p.object_id == Some(fid))
+            if let Some(reason) = invalid_estate {
+                Err(reason)
+            } else if object_id.is_some_and(|fid| {
+                players.values().any(|p| {
+                    p.id != *player_id
+                        && p.object_id == Some(fid)
+                        && p.object_type.as_deref().is_some_and(is_estate_storage_item)
+                            == estate_definition.is_some()
+                })
             }) {
-                Err(())
+                Err("occupied")
             } else if let Some(player) = players.get_mut(player_id) {
                 player.object_type = object_type.clone();
                 player.object_id = object_id;
@@ -2475,11 +2513,11 @@ impl super::GameState {
             }
         };
 
-        if rejected_or_position.is_err() {
+        if let Err(reason) = rejected_or_position {
             self.send_direct_message(
                 player_id,
                 ServerMessage::InteractionRejected {
-                    reason: "occupied".to_string(),
+                    reason: reason.to_string(),
                 },
             )
             .await;

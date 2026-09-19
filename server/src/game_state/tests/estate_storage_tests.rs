@@ -54,6 +54,593 @@ fn item_quantity(inventory: &PlayerInventory, item_def_id: &str) -> u32 {
 }
 
 #[tokio::test]
+async fn moving_storage_preserves_contents_and_updates_collision() {
+    use onlinerpg_shared::pathfinding::is_cell_sealed;
+    let game = make_flat_world_game_state("estate_furniture_move");
+    let auth = make_test_auth("estate_furniture_move");
+    let owner_id = storage_owner(&game, &auth, "Mover").await;
+    let id = pid("Mover");
+    let origin = Position {
+        x: 2.5,
+        y: 5.0,
+        z: 2.5,
+    };
+    game.place_estate_chest(&id, 2, origin, 0.0, 0, &auth).await;
+    let chest = auth.load_estate_chests().unwrap().remove(0);
+    game.transfer_estate_items(
+        &id,
+        chest.id,
+        vec![BagLineItem {
+            instance_id: 3,
+            qty: 2,
+        }],
+        vec![],
+        0,
+        &auth,
+    )
+    .await;
+    let stored = auth
+        .estate_chest_state(chest.id, owner_id)
+        .unwrap()
+        .unwrap();
+    let inventory = game.get_player_inventory(&id).await.unwrap();
+    let mut rx = game.register_direct_channel(&id).await;
+    game.start_estate_furniture_move(&id, chest.id, &auth).await;
+    assert!(drain(&mut rx).iter().any(|message| matches!(message,
+        ServerMessage::EstateFurnitureMoveMode { furniture, plots }
+        if furniture.id == chest.id && furniture.revision == 1 && !plots.is_empty()
+    )));
+    assert_eq!(auth.load_estate_chests().unwrap()[0].position, origin);
+    assert!(is_cell_sealed(
+        &game.passability_read(),
+        origin.x,
+        origin.z,
+        0,
+        Some(5.05)
+    ));
+    game.move_estate_furniture(
+        &id,
+        EstateFurnitureMove {
+            furniture_id: chest.id,
+            expected_revision: 1,
+            position: origin,
+            rotation_deg: 90.0,
+            floor_level: 0,
+        },
+        &auth,
+    )
+    .await;
+    let messages = drain(&mut rx);
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            ServerMessage::EstateChestEditResult { error: None }
+        )),
+        "{messages:?}"
+    );
+    let rotated = auth.load_estate_chests().unwrap().remove(0);
+    assert_eq!(
+        rotated.rotation_deg, 90.0,
+        "ignore the furniture's own collision"
+    );
+    assert_eq!(rotated.revision, 2);
+    let target = Position {
+        x: 10.5,
+        y: 5.0,
+        z: 10.5,
+    };
+    game.move_estate_furniture(
+        &id,
+        EstateFurnitureMove {
+            furniture_id: chest.id,
+            expected_revision: 2,
+            position: target,
+            rotation_deg: 180.0,
+            floor_level: 0,
+        },
+        &auth,
+    )
+    .await;
+    let moved = auth.load_estate_chests().unwrap().remove(0);
+    assert_eq!(moved.id, chest.id);
+    assert_eq!(moved.position, target);
+    assert_eq!(moved.rotation_deg, 180.0);
+    assert_eq!(moved.revision, 3);
+    let state = auth
+        .estate_chest_state(chest.id, owner_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(state.items).unwrap(),
+        serde_json::to_value(stored.items).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(game.get_player_inventory(&id).await.unwrap()).unwrap(),
+        serde_json::to_value(inventory).unwrap()
+    );
+    assert!(!is_cell_sealed(
+        &game.passability_read(),
+        origin.x,
+        origin.z,
+        0,
+        Some(5.05)
+    ));
+    assert!(is_cell_sealed(
+        &game.passability_read(),
+        target.x,
+        target.z,
+        0,
+        Some(5.05)
+    ));
+}
+
+#[tokio::test]
+async fn rejected_furniture_moves_keep_the_original_placement_and_collision() {
+    use onlinerpg_shared::pathfinding::is_cell_sealed;
+    let game = make_flat_world_game_state("estate_move_rejection");
+    let (auth, path) = make_test_auth_with_path("estate_move_rejection");
+    storage_owner(&game, &auth, "Mover").await;
+    let id = pid("Mover");
+    let origin = Position {
+        x: 2.5,
+        y: 5.0,
+        z: 2.5,
+    };
+    game.place_estate_chest(&id, 2, origin, 0.0, 0, &auth).await;
+    let chest = auth.load_estate_chests().unwrap().remove(0);
+    game.give_item(&id, "storage_chest").await;
+    let item = game
+        .get_player_inventory(&id)
+        .await
+        .unwrap()
+        .bag
+        .into_iter()
+        .find(|item| item.item_def_id == "storage_chest")
+        .unwrap();
+    game.place_estate_chest(
+        &id,
+        item.instance_id,
+        Position {
+            x: 5.5,
+            y: 5.0,
+            z: 5.5,
+        },
+        0.0,
+        0,
+        &auth,
+    )
+    .await;
+    let mut rx = game.register_direct_channel(&id).await;
+    for (revision, x, z, floor) in [
+        (0, 5.5, 5.5, 0),
+        (0, 40.0, 40.0, 0),
+        (0, 3.5, 3.5, 1),
+        (1, 3.5, 3.5, 0),
+        (0, f32::NAN, 3.5, 0),
+    ] {
+        game.move_estate_furniture(
+            &id,
+            EstateFurnitureMove {
+                furniture_id: chest.id,
+                expected_revision: revision,
+                position: Position { x, y: 5.0, z },
+                rotation_deg: 90.0,
+                floor_level: floor,
+            },
+            &auth,
+        )
+        .await;
+        assert!(drain(&mut rx).iter().any(|message| matches!(
+            message,
+            ServerMessage::EstateChestEditResult { error: Some(_) }
+        )));
+        let saved = auth
+            .load_estate_chests()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == chest.id)
+            .unwrap();
+        assert_eq!(saved.position, origin);
+        assert_eq!(saved.revision, 0);
+        assert!(is_cell_sealed(
+            &game.passability_read(),
+            origin.x,
+            origin.z,
+            0,
+            Some(5.05)
+        ));
+    }
+    storage_owner(&game, &auth, "Visitor").await;
+    game.move_estate_furniture(
+        &pid("Visitor"),
+        EstateFurnitureMove {
+            furniture_id: chest.id,
+            expected_revision: 0,
+            position: origin,
+            rotation_deg: 90.0,
+            floor_level: 0,
+        },
+        &auth,
+    )
+    .await;
+    assert!(auth
+        .move_estate_furniture(chest.id, chest.owner_id + 1, 0, origin, 90.0, 0)
+        .unwrap()
+        .is_err());
+    let db = rusqlite::Connection::open(path).unwrap();
+    db.execute(
+        "UPDATE land_estates SET missed=1 WHERE id=?1",
+        [chest.estate_id],
+    )
+    .unwrap();
+    assert!(auth
+        .move_estate_furniture(chest.id, chest.owner_id, 0, origin, 90.0, 0)
+        .unwrap()
+        .is_err());
+    let saved = auth
+        .load_estate_chests()
+        .unwrap()
+        .into_iter()
+        .find(|p| p.id == chest.id)
+        .unwrap();
+    assert_eq!(saved.position, origin);
+    assert_eq!(saved.rotation_deg, 0.0);
+}
+
+#[tokio::test]
+async fn estate_beds_support_exclusive_sleep_and_cannot_be_recovered_while_occupied() {
+    for item_id in ["furniture_bed", "furniture_rustic_bed"] {
+        let game = make_flat_world_game_state(item_id);
+        let auth = make_test_auth(item_id);
+        storage_owner(&game, &auth, "Sleeper").await;
+        let owner = pid("Sleeper");
+        game.inventories.write().await.get_mut(&owner).unwrap().bag = vec![bag_item(2, item_id, 1)];
+        game.place_estate_chest(
+            &owner,
+            2,
+            Position {
+                x: 3.0,
+                y: 5.0,
+                z: 3.0,
+            },
+            90.0,
+            0,
+            &auth,
+        )
+        .await;
+        let bed = auth.load_estate_chests().unwrap().remove(0);
+        let object_id = bed.id as u32;
+        assert_eq!(bed.rotation_deg, 90.0);
+
+        let mut world_sleeper = make_player("WorldSleeper", 3.0, 3.0);
+        world_sleeper.object_type = Some("bed".into());
+        world_sleeper.object_id = Some(object_id);
+        game.add_player(world_sleeper).await;
+        game.set_player_interaction(&owner, Some(item_id.into()), Some(object_id))
+            .await;
+        assert_eq!(
+            game.players.read().await[&owner].object_type.as_deref(),
+            Some(item_id)
+        );
+
+        let guest = pid("Guest");
+        game.add_player(make_player("Guest", 3.0, 3.0)).await;
+        let mut guest_rx = game.register_direct_channel(&guest).await;
+        game.set_player_interaction(&guest, Some(item_id.into()), Some(object_id))
+            .await;
+        assert!(game.players.read().await[&guest].object_type.is_none());
+        assert!(drain(&mut guest_rx).iter().any(|message| matches!(
+            message, ServerMessage::InteractionRejected { reason } if reason == "occupied"
+        )));
+
+        game.move_estate_furniture(
+            &owner,
+            EstateFurnitureMove {
+                furniture_id: bed.id,
+                expected_revision: bed.revision,
+                position: Position {
+                    x: 4.0,
+                    y: 5.0,
+                    z: 4.0,
+                },
+                rotation_deg: 180.0,
+                floor_level: 0,
+            },
+            &auth,
+        )
+        .await;
+        assert_eq!(auth.load_estate_chests().unwrap()[0].position, bed.position);
+        game.recover_estate_chest(&owner, bed.id, &auth).await;
+        assert_eq!(auth.load_estate_chests().unwrap().len(), 1);
+        game.set_player_interaction(&owner, None, None).await;
+        game.set_player_interaction(&guest, Some(item_id.into()), Some(object_id))
+            .await;
+        assert_eq!(game.players.read().await[&guest].object_id, Some(object_id));
+        game.recover_estate_chest(&owner, bed.id, &auth).await;
+        assert_eq!(auth.load_estate_chests().unwrap().len(), 1);
+
+        game.set_player_interaction(&guest, None, None).await;
+        game.recover_estate_chest(&owner, bed.id, &auth).await;
+        assert!(auth.load_estate_chests().unwrap().is_empty());
+        assert_eq!(
+            item_quantity(&game.get_player_inventory(&owner).await.unwrap(), item_id),
+            1
+        );
+        game.set_player_interaction(&owner, Some(item_id.into()), Some(object_id))
+            .await;
+        assert!(game.players.read().await[&owner].object_type.is_none());
+    }
+}
+
+#[tokio::test]
+async fn estate_bed_interactions_validate_type_distance_floor_and_health() {
+    let game = make_flat_world_game_state("estate_bed_validation");
+    let auth = make_test_auth("estate_bed_validation");
+    storage_owner(&game, &auth, "Sleeper").await;
+    let owner = pid("Sleeper");
+    game.inventories.write().await.get_mut(&owner).unwrap().bag =
+        vec![bag_item(2, "furniture_bed", 1)];
+    game.place_estate_chest(
+        &owner,
+        2,
+        Position {
+            x: 3.0,
+            y: 5.0,
+            z: 3.0,
+        },
+        270.0,
+        0,
+        &auth,
+    )
+    .await;
+    let bed = auth.load_estate_chests().unwrap().remove(0);
+    let mut rx = game.register_direct_channel(&owner).await;
+    for (item_id, object_id, x, floor, health) in [
+        ("furniture_rustic_bed", bed.id as u32, 3.0, 0, 100),
+        ("furniture_table", bed.id as u32, 3.0, 0, 100),
+        ("furniture_bed", bed.id as u32 + 1, 3.0, 0, 100),
+        ("furniture_bed", bed.id as u32, 20.0, 0, 100),
+        ("furniture_bed", bed.id as u32, 3.0, 1, 100),
+        ("furniture_bed", bed.id as u32, 3.0, 0, 0),
+    ] {
+        {
+            let mut players = game.players.write().await;
+            let player = players.get_mut(&owner).unwrap();
+            player.position.x = x;
+            player.floor_level = floor;
+            player.health = health;
+        }
+        game.set_player_interaction(&owner, Some(item_id.into()), Some(object_id))
+            .await;
+        assert!(game.players.read().await[&owner].object_type.is_none());
+        assert!(drain(&mut rx)
+            .iter()
+            .any(|message| matches!(message, ServerMessage::InteractionRejected { .. })));
+    }
+}
+
+#[tokio::test]
+async fn furniture_checkout_and_decoration_placement_are_persistent() {
+    use onlinerpg_shared::furniture_shop::FurnitureOrderLine;
+    let game = make_flat_world_game_state("furniture_checkout");
+    let auth = make_test_auth("furniture_checkout");
+    let character_id = storage_owner(&game, &auth, "Decorator").await;
+    let id = pid("Decorator");
+    game.player_gold.write().await.insert(id, 5000);
+    game.terrain_io.write_object(-2, 4, &serde_json::json!({"placements": [
+        {"id":103,"type":"scroll","x":-1450.6,"y":1.8,"z":4781.3,"rotation":270,"floorLevel":0}
+    ]})).await.unwrap();
+    let order = || {
+        vec![FurnitureOrderLine {
+            display_id: 103,
+            quantity: 2,
+        }]
+    };
+    game.checkout_furniture(&id, order(), 5000, 400, &auth)
+        .await;
+    assert_eq!(
+        game.get_player_gold(&id).await,
+        5000,
+        "remote purchases must fail"
+    );
+    game.players.write().await.get_mut(&id).unwrap().position = Position {
+        x: -1453.0,
+        y: 1.0,
+        z: 4778.0,
+    };
+    game.checkout_furniture(&id, order(), 5000, 400, &auth)
+        .await;
+    assert_eq!(game.get_player_gold(&id).await, 4600);
+    let inventory = game.get_player_inventory(&id).await.unwrap();
+    assert_eq!(item_quantity(&inventory, "furniture_scroll"), 2);
+    assert_eq!(item_quantity(&inventory, "scroll_of_return"), 0);
+    assert_eq!(
+        auth.load_inventory(character_id)
+            .unwrap()
+            .iter()
+            .filter(|row| row.item_def_id == "furniture_scroll")
+            .count(),
+        2
+    );
+    game.checkout_furniture(&id, order(), 5000, 400, &auth)
+        .await;
+    assert_eq!(
+        game.get_player_gold(&id).await,
+        4600,
+        "a repeated payment must not charge twice"
+    );
+
+    game.players.write().await.get_mut(&id).unwrap().position = Position {
+        x: 1.5,
+        y: 5.05,
+        z: 1.5,
+    };
+    let instance_id = inventory
+        .bag
+        .iter()
+        .find(|item| item.item_def_id == "furniture_scroll")
+        .unwrap()
+        .instance_id;
+    game.place_estate_chest(
+        &id,
+        instance_id,
+        Position {
+            x: 3.0,
+            y: 5.8,
+            z: 3.0,
+        },
+        15.0,
+        0,
+        &auth,
+    )
+    .await;
+    let placed = auth.load_estate_chests().unwrap().remove(0);
+    assert_eq!(placed.item_def_id, "furniture_scroll");
+    assert!((placed.position.y - 5.8).abs() < 0.001);
+    assert!(auth
+        .estate_chest_state(placed.id, character_id)
+        .unwrap()
+        .is_err());
+    game.recover_estate_chest(&id, placed.id, &auth).await;
+    assert!(auth.load_estate_chests().unwrap().is_empty());
+    assert_eq!(
+        item_quantity(
+            &game.get_player_inventory(&id).await.unwrap(),
+            "furniture_scroll"
+        ),
+        2
+    );
+}
+
+#[tokio::test]
+async fn furniture_checkout_failures_leave_gold_and_inventory_unchanged() {
+    use onlinerpg_shared::furniture_shop::FurnitureOrderLine;
+    let game = make_flat_world_game_state("furniture_checkout_failures");
+    let auth = make_test_auth("furniture_checkout_failures");
+    let character_id = storage_owner(&game, &auth, "Shopper").await;
+    let id = pid("Shopper");
+    game.players.write().await.get_mut(&id).unwrap().position = Position {
+        x: -1453.0,
+        y: 1.0,
+        z: 4778.0,
+    };
+    let display = serde_json::json!({"placements": [
+        {"id":103,"type":"scroll","x":-1450.6,"y":1.8,"z":4781.3,"rotation":270,"floorLevel":0}
+    ]});
+    game.terrain_io.write_object(-2, 4, &display).await.unwrap();
+    let original = game.get_player_inventory(&id).await.unwrap();
+    for (balance, expected_total, overweight, missing_display) in [
+        (100, 400, false, false),
+        (5000, 1, false, false),
+        (5000, 400, true, false),
+        (5000, 400, false, true),
+    ] {
+        game.player_gold.write().await.insert(id, balance);
+        let mut inventory = original.clone();
+        if overweight {
+            inventory.bag.push(bag_item(900, "campfire_kit", 10000));
+        }
+        game.inventories.write().await.insert(id, inventory.clone());
+        if missing_display {
+            game.terrain_io
+                .write_object(-2, 4, &serde_json::json!({"placements": []}))
+                .await
+                .unwrap();
+        }
+        game.checkout_furniture(
+            &id,
+            vec![FurnitureOrderLine {
+                display_id: 103,
+                quantity: 2,
+            }],
+            balance,
+            expected_total,
+            &auth,
+        )
+        .await;
+        assert_eq!(game.get_player_gold(&id).await, balance);
+        assert_eq!(
+            game.get_player_inventory(&id).await.unwrap().bag,
+            inventory.bag
+        );
+        assert!(auth
+            .load_inventory(character_id)
+            .unwrap()
+            .iter()
+            .all(|row| row.item_def_id != "furniture_scroll"));
+    }
+}
+
+#[tokio::test]
+async fn decoration_sign_text_is_saved_and_only_editable_by_its_owner() {
+    let game = make_flat_world_game_state("furniture_sign");
+    let auth = make_test_auth("furniture_sign");
+    storage_owner(&game, &auth, "Signmaker").await;
+    let id = pid("Signmaker");
+    assert!(game.give_item(&id, "furniture_shop_sign").await);
+    let instance_id = game
+        .get_player_inventory(&id)
+        .await
+        .unwrap()
+        .bag
+        .iter()
+        .find(|item| item.item_def_id == "furniture_shop_sign")
+        .unwrap()
+        .instance_id;
+    game.place_estate_chest(
+        &id,
+        instance_id,
+        Position {
+            x: 2.5,
+            y: 7.0,
+            z: 2.5,
+        },
+        0.0,
+        0,
+        &auth,
+    )
+    .await;
+    let placed = auth.load_estate_chests().unwrap().remove(0);
+    game.set_estate_furniture_text(&id, placed.id, "우리 집\nWelcome".into(), &auth)
+        .await;
+    assert_eq!(
+        auth.load_estate_chests().unwrap()[0].text.as_deref(),
+        Some("우리 집\nWelcome")
+    );
+    assert!(!auth
+        .set_estate_furniture_text(placed.id, placed.owner_id + 1, "wrong owner")
+        .unwrap());
+    game.set_estate_furniture_text(&id, placed.id, "x".repeat(121), &auth)
+        .await;
+    assert_eq!(
+        auth.load_estate_chests().unwrap()[0].text.as_deref(),
+        Some("우리 집\nWelcome")
+    );
+    let target = Position {
+        x: 3.5,
+        y: 7.0,
+        z: 3.5,
+    };
+    game.move_estate_furniture(
+        &id,
+        EstateFurnitureMove {
+            furniture_id: placed.id,
+            expected_revision: 1,
+            position: target,
+            rotation_deg: 90.0,
+            floor_level: 0,
+        },
+        &auth,
+    )
+    .await;
+    let moved = auth.load_estate_chests().unwrap().remove(0);
+    assert_eq!(moved.id, placed.id);
+    assert_eq!(moved.position, target);
+    assert_eq!(moved.text.as_deref(), Some("우리 집\nWelcome"));
+    assert_eq!(moved.rotation_deg, 90.0);
+}
+
+#[tokio::test]
 async fn item_locks_survive_storage_without_merging_with_unlocked_stacks() {
     let game = make_flat_world_game_state("item_lock_storage");
     let auth = make_test_auth("item_lock_storage");

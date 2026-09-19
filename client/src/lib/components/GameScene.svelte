@@ -54,6 +54,7 @@
   import GameSceneFencesLayer from './game-scene/GameSceneFencesLayer.svelte'
   import GameSceneLandscapingLayer from './game-scene/GameSceneLandscapingLayer.svelte'
   import GameSceneEstateChestsLayer from './game-scene/GameSceneEstateChestsLayer.svelte'
+  import GameSceneFurnitureShopLayer from './game-scene/GameSceneFurnitureShopLayer.svelte'
   import GameSceneDungeonLayer from './game-scene/GameSceneDungeonLayer.svelte'
   import { isUnderground } from '../stores/dungeonStore'
   import { damageTextPool } from '../effects/damage-text-pool'
@@ -263,6 +264,9 @@
   let stallsLayerRef = $state<GameSceneStallsLayer | undefined>(undefined)
   let mealsLayerRef = $state<GameSceneMealsLayer | undefined>(undefined)
   let objectOverlayRef = $state<ObjectOverlay | undefined>(undefined)
+  let estateFurnitureRef = $state<GameSceneEstateChestsLayer | undefined>(
+    undefined
+  )
   let hoverNameLabelRef = $state<HoverNameLabel | undefined>(undefined)
   let signpostBubblePos = $derived(
     $hoveredSignpost
@@ -1342,10 +1346,15 @@
   player={currentPlayer ?? null}
 />
 <GameSceneEstateChestsLayer
+  bind:this={estateFurnitureRef}
   heightManager={terrainHeightManager}
   {terrainMeshes}
   housingGroup={housingLayerRef?.getGroup()}
   player={currentPlayer ?? null}
+/>
+<GameSceneFurnitureShopLayer
+  player={currentPlayer ?? null}
+  getObjectGroup={() => objectOverlayRef?.getGroup() ?? null}
 />
 
 <GameSceneDungeonLayer
@@ -1463,9 +1472,12 @@
       ...($isUnderground ? [] : (housingLayerRef?.getDoorMeshes() ?? [])),
       ...(dungeonLayerRef?.getDoorMeshes() ?? []),
     ]}
-    objectMeshes={objectOverlayRef && !$isUnderground
-      ? [objectOverlayRef.getGroup()]
-      : []}
+    objectMeshes={$isUnderground
+      ? []
+      : [
+          ...(objectOverlayRef ? [objectOverlayRef.getGroup()] : []),
+          ...(estateFurnitureRef ? [estateFurnitureRef.getGroup()] : []),
+        ]}
     propMeshes={dungeonLayerRef?.getPropMeshes() ?? []}
     groundItemMeshes={groundItemsLayerRef?.getGroup()
       ? [groundItemsLayerRef.getGroup()!]
@@ -1481,8 +1493,14 @@
     torchLightCastsShadow={graphicsPreset.enableTorchShadows}
     torchShadowMapSize={graphicsPreset.torchShadowMapSize}
     wallTorchPositions={() => dungeonLayerRef?.getWallTorchPositions() ?? []}
-    hearthFirePositions={() => objectOverlayRef?.getFirePositions() ?? []}
-    houseTorchPositions={() => objectOverlayRef?.getTorchPositions() ?? []}
+    hearthFirePositions={() => [
+      ...(objectOverlayRef?.getFirePositions() ?? []),
+      ...(estateFurnitureRef?.getFirePositions() ?? []),
+    ]}
+    houseTorchPositions={() => [
+      ...(objectOverlayRef?.getTorchPositions() ?? []),
+      ...(estateFurnitureRef?.getTorchPositions() ?? []),
+    ]}
     heightManager={terrainHeightManager}
     {waterSurfaceAt}
     {hasWaterSurfaceData}

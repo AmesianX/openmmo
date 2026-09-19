@@ -16,6 +16,7 @@ pub mod fence;
 pub mod fishing;
 pub mod fnv;
 pub mod furniture;
+pub mod furniture_shop;
 pub mod grass_format;
 pub mod housing;
 pub mod hunger;
@@ -174,7 +175,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v84: mounts carry a kind instead of a bool.
 /// v85: server-only monster AI; remove ownership and client control messages.
 /// v86: relative keyboard travel, stationary turns and backward movement.
-pub const PROTOCOL_VERSION: u32 = 86;
+/// v87: ORKEA checkout and editable estate decorations.
+/// v88: moving placed estate furniture.
+pub const PROTOCOL_VERSION: u32 = 88;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

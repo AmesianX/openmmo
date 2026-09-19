@@ -564,8 +564,27 @@ pub enum ClientMessage {
         rotation_deg: f32,
         floor_level: i8,
     },
+    StartEstateFurnitureMove {
+        furniture_id: i64,
+    },
+    MoveEstateFurniture {
+        furniture_id: i64,
+        expected_revision: u64,
+        position: Position,
+        rotation_deg: f32,
+        floor_level: i8,
+    },
     OpenEstateChest {
         chest_id: i64,
+    },
+    SetEstateFurnitureText {
+        furniture_id: i64,
+        text: String,
+    },
+    CheckoutFurniture {
+        items: Vec<crate::furniture_shop::FurnitureOrderLine>,
+        expected_gold: i64,
+        expected_total: i64,
     },
     TransferEstateItems {
         chest_id: i64,
@@ -1389,6 +1408,10 @@ pub enum ServerMessage {
         owner_id: i64,
         plots: Vec<crate::fence::FencePlot>,
     },
+    EstateFurnitureMoveMode {
+        furniture: crate::estate_storage::EstateChest,
+        plots: Vec<crate::fence::FencePlot>,
+    },
     EstateChestVisibility {
         added: Vec<crate::estate_storage::EstateChest>,
         removed: Vec<i64>,
@@ -1398,6 +1421,9 @@ pub enum ServerMessage {
     },
     EstateChestState {
         state: Option<crate::estate_storage::EstateChestState>,
+        error: Option<String>,
+    },
+    FurniturePurchaseResult {
         error: Option<String>,
     },
     LandClaimed {
@@ -1960,8 +1986,10 @@ impl ServerMessage {
             | Self::LandscapeEditResult { .. }
             | Self::FenceEditResult { .. }
             | Self::EstateChestMode { .. }
+            | Self::EstateFurnitureMoveMode { .. }
             | Self::EstateChestEditResult { .. }
             | Self::EstateChestState { .. }
+            | Self::FurniturePurchaseResult { .. }
             | Self::LandClaimed { .. }
             | Self::LandRejected { .. }
             | Self::LandAccountState { .. }

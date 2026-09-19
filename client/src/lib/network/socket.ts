@@ -787,6 +787,50 @@ class NetworkManager {
     this.sendMessage({ OpenEstateChest: { chest_id: chestId } })
   }
 
+  sendStartEstateFurnitureMove(furnitureId: number) {
+    this.sendMessage({
+      StartEstateFurnitureMove: { furniture_id: furnitureId },
+    })
+  }
+
+  sendMoveEstateFurniture(
+    furnitureId: number,
+    expectedRevision: number,
+    position: Position,
+    rotationDeg: number,
+    floorLevel: number
+  ) {
+    this.sendMessage({
+      MoveEstateFurniture: {
+        furniture_id: furnitureId,
+        expected_revision: expectedRevision,
+        position,
+        rotation_deg: rotationDeg,
+        floor_level: floorLevel,
+      },
+    })
+  }
+
+  sendCheckoutFurniture(
+    items: { display_id: number; quantity: number }[],
+    expectedGold: number,
+    expectedTotal: number
+  ) {
+    this.sendMessage({
+      CheckoutFurniture: {
+        items,
+        expected_gold: expectedGold,
+        expected_total: expectedTotal,
+      },
+    })
+  }
+
+  sendSetEstateFurnitureText(furnitureId: number, text: string) {
+    this.sendMessage({
+      SetEstateFurnitureText: { furniture_id: furnitureId, text },
+    })
+  }
+
   sendTransferEstateItems(
     chestId: number,
     deposits: BagLineItem[],

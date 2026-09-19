@@ -12,6 +12,10 @@ export interface EstatePlot {
 export interface FurnitureFootprint {
   width: number
   depth: number
+  minX?: number
+  maxX?: number
+  minZ?: number
+  maxZ?: number
 }
 
 export interface FurnitureFootprintPose {
@@ -23,6 +27,9 @@ export interface FurnitureFootprintPose {
 
 export interface EstateFurniturePlacementDefinition {
   modelUrl: string
+  modelId?: string
+  maxHeightOffset?: number
+  solid?: boolean
   snapStep: number
   rotationStep: number
   footprint: FurnitureFootprint
@@ -64,6 +71,16 @@ function furnitureBounds(
   footprint: FurnitureFootprint
 ) {
   const radians = THREE.MathUtils.degToRad(rotationDeg)
+  const centerX =
+    ((footprint.minX ?? -footprint.width / 2) +
+      (footprint.maxX ?? footprint.width / 2)) /
+    2
+  const centerZ =
+    ((footprint.minZ ?? -footprint.depth / 2) +
+      (footprint.maxZ ?? footprint.depth / 2)) /
+    2
+  x += centerX * Math.cos(radians) + centerZ * Math.sin(radians)
+  z += -centerX * Math.sin(radians) + centerZ * Math.cos(radians)
   const cos = Math.abs(Math.cos(radians))
   const sin = Math.abs(Math.sin(radians))
   const halfWidth = (footprint.width * cos + footprint.depth * sin) / 2
@@ -220,6 +237,20 @@ export function snapPlacementCoordinate(value: number, step: number) {
   return Math.round(value / step) * step
 }
 
+export function furniturePlacementRotation(
+  degrees: number,
+  step: number,
+  manual: boolean,
+  fits: (rotation: number) => boolean
+) {
+  if (manual || fits(degrees)) return degrees
+  for (let index = 1; index < Math.ceil(360 / step); index++) {
+    const rotated = (degrees + index * step) % 360
+    if (fits(rotated)) return rotated
+  }
+  return degrees
+}
+
 export function pointOnOwnedEstate(x: number, z: number, plots: EstatePlot[]) {
   return plots.some((plot) => {
     const plotX = unwrapWorldXNear(x, plot.x)
@@ -242,14 +273,16 @@ export function footprintOnOwnedEstate(
   const radians = THREE.MathUtils.degToRad(rotationDeg)
   const cos = Math.cos(radians)
   const sin = Math.sin(radians)
-  const halfWidth = footprint.width / 2
-  const halfDepth = footprint.depth / 2
+  const minX = footprint.minX ?? -footprint.width / 2
+  const maxX = footprint.maxX ?? footprint.width / 2
+  const minZ = footprint.minZ ?? -footprint.depth / 2
+  const maxZ = footprint.maxZ ?? footprint.depth / 2
   const samples = [
     [0, 0],
-    [-halfWidth, -halfDepth],
-    [-halfWidth, halfDepth],
-    [halfWidth, -halfDepth],
-    [halfWidth, halfDepth],
+    [minX, minZ],
+    [minX, maxZ],
+    [maxX, minZ],
+    [maxX, maxZ],
   ]
   return samples.every(([localX, localZ]) =>
     pointOnOwnedEstate(

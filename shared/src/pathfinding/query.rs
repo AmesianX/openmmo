@@ -503,10 +503,7 @@ fn move_blocked_on_floor(
     )
 }
 
-/// Check if a circle of radius `r` at `(x, z)` overlaps any blocking wall edge
-/// on `floor_level`. Enforces player thickness so the character stops short of
-/// walls instead of embedding into them, and lets path smoothing reject
-/// diagonals whose interior would clip a corner the body radius can't clear.
+/// Whether a circle overlaps a blocking edge on the given floor.
 pub fn is_circle_blocked_on_floor(
     cache: &PassabilityCache,
     x: f32,
@@ -515,15 +512,23 @@ pub fn is_circle_blocked_on_floor(
     floor_level: u8,
     y: Option<f32>,
 ) -> bool {
-    for rp in cache.values() {
+    is_circle_blocked_by_passability(cache.values(), x, z, r, floor_level, y)
+}
+
+pub fn is_circle_blocked_by_passability<'a>(
+    entries: impl IntoIterator<Item = &'a RuntimePassability>,
+    x: f32,
+    z: f32,
+    r: f32,
+    floor_level: u8,
+    y: Option<f32>,
+) -> bool {
+    for rp in entries {
         if x + r < rp.min_x || x - r > rp.max_x || z + r < rp.min_z || z - r > rp.max_z {
             continue;
         }
 
-        // Same two-floor rule the edge check uses. Each floor's grid seals the
-        // stairwell end it does not own, and the body radius sits right on that
-        // seal whenever the mover reaches that end — so a landing would wall
-        // itself off from the floor keyed to the far end.
+        // Consult both floors so the far landing's seal does not block the mover.
         let stair_mask = stairwell_floor_mask(rp, x - r, x + r, z - r, z + r, floor_level);
         if stair_mask != 0 {
             if stairwell_consult(rp, stair_mask, |f| circle_blocked_on_grid(rp, f, x, z, r))

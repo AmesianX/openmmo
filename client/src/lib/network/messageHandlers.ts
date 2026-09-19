@@ -85,7 +85,6 @@ import type { LandscapingTile } from '../terrain/landscaping'
 import {
   applyEstateChestVisibility,
   estateChestError,
-  estateChestMode,
   estateChestPending,
   openEstateChest,
   resetEstateStorage,
@@ -361,7 +360,12 @@ function emitPlayerHit(
   }
 }
 
-/** Resolve object interaction for a remote player: find nearest placement, snap position/rotation. */
+const remoteEstateInteractions = new Map<
+  number,
+  { objectType: string; objectId: number | null | undefined }
+>()
+
+/** Resolve the remote player's furniture pose. */
 async function applyObjectInteraction(
   playerId: number,
   objectType: string,
@@ -369,10 +373,12 @@ async function applyObjectInteraction(
   wz: number,
   objectId?: number | null
 ) {
-  // Pickup and the emotes are animations, not placed objects: they happen
-  // wherever the player is standing, so the placement search can only ever
-  // find nothing. Skipping them drops two awaits and a scan of every cached
-  // region before the clip starts.
+  const estateInteraction = getEstateStorageDef(objectType)
+    ? { objectType, objectId }
+    : null
+  if (estateInteraction)
+    remoteEstateInteractions.set(playerId, estateInteraction)
+  else remoteEstateInteractions.delete(playerId)
   if (objectType === 'pickup' || isEmoteAnim(objectType)) {
     remotePlayerManager.handleInteraction(playerId, objectType, 0)
     return
@@ -380,6 +386,11 @@ async function applyObjectInteraction(
 
   const { anim, interactOffset, placement, rotation } =
     await objectManager.resolvePose(objectType, wx, wz, objectId)
+  if (
+    estateInteraction &&
+    (remoteEstateInteractions.get(playerId) !== estateInteraction || !placement)
+  )
+    return
   const pos = placement
     ? { x: placement.x, y: placement.y, z: placement.z }
     : undefined
@@ -424,6 +435,7 @@ function addRemotePlayerToState(state: GameState, sp: ServerPlayer) {
 
 /** Remove a remote player's visual and store entry. */
 function removeRemotePlayerFromState(state: GameState, playerId: number) {
+  remoteEstateInteractions.delete(playerId)
   remotePlayerManager.removePlayer(playerId)
   state.otherPlayers.delete(playerId)
   refreshBardZone(state.otherPlayers)
@@ -544,7 +556,19 @@ function announceGroundItem(
 }
 
 import { worldView, type WorldUpdate } from './worldView'
+import {
+  selectedEstateFurniture,
+  startEstateFurniturePlacement,
+} from '../stores/estateFurniturePlacementStore'
+import { getEstateStorageDef } from '../data/estateFurnitureDefs'
+import type { EstateChest } from './networkTypes'
 import { TerrainSnapshots, type TerrainSnapshot } from './terrainSnapshots'
+import {
+  furniturePurchasePending,
+  furnitureShopError,
+  clearFurnitureBasket,
+  estateSignEditor,
+} from '../stores/furnitureShopStore'
 import { getTerrainApiUrl } from '../utils/networkUtils'
 
 const terrainSnapshots = new Map<string, TerrainSnapshot>()
@@ -657,6 +681,7 @@ export function handleServerMessage(
           state.otherPlayers.clear()
           return state
         })
+        remoteEstateInteractions.clear()
         remotePlayerManager.reset()
         monsterManager.reset()
         groundItemManager.reset()
@@ -734,6 +759,7 @@ export function handleServerMessage(
     }
 
     case 'JoinSuccess': {
+      remoteEstateInteractions.clear()
       worldView.synchronized = false
       housingManager.resetView()
       scheduleResync()
@@ -1125,6 +1151,7 @@ export function handleServerMessage(
       resetFriendStores()
       gameStore.update((state) => {
         state.otherPlayers.clear()
+        remoteEstateInteractions.clear()
         remotePlayerManager.reset()
         // A list, not a map: player ids are numeric and the wasm serializer
         // rejects non-string map keys (see ServerMessage::GameState).
@@ -1412,6 +1439,7 @@ export function handleServerMessage(
     }
 
     case 'PlayerDead': {
+      remoteEstateInteractions.delete(data.player_id)
       console.log('Player dead:', data.player_id)
       stopPlayerInstrument(data.player_id)
       const gameState = get(gameStore)
@@ -1441,6 +1469,7 @@ export function handleServerMessage(
       events.kicked.emit(data.reason)
       resetGameStore()
       monsterManager.reset()
+      remoteEstateInteractions.clear()
       remotePlayerManager.reset()
       disconnect()
       break
@@ -1453,6 +1482,7 @@ export function handleServerMessage(
 
     case 'PlayerRespawned': {
       const serverPlayer: ServerPlayer = data.player
+      remoteEstateInteractions.delete(serverPlayer.id)
       stopPlayerInstrument(serverPlayer.id)
       console.log('Player respawned:', serverPlayer.id)
       const gameState = get(gameStore)
@@ -1658,17 +1688,56 @@ export function handleServerMessage(
       break
     case 'EstateChestMode':
       stopFenceMode()
-      estateChestMode.set(data)
+      selectedEstateFurniture.set(null)
+      startEstateFurniturePlacement({ ...data, kind: 'place' })
       inventoryVisible.set(false)
-      estateChestError.set(null)
+      break
+    case 'EstateFurnitureMoveMode':
+      if (get(selectedEstateFurniture)?.id !== data.furniture.id) break
+      stopFenceMode()
+      startEstateFurniturePlacement({
+        kind: 'move',
+        furniture: data.furniture,
+        item_def_id: data.furniture.item_def_id,
+        owner_id: data.furniture.owner_id,
+        plots: data.plots,
+      })
+      inventoryVisible.set(false)
       break
     case 'EstateChestVisibility':
       applyEstateChestVisibility(data.added, data.removed)
+      for (const [playerId, interaction] of remoteEstateInteractions) {
+        if (
+          !(data.added as EstateChest[]).some(
+            (chest) =>
+              chest.id === interaction.objectId &&
+              chest.item_def_id === interaction.objectType
+          )
+        )
+          continue
+        const player = remotePlayerManager.players.get(playerId)
+        if (player)
+          void applyObjectInteraction(
+            playerId,
+            interaction.objectType,
+            player.position.x,
+            player.position.z,
+            interaction.objectId
+          )
+      }
       break
     case 'EstateChestEditResult':
       estateChestPending.set(false)
       estateChestError.set(data.error ?? null)
-      if (!data.error) estateChestMode.set(null)
+      if (!data.error) {
+        stopEstateChestMode()
+        estateSignEditor.set(null)
+      }
+      break
+    case 'FurniturePurchaseResult':
+      furniturePurchasePending.set(false)
+      furnitureShopError.set(data.error ?? null)
+      if (!data.error) clearFurnitureBasket()
       break
     case 'EstateChestState':
       estateChestPending.set(false)
@@ -1781,6 +1850,7 @@ export function handleServerMessage(
         const wz = rp?.position.z ?? 0
         applyObjectInteraction(data.player_id, ft, wx, wz, data.object_id)
       } else {
+        remoteEstateInteractions.delete(data.player_id)
         remotePlayerManager.handleStopInteraction(data.player_id)
       }
       break

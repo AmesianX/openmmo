@@ -3,6 +3,7 @@ import {
   footprintOnOwnedEstate,
   footprintOnHouseFloor,
   furnitureFootprintsOverlap,
+  furniturePlacementRotation,
   houseFloorY,
   housingPlacementFloor,
   pointOnHouseFloor,
@@ -92,6 +93,27 @@ describe('estate furniture placement', () => {
     ).toBe(true)
   })
 
+  it('uses the model offset when checking beds against land and nearby furniture', () => {
+    const footprint = {
+      width: 2,
+      depth: 1,
+      minX: 0,
+      maxX: 2,
+      minZ: -0.5,
+      maxZ: 0.5,
+    }
+    expect(footprintOnOwnedEstate(0.2, 2, 0, footprint, plots)).toBe(true)
+    expect(footprintOnOwnedEstate(30.5, 2, 0, footprint, plots)).toBe(false)
+    expect(footprintOnOwnedEstate(2, 1, 90, footprint, plots)).toBe(false)
+    expect(footprintOnHouseFloor(house, 0, 0.2, 3, 0, footprint)).toBe(true)
+    expect(
+      furnitureFootprintsOverlap(
+        { x: 1, z: 3, rotationDeg: 0, footprint },
+        { x: 2.8, z: 3, rotationDeg: 0, footprint: { width: 0.2, depth: 0.2 } }
+      )
+    ).toBe(true)
+  })
+
   it('inherits the housing floor from the placement surface group', () => {
     const floor = new THREE.Group()
     floor.userData.housingPlacementFloorLevel = 1
@@ -113,6 +135,17 @@ describe('estate furniture placement', () => {
     const chest = { width: 1.48, depth: 0.62 }
     expect(footprintOnHouseFloor(house, 0, 0.5, 3, 0, chest, 0.1)).toBe(false)
     expect(footprintOnHouseFloor(house, 0, 0.5, 3, 90, chest, 0.1)).toBe(true)
+  })
+
+  it('preserves a manually rotated bed at a floor edge instead of turning it back', () => {
+    const bed = { width: 1.2, depth: 2.6 }
+    const fits = (rotation: number) =>
+      footprintOnHouseFloor(house, 0, 2, 0.8, rotation, bed)
+    expect(fits(0)).toBe(false)
+    expect(fits(90)).toBe(true)
+    expect(furniturePlacementRotation(0, 90, false, fits)).toBe(90)
+    expect(furniturePlacementRotation(0, 90, true, fits)).toBe(0)
+    expect(furniturePlacementRotation(270, 90, true, fits)).toBe(270)
   })
 
   it('rejects a chest that is flush with the outer floor edge', () => {

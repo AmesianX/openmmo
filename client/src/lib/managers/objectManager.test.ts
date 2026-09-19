@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { estateChests } from '../stores/estateFurnitureStore'
+import catalog from '../../../public/models/objects/catalog.json'
 import type { ObjectPlacement } from '../stores/editorStore'
 import type { HouseData } from '../types/housing'
 
@@ -72,6 +74,7 @@ describe('world cache generation', () => {
 })
 
 describe('seat lookup', () => {
+  afterEach(() => estateChests.set(new Map()))
   ;(objectManager as unknown as { cache: Map<string, unknown> }).cache.set(
     'test',
     { placements: [chair(42, -1451.7, 4750.3), chair(40, -1450.0, 4751.5)] }
@@ -97,6 +100,62 @@ describe('seat lookup', () => {
       objectManager.findNearestPlacement('bed', -1449.0, 4753.4)
     ).toBeNull()
   })
+
+  it.each([
+    ['furniture_bed', 'bed', 0.78],
+    ['furniture_rustic_bed', 'rustic_bed', 0.56],
+  ])(
+    'resolves %s by estate ID, including its saved rotation',
+    async (itemId, modelId, height) => {
+      const manager = new ObjectManager()
+      const state = manager as unknown as {
+        cache: Map<string, unknown>
+        catalogCache: unknown[]
+      }
+      state.catalogCache = catalog
+      state.cache.set('test', { placements: [chair(7, 1, 1)] })
+      estateChests.set(
+        new Map([
+          [
+            7,
+            {
+              id: 7,
+              estate_id: 1,
+              owner_id: 1,
+              item_def_id: itemId as string,
+              position: { x: 3, y: 4.15, z: 5 },
+              rotation_deg: 270,
+              floor_level: 1,
+              overdue: false,
+              revision: 0,
+            },
+          ],
+        ])
+      )
+
+      const pose = await manager.resolvePose(itemId as string, 3, 5, 7)
+      expect(pose.anim).toBe('sleep')
+      expect(pose.interactOffset?.y).toBe(height)
+      expect(pose.placement).toMatchObject({
+        id: 7,
+        type: modelId,
+        x: 3,
+        y: 4.15,
+        z: 5,
+        floorLevel: 1,
+      })
+      expect(pose.rotation).toBeCloseTo((3 * Math.PI) / 2)
+      expect(
+        (await manager.resolvePose(itemId as string, 3, 5, 8)).placement
+      ).toBeNull()
+
+      estateChests.set(new Map())
+      expect(
+        (await manager.resolvePose(itemId as string, 3, 5, 7)).placement
+      ).toBeNull()
+      expect(manager.findNearestPlacement('chair', 1, 1, 7)?.type).toBe('chair')
+    }
+  )
 
   it('uses Rowan’s ground-floor rustic bed and its pose for a bed schedule', async () => {
     const manager = new ObjectManager()

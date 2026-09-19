@@ -49,6 +49,7 @@
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
   import type { TerrainGrassDataManager } from '../../managers/terrainGrassDataManager'
   import { worldRectToTileBounds } from '../game-scene/terrain-utils'
+  import { isTypingTarget } from '../../utils/dom'
 
   interface Props {
     camera: THREE.OrthographicCamera | undefined
@@ -435,6 +436,7 @@
   }
 
   function handleKeyDown(event: KeyboardEvent) {
+    if (isTypingTarget(event.target)) return
     if (event.key === 'r' || event.key === 'R') {
       placementRotation.set((currentRotation + 90) % 360)
     }

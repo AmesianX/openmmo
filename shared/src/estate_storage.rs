@@ -20,9 +20,24 @@ pub struct EstateStorageDefinition {
     pub floor_edge_clearance: f32,
     pub indoor_collision_radius: f32,
     pub outdoor_collision_radius: f32,
+    #[serde(default)]
+    pub max_height_offset: f32,
+    #[serde(default)]
+    pub text_label: bool,
 }
 
 impl EstateStorageDefinition {
+    pub fn footprint(&self) -> crate::furniture::OccupancyRect {
+        crate::furniture::solid_occupancy(&self.model_id).unwrap_or(
+            crate::furniture::OccupancyRect {
+                min_x: -self.footprint_width / 2.0,
+                max_x: self.footprint_width / 2.0,
+                min_z: -self.footprint_depth / 2.0,
+                max_z: self.footprint_depth / 2.0,
+            },
+        )
+    }
+
     pub fn max_weight(&self) -> f32 {
         self.capacity_kg * 10.0
     }
@@ -37,8 +52,8 @@ pub fn estate_storage_defs() -> &'static HashMap<String, EstateStorageDefinition
         for (id, definition) in &definitions {
             assert_eq!(id, &definition.id, "estate storage key and id differ");
             assert!(
-                definition.capacity_kg > 0.0,
-                "{id}: capacity must be positive"
+                definition.capacity_kg >= 0.0,
+                "{id}: capacity must not be negative"
             );
             assert!(
                 definition.snap_step > 0.0,
@@ -62,8 +77,10 @@ pub fn estate_storage_defs() -> &'static HashMap<String, EstateStorageDefinition
                     && definition.outdoor_collision_radius >= 0.0,
                 "{id}: placement margins must not be negative"
             );
-            let occupancy = crate::furniture::solid_occupancy(&definition.model_id)
-                .unwrap_or_else(|| panic!("{id}: model has no solid furniture footprint"));
+            let Some(occupancy) = crate::furniture::solid_occupancy(&definition.model_id) else {
+                assert_eq!(definition.capacity_kg, 0.0);
+                continue;
+            };
             let measured_width = occupancy.max_x - occupancy.min_x;
             let measured_depth = occupancy.max_z - occupancy.min_z;
             assert!(
@@ -95,6 +112,8 @@ pub struct EstateChest {
     pub floor_level: i8,
     pub overdue: bool,
     pub revision: u64,
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

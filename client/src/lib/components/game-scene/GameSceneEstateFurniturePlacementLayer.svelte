@@ -3,7 +3,7 @@
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
   import * as THREE from 'three'
-  import { loadGLB } from '../../utils/gltfCache'
+  import { loadEstateFurnitureModel } from '../../utils/estateFurnitureModels'
   import {
     cameraRotationEnabled,
     housingEditorMode,
@@ -11,8 +11,14 @@
   } from '../../stores/debugStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
   import {
+    estateFurniturePlacementRotation,
+    rotateEstateFurniturePlacement,
+  } from '../../stores/estateFurniturePlacementStore'
+  import { isTypingTarget } from '../../utils/dom'
+  import {
     EstatePlacementGrid,
     furnitureFootprintsOverlap,
+    furniturePlacementRotation,
     footprintOnOwnedEstate,
     footprintOnHouseFloor,
     houseFloorY,
@@ -33,11 +39,12 @@
 
   let {
     definition,
-    active,
     plots,
     pending,
     terrainMeshes,
     housingGroup,
+    furnitureGroup,
+    ignoreFurnitureId,
     heightManager,
     player,
     floorLevel,
@@ -47,11 +54,12 @@
     onerror,
   }: {
     definition: EstateFurniturePlacementDefinition
-    active: boolean
     plots: EstatePlot[]
     pending: boolean
     terrainMeshes: (THREE.Mesh | undefined)[]
     housingGroup?: THREE.Group
+    furnitureGroup?: THREE.Group
+    ignoreFurnitureId?: number
     heightManager: TerrainHeightManager
     player: LocalPlayer | null
     floorLevel: number
@@ -85,10 +93,9 @@
 
   let ghost: THREE.Group | null = null
   let cursor: { x: number; y: number } | null = null
-  let rotationDeg = 0
+  let heightOffset = 0
   let preview: EstateFurniturePlacement | null = null
   let previewValid = false
-  let wasActive = false
   let lastGridFloor = Infinity
   let lastGridHouseId: string | null = null
   let disposed = false
@@ -113,8 +120,19 @@
       (mesh): mesh is THREE.Mesh => !!mesh
     )
     if (housingGroup) surfaces.push(housingGroup)
+    if (furnitureGroup && definition.maxHeightOffset)
+      surfaces.push(furnitureGroup)
     return raycaster.intersectObjects(surfaces, true).find((hit) => {
       if (!hit.face) return false
+      if (ignoreFurnitureId !== undefined) {
+        for (
+          let object: THREE.Object3D | null = hit.object;
+          object;
+          object = object.parent
+        ) {
+          if (object.userData.estateChestId === ignoreFurnitureId) return false
+        }
+      }
       const upward =
         hit.face.normal.clone().transformDirection(hit.object.matrixWorld).y >
         0.65
@@ -129,6 +147,7 @@
         )
       let parent: THREE.Object3D | null = hit.object
       while (parent) {
+        if (parent === furnitureGroup) return true
         if (parent === housingGroup) return false
         parent = parent.parent
       }
@@ -150,7 +169,7 @@
   }
 
   function updatePreview() {
-    if (!active || !player || !ghost || !cursor || get(cameraRotationEnabled)) {
+    if (!player || !ghost || !cursor || get(cameraRotationEnabled)) {
       hidePreview()
       return
     }
@@ -165,12 +184,13 @@
     const house = placementHouse()
     const fits = (rotation: number) =>
       footprintOnOwnedEstate(x, z, rotation, definition.footprint, plots) &&
-      !obstacles.some((obstacle) =>
-        furnitureFootprintsOverlap(
-          { x, z, rotationDeg: rotation, footprint: definition.footprint },
-          obstacle
-        )
-      ) &&
+      (definition.solid === false ||
+        !obstacles.some((obstacle) =>
+          furnitureFootprintsOverlap(
+            { x, z, rotationDeg: rotation, footprint: definition.footprint },
+            obstacle
+          )
+        )) &&
       (!house ||
         footprintOnHouseFloor(
           house,
@@ -181,25 +201,42 @@
           definition.footprint,
           definition.floorEdgeClearance
         ))
-    if (!fits(rotationDeg)) {
-      const steps = Math.max(1, Math.ceil(360 / definition.rotationStep))
-      for (let index = 1; index < steps; index++) {
-        const rotated = (rotationDeg + index * definition.rotationStep) % 360
-        if (!fits(rotated)) continue
-        rotationDeg = rotated
-        break
-      }
+    const rotation = get(estateFurniturePlacementRotation)
+    const rotationDeg = furniturePlacementRotation(
+      rotation.degrees,
+      definition.rotationStep,
+      rotation.manual,
+      fits
+    )
+    if (rotationDeg !== rotation.degrees) {
+      estateFurniturePlacementRotation.set({
+        ...rotation,
+        degrees: rotationDeg,
+      })
     }
+    const baseY =
+      (house
+        ? houseFloorY(house, floorLevel, x, z)
+        : heightManager.groundYOrNull(x, z)) ?? hit.point.y
+    const y = definition.maxHeightOffset
+      ? Math.max(
+          baseY,
+          Math.min(
+            baseY + definition.maxHeightOffset,
+            hit.point.y + heightOffset
+          )
+        )
+      : baseY
     previewValid =
       floorLevel >= definition.minFloor &&
       floorLevel <= definition.maxFloor &&
       fits(rotationDeg)
     ghost.visible = true
-    ghost.position.set(x, hit.point.y, z)
+    ghost.position.set(x, y, z)
     ghost.rotation.y = THREE.MathUtils.degToRad(rotationDeg)
     tintGhost(previewValid)
     preview = {
-      position: { x: wrapWorldX(x), y: hit.point.y, z },
+      position: { x: wrapWorldX(x), y, z },
       rotationDeg,
       floorLevel,
     }
@@ -212,7 +249,7 @@
     const unsubscribeHouses = housingManager.onHousesChanged(() =>
       grid.markDirty()
     )
-    loadGLB(definition.modelUrl)
+    loadEstateFurnitureModel(definition)
       .then((gltf) => {
         if (disposed) return
         ghost = gltf.scene.clone(true)
@@ -251,7 +288,6 @@
     }
     const click = (event: MouseEvent) => {
       if (
-        !active ||
         event.button !== 0 ||
         pending ||
         get(cameraRotationEnabled) ||
@@ -267,18 +303,41 @@
       if (preview && previewValid) onplace(preview)
     }
     const wheel = (event: WheelEvent) => {
-      if (!active) return
+      if (pending || event.deltaY === 0 || get(cameraRotationEnabled)) return
       event.preventDefault()
       event.stopImmediatePropagation()
       const direction = event.deltaY > 0 ? 1 : -1
-      rotationDeg =
-        (rotationDeg + direction * definition.rotationStep + 360) % 360
+      if (event.shiftKey && definition.maxHeightOffset) {
+        heightOffset = Math.max(
+          -3,
+          Math.min(3, heightOffset - direction * 0.05)
+        )
+      } else {
+        rotateEstateFurniturePlacement(direction)
+      }
       updatePreview()
     }
-    const escape = (event: KeyboardEvent) => {
-      if (event.code !== 'Escape' || !active) return
+    const keydown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return
+      if (
+        event.code === 'KeyR' &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !get(cameraRotationEnabled)
+      ) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (!pending && !event.repeat) {
+          rotateEstateFurniturePlacement(event.shiftKey ? -1 : 1)
+          updatePreview()
+        }
+        return
+      }
+      if (event.code !== 'Escape') return
       event.preventDefault()
       event.stopImmediatePropagation()
+      if (pending) return
       oncancel()
       hidePreview()
     }
@@ -286,7 +345,7 @@
     canvas.addEventListener('pointerleave', leave)
     canvas.addEventListener('mousedown', click, true)
     canvas.addEventListener('wheel', wheel, { capture: true, passive: false })
-    window.addEventListener('keydown', escape, true)
+    window.addEventListener('keydown', keydown, true)
     return () => {
       disposed = true
       unsubscribeHeight()
@@ -295,7 +354,7 @@
       canvas.removeEventListener('pointerleave', leave)
       canvas.removeEventListener('mousedown', click, true)
       canvas.removeEventListener('wheel', wheel, true)
-      window.removeEventListener('keydown', escape, true)
+      window.removeEventListener('keydown', keydown, true)
       ghost?.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return
         const materials = Array.isArray(object.material)
@@ -308,17 +367,14 @@
   })
 
   useTask(() => {
-    group.visible = active && get(currentDungeonDepth) < 1
-    if (active && !wasActive) rotationDeg = 0
-    if (!active && wasActive) hidePreview()
-    wasActive = active
+    group.visible = get(currentDungeonDepth) < 1
     const insideHouseId = get(playerInsideHouseId)
     if (floorLevel !== lastGridFloor || insideHouseId !== lastGridHouseId) {
       lastGridFloor = floorLevel
       lastGridHouseId = insideHouseId
       grid.markDirty()
     }
-    grid.update(active && !!player, plots, player?.position.x ?? 0)
+    grid.update(!!player, plots, player?.position.x ?? 0)
     updatePreview()
   })
 </script>

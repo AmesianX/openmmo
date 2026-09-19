@@ -1,11 +1,25 @@
 <script lang="ts">
   import { T, useTask, useThrelte } from '@threlte/core'
-  import { onMount } from 'svelte'
-  import { SvelteMap } from 'svelte/reactivity'
+  import { onMount, untrack } from 'svelte'
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { get } from 'svelte/store'
   import * as THREE from 'three'
   import GameSceneEstateFurniturePlacementLayer from './GameSceneEstateFurniturePlacementLayer.svelte'
-  import { loadGLB } from '../../utils/gltfCache'
+  import {
+    loadEstateFurnitureModel,
+    furnitureModelDefinition,
+    estateFurnitureInteractionData,
+  } from '../../utils/estateFurnitureModels'
+  import { buildShopSignText, getShopSignStyle } from '../../utils/shop-sign'
+  import { estateSignEditor } from '../../stores/furnitureShopStore'
+  import { selectedEstateFurniture } from '../../stores/estateFurniturePlacementStore'
+  import { stopFenceMode } from '../../stores/fenceStore'
+  import { stopHouseInteraction } from '../../stores/housePlacementStore'
+  import {
+    TorchFireParticles,
+    CampfireFireParticles,
+    type FireParticles,
+  } from '../../effects/fire-particles'
   import { networkManager } from '../../network/socket'
   import { playPropSound } from '../../managers/sfxManager'
   import {
@@ -63,15 +77,34 @@
   let lastOpened: number | null = null
   const visuals = new SvelteMap<number, THREE.Group>()
   const mixers = new SvelteMap<number, THREE.AnimationMixer>()
+  const loadingModels = new SvelteSet<string>()
+  const failedModels = new SvelteSet<string>()
+  const signTexts = new SvelteMap<string, THREE.Mesh>()
+  const fires: FireParticles[] = []
+  const firePositions: THREE.Vector3[] = []
+  const torchPositions: THREE.Vector3[] = []
+  export function getFirePositions() {
+    return firePositions
+  }
+  export function getTorchPositions() {
+    return torchPositions
+  }
+  export function getGroup() {
+    return chestGroup
+  }
   const placementDefinition = $derived(
     getEstateStorageDef($estateChestMode?.item_def_id)
   )
   const placementObstacles = $derived(
     [...$estateChests.values()]
-      .filter((chest) => chest.floor_level === $playerVisualFloorLevel)
+      .filter(
+        (chest) =>
+          chest.floor_level === $playerVisualFloorLevel &&
+          chest.id !== movingFurnitureId
+      )
       .flatMap((chest) => {
         const definition = getEstateStorageDef(chest.item_def_id)
-        return definition
+        return definition?.solid
           ? [
               {
                 x: chest.position.x,
@@ -82,6 +115,11 @@
             ]
           : []
       })
+  )
+  const movingFurnitureId = $derived(
+    $estateChestMode?.kind === 'move'
+      ? $estateChestMode.furniture.id
+      : undefined
   )
 
   function setPointer(clientX: number, clientY: number) {
@@ -106,13 +144,47 @@
     const source = sources.get(chest.item_def_id)
     if (!source || !player) return
     const visual = source.scene.clone(true)
+    const definition = getEstateStorageDef(chest.item_def_id)
+    const model = furnitureModelDefinition(definition?.modelId)
+    if (chest.text && model?.procedural === 'shopSign') {
+      const style = getShopSignStyle(model.shopSignStyle)
+      const key = `${chest.item_def_id}:${chest.text}`
+      let text = signTexts.get(key)
+      if (!text) {
+        text = buildShopSignText(chest.text, style.board, style.text)
+        signTexts.set(key, text)
+      }
+      visual.add(text.clone())
+    }
+    if (chest.text && model?.procedural !== 'shopSign')
+      visual.userData.objectText = chest.text
     visual.userData.estateChestId = chest.id
+    Object.assign(visual.userData, estateFurnitureInteractionData(chest))
     visual.position.set(
       unwrapWorldXNear(player.position.x, chest.position.x),
       chest.position.y,
       chest.position.z
     )
     visual.rotation.y = THREE.MathUtils.degToRad(chest.rotation_deg)
+    if (model?.fire) {
+      const fire =
+        model.fireKind === 'torch'
+          ? new TorchFireParticles()
+          : new CampfireFireParticles()
+      const position = new THREE.Vector3(
+        model.fire.x,
+        model.fire.y,
+        model.fire.z
+      )
+        .applyEuler(visual.rotation)
+        .add(visual.position)
+      fire.setOrigin(position)
+      group.add(fire.group)
+      fires.push(fire)
+      ;(model.fireKind === 'torch' ? torchPositions : firePositions).push(
+        position
+      )
+    }
     visual.traverse((object) => {
       if (object instanceof THREE.Mesh) {
         object.castShadow = true
@@ -121,7 +193,8 @@
     })
     chestGroup.add(visual)
     visuals.set(chest.id, visual)
-    mixers.set(chest.id, new THREE.AnimationMixer(visual))
+    if (source.clips.length)
+      mixers.set(chest.id, new THREE.AnimationMixer(visual))
   }
 
   function rebuild() {
@@ -139,6 +212,13 @@
     lastWrapX = player.position.x
     lastFloorLevel = floorLevel
     chestGroup.clear()
+    for (const fire of fires) {
+      group.remove(fire.group)
+      fire.dispose()
+    }
+    fires.length = 0
+    firePositions.length = 0
+    torchPositions.length = 0
     visuals.clear()
     mixers.clear()
     for (const chest of current.values()) {
@@ -151,12 +231,22 @@
     if (!mode || !getEstateStorageDef(mode.item_def_id)) return
     estateChestPending.set(true)
     estateChestError.set(null)
-    networkManager.sendPlaceEstateChest(
-      mode.instance_id,
-      placement.position,
-      placement.rotationDeg,
-      placement.floorLevel
-    )
+    if (mode.kind === 'move') {
+      networkManager.sendMoveEstateFurniture(
+        mode.furniture.id,
+        mode.furniture.revision,
+        placement.position,
+        placement.rotationDeg,
+        placement.floorLevel
+      )
+    } else {
+      networkManager.sendPlaceEstateChest(
+        mode.instance_id,
+        placement.position,
+        placement.rotationDeg,
+        placement.floorLevel
+      )
+    }
   }
 
   function playOpen(chestId: number) {
@@ -192,29 +282,41 @@
     action.play()
   }
 
-  onMount(() => {
-    for (const definition of estateStorageDefs.values()) {
-      loadGLB(definition.modelUrl)
-        .then((gltf) => {
-          if (disposed) return
-          sources.set(definition.itemDefId, {
-            scene: gltf.scene,
-            clips: gltf.animations,
-          })
-          lastChests = null
-          rebuild()
+  function loadModel(itemDefId: string) {
+    const definition = estateStorageDefs.get(itemDefId)
+    if (
+      !definition ||
+      sources.has(itemDefId) ||
+      loadingModels.has(itemDefId) ||
+      failedModels.has(itemDefId)
+    )
+      return
+    loadingModels.add(itemDefId)
+    loadEstateFurnitureModel(definition)
+      .then((gltf) => {
+        if (disposed) return
+        sources.set(definition.itemDefId, {
+          scene: gltf.scene,
+          clips: gltf.animations,
         })
-        .catch((error) => {
-          console.error(
-            `Failed to load estate storage chest ${definition.itemDefId}:`,
-            error
-          )
-          estateChestError.set(
-            'Could not load the chest model. Reload to try again.'
-          )
-        })
-    }
+        lastChests = null
+        rebuild()
+      })
+      .catch((error) => {
+        if (disposed) return
+        failedModels.add(itemDefId)
+        console.error(
+          `Failed to load estate furniture ${definition.itemDefId}:`,
+          error
+        )
+        estateChestError.set(
+          'Could not load the furniture model. Reload to try again.'
+        )
+      })
+      .finally(() => loadingModels.delete(itemDefId))
+  }
 
+  onMount(() => {
     const canvas = renderer.domElement
     const click = (event: MouseEvent) => {
       if (
@@ -231,6 +333,12 @@
       const hit = raycaster.intersectObject(chestGroup, true)[0]
       const chest = hit && chestFromHit(hit)
       if (
+        event.button === 0 &&
+        chest &&
+        estateFurnitureInteractionData(chest).objectInteraction
+      )
+        return
+      if (
         !chest ||
         chest.floor_level !== get(playerVisualFloorLevel) ||
         Math.hypot(
@@ -242,20 +350,57 @@
         return
       event.preventDefault()
       event.stopImmediatePropagation()
-      if (event.button === 0) networkManager.sendOpenEstateChest(chest.id)
-      else networkManager.sendRecoverEstateChest(chest.id)
+      const definition = getEstateStorageDef(chest.item_def_id)
+      if (event.button === 2) {
+        if (get(estateChestPending)) return
+        stopFenceMode()
+        stopHouseInteraction()
+        stopEstateChestMode()
+        openEstateChest.set(null)
+        estateSignEditor.set(null)
+        selectedEstateFurniture.set(chest)
+      } else if (definition?.textLabel) {
+        estateChestError.set(null)
+        estateSignEditor.set(chest)
+      } else if (definition?.capacityKg)
+        networkManager.sendOpenEstateChest(chest.id)
     }
     canvas.addEventListener('mousedown', click, true)
     return () => {
       disposed = true
       canvas.removeEventListener('mousedown', click, true)
+      for (const fire of fires) fire.dispose()
+      for (const text of signTexts.values()) {
+        text.geometry.dispose()
+        const materials = Array.isArray(text.material)
+          ? text.material
+          : [text.material]
+        for (const material of materials) {
+          const map = (material as THREE.MeshBasicMaterial).map
+          map?.dispose()
+          material.dispose()
+        }
+      }
       stopEstateChestMode()
     }
+  })
+
+  $effect(() => {
+    const floorLevel = $playerVisualFloorLevel
+    const itemDefIds = new Set(
+      [...$estateChests.values()]
+        .filter((chest) => chest.floor_level === floorLevel)
+        .map((chest) => chest.item_def_id)
+    )
+    untrack(() => {
+      for (const itemDefId of itemDefIds) loadModel(itemDefId)
+    })
   })
 
   useTask((delta) => {
     group.visible = get(currentDungeonDepth) < 1
     rebuild()
+    for (const fire of fires) fire.update(delta, get(camera))
     for (const mixer of mixers.values()) mixer.update(delta)
     const opened = get(openEstateChest)?.chest_id ?? null
     if (opened !== lastOpened) {
@@ -268,19 +413,22 @@
 
 <T is={group} />
 {#if placementDefinition}
-  <GameSceneEstateFurniturePlacementLayer
-    definition={placementDefinition}
-    active={$estateChestMode !== null}
-    plots={$estateChestMode?.plots ?? []}
-    pending={$estateChestPending}
-    {terrainMeshes}
-    {housingGroup}
-    {heightManager}
-    {player}
-    floorLevel={$playerVisualFloorLevel}
-    obstacles={placementObstacles}
-    onplace={place}
-    oncancel={stopEstateChestMode}
-    onerror={(message) => estateChestError.set(message)}
-  />
+  {#key `${placementDefinition.itemDefId}:${movingFurnitureId ?? 'new'}`}
+    <GameSceneEstateFurniturePlacementLayer
+      definition={placementDefinition}
+      plots={$estateChestMode?.plots ?? []}
+      pending={$estateChestPending}
+      {terrainMeshes}
+      {housingGroup}
+      furnitureGroup={chestGroup}
+      ignoreFurnitureId={movingFurnitureId}
+      {heightManager}
+      {player}
+      floorLevel={$playerVisualFloorLevel}
+      obstacles={placementObstacles}
+      onplace={place}
+      oncancel={stopEstateChestMode}
+      onerror={(message) => estateChestError.set(message)}
+    />
+  {/key}
 {/if}

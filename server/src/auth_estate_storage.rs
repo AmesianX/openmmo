@@ -40,6 +40,37 @@ fn active_estate_at(
     .optional()
 }
 
+fn placement_estate(
+    tx: &Transaction<'_>,
+    owner_id: i64,
+    definition: &onlinerpg_shared::estate_storage::EstateStorageDefinition,
+    position: Position,
+    rotation_deg: f32,
+) -> Result<Option<i64>, rusqlite::Error> {
+    let radians = rotation_deg.to_radians();
+    let footprint = definition.footprint();
+    let mut estate_id = None;
+    for (dx, dz) in [
+        (0.0, 0.0),
+        (footprint.min_x, footprint.min_z),
+        (footprint.min_x, footprint.max_z),
+        (footprint.max_x, footprint.min_z),
+        (footprint.max_x, footprint.max_z),
+    ] {
+        let found = active_estate_at(
+            tx,
+            owner_id,
+            position.x + dx * radians.cos() + dz * radians.sin(),
+            position.z - dx * radians.sin() + dz * radians.cos(),
+        )?;
+        if found.is_none() || estate_id.is_some_and(|id| Some(id) != found) {
+            return Ok(None);
+        }
+        estate_id = found;
+    }
+    Ok(estate_id)
+}
+
 fn chest_access(
     tx: &Transaction<'_>,
     chest_id: i64,
@@ -167,6 +198,9 @@ impl AuthService {
                 [],
             )?;
         }
+        if !Self::table_columns(conn, "estate_chests")?.contains("text") {
+            conn.execute("ALTER TABLE estate_chests ADD COLUMN text TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -174,7 +208,7 @@ impl AuthService {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
             "SELECT c.id,c.estate_id,c.owner_id,c.item_def_id,c.x,c.y,c.z,c.rotation_deg,c.floor_level,
-                    COALESCE(e.missed,1)>0,c.revision
+                    COALESCE(e.missed,1)>0,c.revision,c.text
              FROM estate_chests c LEFT JOIN land_estates e ON e.id=c.estate_id",
         )?;
         let chests = stmt
@@ -193,6 +227,7 @@ impl AuthService {
                     floor_level: row.get::<_, i64>(8)? as i8,
                     overdue: row.get(9)?,
                     revision: row.get::<_, i64>(10)? as u64,
+                    text: row.get(11)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -234,33 +269,18 @@ impl AuthService {
         let Some(definition) = estate_storage_def(&item_def_id) else {
             return Ok(Err("That item is not estate storage."));
         };
-        let radians = rotation_deg.to_radians();
-        let half_x = (definition.footprint_width * radians.cos().abs()
-            + definition.footprint_depth * radians.sin().abs())
-            / 2.0;
-        let half_z = (definition.footprint_width * radians.sin().abs()
-            + definition.footprint_depth * radians.cos().abs())
-            / 2.0;
-        let mut estate_id = None;
-        for (dx, dz) in [
-            (0.0, 0.0),
-            (-half_x, -half_z),
-            (-half_x, half_z),
-            (half_x, -half_z),
-            (half_x, half_z),
-        ] {
-            let found = active_estate_at(
-                &tx,
-                character.character_id,
-                position.x + dx,
-                position.z + dz,
-            )?;
-            if found.is_none() || estate_id.is_some_and(|id| Some(id) != found) {
-                return Ok(Err("The whole chest must be inside your active estate."));
-            }
-            estate_id = found;
-        }
-        let estate_id = estate_id.expect("center sample always sets estate");
+        let Some(estate_id) = placement_estate(
+            &tx,
+            character.character_id,
+            definition,
+            position,
+            rotation_deg,
+        )?
+        else {
+            return Ok(Err(
+                "The whole furnishing must be inside your active estate.",
+            ));
+        };
         tx.execute(
             "INSERT INTO estate_chests
              (estate_id,owner_id,item_def_id,x,y,z,rotation_deg,floor_level)
@@ -290,7 +310,71 @@ impl AuthService {
             floor_level,
             overdue: false,
             revision: 0,
+            text: None,
         }))
+    }
+
+    pub fn move_estate_furniture(
+        &self,
+        furniture_id: i64,
+        owner_id: i64,
+        expected_revision: u64,
+        position: Position,
+        rotation_deg: f32,
+        floor_level: i8,
+    ) -> Result<Result<i64, &'static str>, AuthError> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some((revision, true)) = chest_access(&tx, furniture_id, owner_id)? else {
+            return Ok(Err("You can only move furniture on your active estate."));
+        };
+        if revision != expected_revision {
+            return Ok(Err("The furniture changed. Select it again."));
+        }
+        let item_def_id: String = tx.query_row(
+            "SELECT item_def_id FROM estate_chests WHERE id=?1",
+            [furniture_id],
+            |row| row.get(0),
+        )?;
+        let Some(definition) = estate_storage_def(&item_def_id) else {
+            return Ok(Err("This furniture has an unknown type."));
+        };
+        let Some(estate_id) = placement_estate(&tx, owner_id, definition, position, rotation_deg)?
+        else {
+            return Ok(Err(
+                "The whole furnishing must be inside your active estate.",
+            ));
+        };
+        tx.execute(
+            "UPDATE estate_chests SET estate_id=?2,x=?3,y=?4,z=?5,rotation_deg=?6,
+             floor_level=?7,revision=revision+1 WHERE id=?1",
+            params![
+                furniture_id,
+                estate_id,
+                position.x,
+                position.y,
+                position.z,
+                rotation_deg,
+                floor_level
+            ],
+        )?;
+        tx.commit()?;
+        Ok(Ok(estate_id))
+    }
+
+    pub fn set_estate_furniture_text(
+        &self,
+        furniture_id: i64,
+        owner_id: i64,
+        text: &str,
+    ) -> Result<bool, AuthError> {
+        let conn = self.open_connection()?;
+        Ok(conn.execute(
+            "UPDATE estate_chests SET text=?1,revision=revision+1
+             WHERE id=?2 AND owner_id=?3 AND estate_id IN
+             (SELECT id FROM land_estates WHERE owner_id=?3 AND missed=0)",
+            params![text, furniture_id, owner_id],
+        )? == 1)
     }
 
     pub fn estate_chest_state(
@@ -317,6 +401,9 @@ impl AuthService {
         let Some(definition) = estate_storage_def(&item_def_id) else {
             return Ok(Err("This storage chest has an unknown type."));
         };
+        if definition.capacity_kg == 0.0 {
+            return Ok(Err("This is decorative furniture, not a storage chest."));
+        }
         Ok(Ok(EstateChestState {
             chest_id,
             item_def_id,

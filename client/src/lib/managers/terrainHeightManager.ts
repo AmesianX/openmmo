@@ -46,6 +46,7 @@ export class TerrainHeightManager {
     dirtyOriginalTiles: new Set(),
   }
   private inflightHeightmaps = new Map<string, Promise<Uint16Array>>()
+  private geometryTiles = new WeakMap<THREE.BufferGeometry, string>()
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   private terrainApiUrl: string
   private heightChangedListeners = new Set<HeightChangedCallback>()
@@ -192,11 +193,19 @@ export class TerrainHeightManager {
     tileZ: number,
     geometry: THREE.BufferGeometry
   ) {
-    this.state.geometries.set(tileKey(tileX, tileZ), geometry)
+    const key = tileKey(tileX, tileZ)
+    const previousKey = this.geometryTiles.get(geometry)
+    if (previousKey !== undefined) this.state.geometries.delete(previousKey)
+    this.unregisterGeometry(tileX, tileZ)
+    this.state.geometries.set(key, geometry)
+    this.geometryTiles.set(geometry, key)
   }
 
   unregisterGeometry(tileX: number, tileZ: number) {
-    this.state.geometries.delete(tileKey(tileX, tileZ))
+    const key = tileKey(tileX, tileZ)
+    const geometry = this.state.geometries.get(key)
+    if (geometry) this.geometryTiles.delete(geometry)
+    this.state.geometries.delete(key)
   }
 
   applyHeightToGeometry(
@@ -204,6 +213,7 @@ export class TerrainHeightManager {
     tileZ: number,
     geometry: THREE.BufferGeometry
   ) {
+    if (this.state.geometries.get(tileKey(tileX, tileZ)) !== geometry) return
     applyHeightToGeo(this.state, tileX, tileZ, geometry)
   }
 
@@ -474,7 +484,7 @@ export class TerrainHeightManager {
     const key = tileKey(tileX, tileZ)
     this.state.heightmaps.delete(key)
     this.state.originalHeightmaps.delete(key)
-    this.state.geometries.delete(key)
+    this.unregisterGeometry(tileX, tileZ)
   }
 
   evictCachedData(tileX: number, tileZ: number) {

@@ -285,6 +285,24 @@ export type ClientMessage =
       }
     }
   | { OpenEstateChest: { chest_id: number } }
+  | { StartEstateFurnitureMove: { furniture_id: number } }
+  | {
+      MoveEstateFurniture: {
+        furniture_id: number
+        expected_revision: number
+        position: Position
+        rotation_deg: number
+        floor_level: number
+      }
+    }
+  | { SetEstateFurnitureText: { furniture_id: number; text: string } }
+  | {
+      CheckoutFurniture: {
+        items: { display_id: number; quantity: number }[]
+        expected_gold: number
+        expected_total: number
+      }
+    }
   | {
       TransferEstateItems: {
         chest_id: number
@@ -386,6 +404,7 @@ export type EstateChest = {
   floor_level: number
   overdue: boolean
   revision: number
+  text?: string | null
 }
 
 export type EstateChestState = {

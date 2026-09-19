@@ -2,14 +2,17 @@ import { get, writable } from 'svelte/store'
 import { passability_set_furniture } from '../wasm/onlinerpg_shared'
 import type { EstateChest, EstateChestState } from '../network/networkTypes'
 import { getEstateStorageDef } from '../data/estateFurnitureDefs'
+import { resetFurnitureShop } from './furnitureShopStore'
+import { estateChests } from './estateFurnitureStore'
 import {
   estateFurniturePlacementError,
   estateFurniturePlacementMode,
   estateFurniturePlacementPending,
   stopEstateFurniturePlacement,
+  selectedEstateFurniture,
 } from './estateFurniturePlacementStore'
 
-export const estateChests = writable(new Map<number, EstateChest>())
+export { estateChests }
 export const estateChestMode = estateFurniturePlacementMode
 export const estateChestPending = estateFurniturePlacementPending
 export const estateChestError = estateFurniturePlacementError
@@ -61,6 +64,12 @@ export function applyEstateChestVisibility(
   for (const chest of added) next.set(chest.id, chest)
   syncCollision(next)
   estateChests.set(next)
+  const selected = get(selectedEstateFurniture)
+  if (selected) {
+    const updated = next.get(selected.id)
+    if (updated) selectedEstateFurniture.set(updated)
+    else stopEstateFurniturePlacement()
+  }
   const opened = get(openEstateChest)
   if (opened && removed.includes(opened.chest_id)) openEstateChest.set(null)
 }
@@ -70,6 +79,7 @@ export function stopEstateChestMode() {
 }
 
 export function resetEstateStorage() {
+  resetFurnitureShop()
   for (const key of syncedBuckets)
     passability_set_furniture(`furniture:estate-storage:${key}`, [])
   syncedBuckets.clear()

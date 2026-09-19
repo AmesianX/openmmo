@@ -3,10 +3,12 @@
 ## Furniture
 
 - bed.glb https://sketchfab.com/3d-models/old-wooden-bed-frame-and-dirty-sheets-79c856755e6a44a3bcf19671e5c70d2d
+  - `client/public/items/objects/bed.png` — 기존 `bed.glb`를 Blender 5.2.0 LTS로 렌더한 ORKEA 기본 침대 아이콘 (2026-09-19). 원본: effiebop의 Old wooden bed frame and dirty sheets, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). `blender -b -P tools/blender-scripts/render_furniture_icon.py -- bed`로 투명 배경·직교 사선 구도 512²→128² 렌더.
 
 ## Objects
 
 - Shop Sign 변형 (`shop_sign_plank`, `shop_sign_oval`, `shop_sign_weathered`) — `client/src/lib/utils/shop-sign.ts`에서 생성하는 각진 판형·타원형·완만한 아치형 메시 (2026-09-06). 메시 출처: 프로젝트 자체 코드, 프로젝트와 동일 라이선스. 텍스처는 기존 Poly Haven `wood_planks`, `dark_wooden_planks`, `weathered_planks` 재사용 (CC0, 아래 House 항목). 간판 문구는 맵에디터에서 수정하며 형태에 맞춰 렌더링한다.
+  - `client/public/items/objects/shop_sign.png`, `shop_sign_plank.png`, `shop_sign_oval.png`, `shop_sign_weathered.png` — ORKEA 간판 4종 아이콘 (2026-09-19). 게임의 `buildShopSignBoard`가 만든 메시·UV와 각 스타일의 기존 Poly Haven 나무 텍스처를 그대로 사용해 Blender 5.2.0 LTS에서 투명 128² PNG로 렌더. 메시·렌더 스크립트는 프로젝트와 동일 라이선스, `wood_shutter`, `wood_planks`, `dark_wooden_planks`, `weathered_planks` 텍스처는 CC0. `node tools/export-shop-sign-icons.mjs` 실행 후 `blender -b -P tools/blender-scripts/render_furniture_icon.py -- MODEL --geometry assets/shop-sign-icons/MODEL.json --yaw -10 --tilt -80`으로 재생성한다. 간판 문구는 포함하지 않는다.
 - empty_plate.glb — Meshy AI "Sunlit Ceramic Plate" (Pro 요금제, 2026-09-02 생성, 소스 `assets/Meshy_AI_Sunlit_Ceramic_Plate_0902163541_texture.glb`). 완전 소유권·상업 OK (characters.md License 참조). 여관 테이블에서 손님이 다 먹은 접시 — `Meal.eaten`이면 클라이언트가 요리 모델 대신 이걸 그린다 (HUNGER.md "여관 식사"). Blender에서 chicken_rice.glb와 같은 지름 0.35m로 스케일 적용(0.35×0.03×0.35 W×H×D), 원점=바닥 중심, 텍스처 2048→512 축소, 검은 emissive 제거 (2026-09-03). 아이콘 없음(월드 전용)
     - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, 2026-09-03) ![원화](../images/props/empty_plate.png)
 - stone bridge https://sketchfab.com/3d-models/stone-bridge-a5d380cd08654b508b4b643056038605
@@ -15,10 +17,15 @@
 - bridge_wood_long.glb https://sketchfab.com/3d-models/wooden-bridge-deep-27b22af7020c4755b5cb788d75db8ee7
   - 2026-09-17: `tools/repack-glb-textures.py`로 base color·normal PNG를 JPEG q92 4:4:4로 변환. 1024² 해상도, 메시·UV·재질 설정·투명 충돌면은 유지. 6,519,420 → 3,651,048 bytes (44.0% 감소), 로컬 Nginx gzip level 6 전송 실측 1,795,527 bytes (원본 무압축 대비 72.5% 감소). Three.js 전체·근접 렌더 비교 및 메시 버퍼 일치 확인. 원본은 최적화 전 `assets.lock`의 SHA-256 `9a4f9a3104d22cc1d0b5eb17f4f8ef54f8aef324339577a876bc5505e7eef189`로 식별.
 - signpost.glb https://sketchfab.com/3d-models/road-sign-blacksmiths-workshop-assets-3a230f0520034890931c32539955223a
+  - `client/public/items/objects/signpost.png`, `signpost_mirrored.png` — 기존 표지판 모델과 좌우 반전 모델의 ORKEA 아이콘 (2026-09-19). 원본: Kyan0s의 Road sign - Blacksmith's workshop assets, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Blender 5.2.0 LTS, 투명 배경·직교 사선 구도 512²→128². `blender -b -P tools/blender-scripts/render_furniture_icon.py -- MODEL`로 재생성한다.
 - dungeon objects https://sketchfab.com/3d-models/fps-dungeon-extras-87425249dded42aa891516c31a5b94cf
   - `storage_chest.png` — 기존 `chest_animated.glb`의 닫힌 기본 포즈를 투명 배경의 직교 사선 구도로 렌더한 128×128 영지 보관함 아이콘 (2026-09-07). 기존 게임 모델을 그대로 사용했으며 새 외부 자산 없음
+  - `client/public/items/objects/chair.png` — 기존 `chair.glb`를 Blender 5.2.0 LTS로 렌더한 ORKEA 의자 아이콘 (2026-09-19). 원본: DJMaesen의 FPS Dungeon Extras, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). `tools/blender-scripts/render_furniture_icon.py -- chair`와 공용 `icon_render.py`로 투명 배경·직교 사선 구도 512²→128² 렌더. 의자에 임시로 연결했던 상자 아이콘을 대체한다.
+  - `client/public/items/objects/crate.png` — 기존 `crate.glb`를 Blender 5.2.0 LTS로 렌더한 ORKEA 나무 상자 아이콘 (2026-09-19). 원본: DJMaesen의 FPS Dungeon Extras, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). `blender -b -P tools/blender-scripts/render_furniture_icon.py -- crate`로 투명 배경·직교 사선 구도 512²→128² 렌더. Crate에 임시로 연결했던 보관함 아이콘을 대체한다.
+  - `client/public/items/objects/barrel.png` — 기존 `barrel.glb`를 Blender 5.2.0 LTS로 렌더한 ORKEA 나무통 아이콘 (2026-09-19). 원본: DJMaesen의 FPS Dungeon Extras, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). `blender -b -P tools/blender-scripts/render_furniture_icon.py -- barrel`로 투명 배경·직교 사선 구도 512²→128² 렌더. Barrel에 임시로 연결했던 보관함 아이콘을 대체한다.
 - coin_pile_spill.glb https://sketchfab.com/3d-models/coins-7367feabcd4c4b30a7ba64b95b76bee0 (Blender에서 수정 + 쏟아짐 애니메이션 추가; 던전 체스트가 떨어뜨리는 줍기 코인). 아이콘 `client/public/items/objects/coin_pile.png`는 이 GLB를 Blender 헤드리스로 임포트해 스필 마지막 프레임(35)에서 흩어진 코인 28개를 중앙 더미로 다시 모은 뒤 Cycles 직교 측면·위 각도 렌더 512²→128² (2026-08-13). coin_pile은 주우면 지갑으로 바로 들어가 인벤토리를 거치지 않으므로 이 아이콘이 실제로 표시되는 경로는 없음 — 완결성용
 - torch_wall.glb https://sketchfab.com/3d-models/torch-238cd6056e2940debb4f67fc24c6df35 (던전 벽에 붙이는 토치)
+  - `client/public/items/objects/torch_wall.png` — 기존 `torch_wall.glb`를 Blender 5.2.0 LTS로 렌더한 ORKEA 벽 횃불 아이콘 (2026-09-19). 원본: DJMaesen의 Torch, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). `blender -b -P tools/blender-scripts/render_furniture_icon.py -- torch_wall`로 투명 배경·직교 사선 구도 512²→128² 렌더.
 - healing potion https://sketchfab.com/3d-models/low-poly-health-potion-dca8a2144a1446fe8391f54cc5f6959e
 - scroll https://sketchfab.com/3d-models/scroll-7450e494eb654e9b937bb52724220e77 (scroll_enchant.glb는 같은 모델의 파란 봉인 변형. 소스는 ~/assets_original/scroll.blend (레포 밖 보관) — 두 머티리얼 모두 알파에 Math/ROUND 노드가 들어 있어 glTF 익스포트 시 alphaMode=MASK가 됨. 이 노드를 지우면 BLEND로 나가 봉인이 떠 보이는 문제가 재발하니 유지할 것. scroll_enchant_armor.glb는 scroll_enchant.glb의 알베도만 hue-rotation(파란 봉인 → 초록, -0.27 회전 + 명도 0.8배)해 GLB 바이너리에 되박은 초록 봉인 변형 — 메시·노멀·러프니스와 alphaMode=MASK는 그대로다, 스크립트, 2026-08-15)
 - river rock https://sketchfab.com/3d-models/river-rocks-model-2dc354c1f84a43f493343f54e05eaed9

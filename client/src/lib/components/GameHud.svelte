@@ -11,6 +11,7 @@
   import CharacterPanel from './CharacterPanel.svelte'
   import InventoryPanel from './InventoryPanel.svelte'
   import LandscapingPanel from './LandscapingPanel.svelte'
+  import FurnitureShopPanel from './FurnitureShopPanel.svelte'
   import EstateStorageWindow from './EstateStorageWindow.svelte'
   import QuickslotBar from './QuickslotBar.svelte'
   import HungerIndicator from './HungerIndicator.svelte'
@@ -156,6 +157,7 @@
 </script>
 
 <LandscapingPanel />
+<FurnitureShopPanel />
 
 <div class="game-hud" style:--cluster-width="{clusterWidth}px">
   <ServerNotice />

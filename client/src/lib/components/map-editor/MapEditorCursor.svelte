@@ -57,6 +57,7 @@
   import { housingManager } from '../../managers/housingManager'
   import { playerVisualFloorLevel } from '../../stores/housingStore'
   import { floorYBase, DEFAULT_WALL_HEIGHT } from '../../utils/house-geo-utils'
+  import { isTypingTarget } from '../../utils/dom'
   import { TERRAIN_TILE_SIZE } from '../game-scene/terrain-utils'
   import { ORTHOGRAPHIC_FRUSTUM_HEIGHT } from '../game-scene/camera-utils'
   import { get } from 'svelte/store'
@@ -851,6 +852,7 @@
   }
 
   function handleKeyDown(event: KeyboardEvent) {
+    if (isTypingTarget(event.target)) return
     if (event.key === 'Shift') {
       shiftHeld = true
       syncBrushMode()

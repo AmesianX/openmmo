@@ -1,4 +1,8 @@
 import { MathUtils } from 'three'
+import { get } from 'svelte/store'
+import { estateChests } from '../stores/estateFurnitureStore'
+import { getEstateStorageDef } from '../data/estateFurnitureDefs'
+import { unwrapWorldXNear } from '../terrain/world-wrap'
 import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
 import type {
   ObjectDef,
@@ -276,6 +280,21 @@ export class ObjectManager {
     wz: number,
     objectId?: number | null
   ): ObjectPlacement | null {
+    const estateDefinition = getEstateStorageDef(objectType)
+    if (estateDefinition) {
+      const chest =
+        objectId == null ? undefined : get(estateChests).get(objectId)
+      if (!chest || chest.item_def_id !== objectType) return null
+      return {
+        id: chest.id,
+        type: estateDefinition.modelId,
+        x: unwrapWorldXNear(wx, chest.position.x),
+        y: chest.position.y,
+        z: chest.position.z,
+        rotation: chest.rotation_deg,
+        floorLevel: chest.floor_level,
+      }
+    }
     let best: ObjectPlacement | null = null
     let bestDist = Infinity
     for (const region of this.cache.values()) {
@@ -310,7 +329,9 @@ export class ObjectManager {
       this.fetchCatalog(),
       this.findNearestPlacementAsync(objectType, wx, wz, objectId),
     ])
-    const def = this.getCatalogEntry(placement?.type ?? objectType)
+    const def = this.getCatalogEntry(
+      placement?.type ?? getEstateStorageDef(objectType)?.modelId ?? objectType
+    )
     return {
       anim: def?.interaction ?? objectType,
       interactOffset: def?.interactOffset,
@@ -325,6 +346,8 @@ export class ObjectManager {
     wz: number,
     objectId?: number | null
   ): Promise<ObjectPlacement | null> {
+    if (getEstateStorageDef(objectType))
+      return this.findNearestPlacement(objectType, wx, wz, objectId)
     // Ensure the region containing this position is loaded
     const tileX = Math.floor(wx / TERRAIN_TILE_SIZE)
     const tileZ = Math.floor(wz / TERRAIN_TILE_SIZE)

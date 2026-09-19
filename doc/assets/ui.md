@@ -2,6 +2,7 @@
 
 ## Icon
 
+- ORKEA cart remove icon — [Heroicons v2.2.0, 24px outline `trash`](https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/24/outline/trash.svg), Tailwind Labs, Inc.; MIT license, added 2026-09-19. Inline SVG in `FurnitureBasket.svelte`, white with a transparent background. License included at `client/public/licenses/heroicons-MIT.txt`.
 - https://icon-sets.iconify.design/fa6-solid/people-group/
 - https://icon-sets.iconify.design/icon-park-solid/backpack/
 - https://icon-sets.iconify.design/fa6-solid/handshake-simple/ — social corner button in GameHud.svelte
