@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { Agent } from 'node:https'
 import { execSync } from 'node:child_process'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import wasm from 'vite-plugin-wasm'
 // @ts-expect-error no type declarations for .mjs
@@ -17,6 +17,42 @@ function gitShortHash(): string {
       .trim()
   } catch {
     return 'unknown'
+  }
+}
+
+function landOwnershipPreview(): Plugin {
+  const snapshot = new URL(
+    '../data/land-ownership-preview.json',
+    import.meta.url
+  )
+  return {
+    name: 'land-ownership-preview',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (
+          req.method !== 'GET' ||
+          req.url?.split('?')[0] !== '/api/terrain/land-ownership'
+        ) {
+          next()
+          return
+        }
+        fs.readFile(snapshot, (error, data) => {
+          if (error?.code === 'ENOENT') {
+            next()
+            return
+          }
+          if (error) {
+            next(error)
+            return
+          }
+          res.setHeader('Content-Type', 'application/json')
+          res.setHeader('Cache-Control', 'no-store')
+          res.setHeader('X-Land-Ownership-Source', 'local-preview')
+          res.end(data)
+        })
+      })
+    },
   }
 }
 
@@ -69,7 +105,7 @@ export default defineConfig(({ mode }) => {
   }+${gitShortHash()}`
 
   return {
-    plugins: [monsterCsvPlugin(), wasm(), svelte()],
+    plugins: [landOwnershipPreview(), monsterCsvPlugin(), wasm(), svelte()],
     define: { __APP_VERSION__: JSON.stringify(appVersion) },
     server: {
       host: true,

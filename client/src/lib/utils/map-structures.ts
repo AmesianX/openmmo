@@ -3,6 +3,7 @@ import type { HouseMapFootprint } from '../types/housing'
 import { unwrapWorldXNear } from '../terrain/world-wrap'
 import { LAND_PLOT_SIZE, REGION_SIZE } from '../terrain/terrain-constants'
 import { LandGrade, plotOrigin, REGION_PLOTS } from '../terrain/landPlots'
+import { OWN_LAND_COLOR } from './landPlotColors'
 
 /** Map rotation so screen-up matches walking up (tracks the camera's initial yaw). */
 export const MAP_ROTATE_ANGLE = -Math.PI / 4
@@ -72,6 +73,7 @@ export function drawLandPlotCells(
   ctx: CanvasRenderingContext2D,
   regions: LandGradeRegion[],
   transform: MapCanvasTransform,
+  ownerColors: ReadonlyMap<string, string>,
   playerName: string | null = null
 ) {
   if (!plotsLegible(transform.scale)) return
@@ -88,8 +90,8 @@ export function drawLandPlotCells(
       if (owner !== undefined) {
         fill =
           owner === playerName
-            ? 'rgba(64, 196, 96, 0.5)'
-            : 'rgba(220, 64, 64, 0.5)'
+            ? OWN_LAND_COLOR
+            : (ownerColors.get(owner) ?? null)
       }
       if (!fill) continue
       if (fill !== fillStyle) ctx.fillStyle = fillStyle = fill

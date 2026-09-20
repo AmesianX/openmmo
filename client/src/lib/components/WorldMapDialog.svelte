@@ -116,6 +116,7 @@
     type OwnedLandPlot,
   } from '../terrain/landPlots'
   import { regionKey } from '../terrain/terrain-constants'
+  import { buildLandOwnerColors } from '../utils/landPlotColors'
   import { getTerrainApiUrl } from '../utils/networkUtils'
   import SelfMarker from './SelfMarker.svelte'
 
@@ -172,6 +173,7 @@
       : 'Set a destination while outdoors.'
   })
   let ownedPlots = $state<OwnedLandPlot[]>([])
+  const landOwnerColors = $derived(buildLandOwnerColors(ownedPlots))
   const ownersByRegion = $derived.by(() => {
     const regions = new SvelteMap<string, Map<number, string>>()
     for (const plot of ownedPlots) {
@@ -290,6 +292,7 @@
     const houses = $houseMapFootprints
     const landGrid = $landPlotsVisible
     const ownership = ownersByRegion
+    const ownerColors = landOwnerColors
     const playerName = currentPlayerName
     void $landGradeVersion
     const cw = containerW
@@ -438,7 +441,13 @@
         scale,
       }
       if (landGrid) {
-        drawLandPlotCells(atlasCtx, gradeRegions, atlasTransform, playerName)
+        drawLandPlotCells(
+          atlasCtx,
+          gradeRegions,
+          atlasTransform,
+          ownerColors,
+          playerName
+        )
         drawLandPlotGrid(atlasCtx, expandedViewWorldSize, atlasTransform)
       }
       drawHouseMapFootprints(atlasCtx, houses, atlasTransform)

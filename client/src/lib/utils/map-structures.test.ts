@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { drawLandPlotCells, drawLandPlotGrid } from './map-structures'
+import { buildLandOwnerColors, OWN_LAND_COLOR } from './landPlotColors'
 import {
   LandGrade,
   plotAddress,
@@ -75,7 +76,12 @@ describe('drawLandPlotGrid', () => {
     const grades = new Uint8Array(REGION_PLOTS).fill(LandGrade.Homestead)
     const addr = plotAddress(1000, 500)
     grades[addr.index] = LandGrade.Crown
-    drawLandPlotCells(ctx, [{ rx: addr.rx, rz: addr.rz, grades }], transform)
+    drawLandPlotCells(
+      ctx,
+      [{ rx: addr.rx, rz: addr.rz, grades }],
+      transform,
+      new Map()
+    )
     const o = plotOrigin(addr.rx, addr.rz, addr.index)
     expect(rects).toEqual([[o.x, o.z, 32, 32]])
   })
@@ -94,6 +100,11 @@ describe('drawLandPlotGrid', () => {
     grades[0] = LandGrade.Crown
     grades[1] = LandGrade.Reserved
     grades[2] = LandGrade.Crown
+    const ownerColors = buildLandOwnerColors([
+      { rx: 0, rz: 0, index: 0, ownerName: 'Alice' },
+      { rx: 0, rz: 0, index: 1, ownerName: 'Bob' },
+      { rx: 1, rz: 0, index: 0, ownerName: 'Alice' },
+    ])
     drawLandPlotCells(
       ctx as unknown as CanvasRenderingContext2D,
       [
@@ -109,13 +120,41 @@ describe('drawLandPlotGrid', () => {
         { rx: 1, rz: 0, grades: null, owners: new Map([[0, 'Alice']]) },
       ],
       transform,
+      ownerColors,
       'Alice'
     )
     expect(fills).toEqual([
-      'rgba(64, 196, 96, 0.5)',
-      'rgba(220, 64, 64, 0.5)',
+      OWN_LAND_COLOR,
+      ownerColors.get('Bob'),
       'rgba(255, 196, 64, 0.5)',
-      'rgba(64, 196, 96, 0.5)',
+      OWN_LAND_COLOR,
     ])
+  })
+
+  it('preserves owner colors when the viewport contains only part of their land', () => {
+    const ownerColors = buildLandOwnerColors([
+      { rx: 0, rz: 0, index: 0, ownerName: 'Alice' },
+      { rx: 0, rz: 0, index: 1, ownerName: 'Bob' },
+      { rx: 1, rz: 0, index: 0, ownerName: 'Alice' },
+    ])
+    const fills: string[] = []
+    const ctx = {
+      save() {},
+      restore() {},
+      fillStyle: '',
+      fillRect() {
+        fills.push(this.fillStyle)
+      },
+    }
+    for (const rx of [0, 1]) {
+      drawLandPlotCells(
+        ctx as unknown as CanvasRenderingContext2D,
+        [{ rx, rz: 0, grades: null, owners: new Map([[0, 'Alice']]) }],
+        { ...transform, centerX: rx * 1024 },
+        ownerColors
+      )
+    }
+    expect(fills).toEqual([ownerColors.get('Alice'), ownerColors.get('Alice')])
+    expect(fills[0]).not.toBe(OWN_LAND_COLOR)
   })
 })
