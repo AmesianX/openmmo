@@ -22,6 +22,7 @@ const ENDPOINTS: &[&str] = &[
     "combat-audit-targets",
     "network",
     "asset-traffic",
+    "hardware",
 ];
 
 fn claims() -> Value {
@@ -57,6 +58,7 @@ async fn serve(access: AuthContext) -> (String, tokio::task::JoinHandle<()>) {
             access_log: None,
             interval_seconds: 60,
         }),
+        crate::hardware::HardwareMetrics::default(),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/api/metrics", listener.local_addr().unwrap());

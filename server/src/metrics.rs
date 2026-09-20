@@ -441,10 +441,12 @@ pub fn metrics_router(
     access: Arc<crate::connection::AuthContext>,
     tales_ledger: std::path::PathBuf,
     traffic: crate::traffic::TrafficMetrics,
+    hardware: crate::hardware::HardwareMetrics,
 ) -> Router {
     metrics_routes(game, auth)
         .merge(heroic_tales::router(tales_ledger))
         .merge(traffic.router())
+        .merge(hardware.router())
         .route(
             "/api/metrics/session",
             get(|| async { StatusCode::NO_CONTENT }),

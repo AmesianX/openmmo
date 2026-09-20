@@ -12,6 +12,7 @@ mod dungeon_defs;
 mod game;
 mod game_state;
 mod google_auth;
+mod hardware;
 mod housing;
 mod item_defs;
 mod land_grades;
@@ -556,6 +557,8 @@ async fn main() -> ExitCode {
     let (drain_shutdown_tx, drain_shutdown) = watch::channel(());
     let (connection_shutdown_tx, connection_shutdown) = watch::channel(());
     let mut background = JoinSet::new();
+    let hardware = hardware::HardwareMetrics::default();
+    background.spawn(hardware.clone().run(drain_shutdown.clone()));
     let traffic = traffic::TrafficMetrics::new(traffic::Config {
         path: args.state_dir.join("network_metrics.db"),
         interface: optional_value(args.network_interface.as_deref()).map(str::to_owned),
@@ -810,6 +813,7 @@ async fn main() -> ExitCode {
         Arc::clone(&auth_ctx),
         args.tales_ledger,
         traffic,
+        hardware,
     ))
     .layer(axum::middleware::from_fn_with_state(
         Arc::clone(&auth_ctx),
