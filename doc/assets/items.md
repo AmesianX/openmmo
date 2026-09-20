@@ -13,11 +13,11 @@
 
 - `client/public/models/objects/stethoscope.glb` / `client/public/items/objects/stethoscope.png` — Meshy.ai **Premium** 등급(프로젝트의 사용자 확인 기록), Image to 3D API, 2026-09-20. [Meshy 유료 생성물 이용 조건](https://help.meshy.ai/en/articles/10137554-what-is-the-ownership-of-the-generated-models) 적용.
   - 위 `stethoscope-meshy-input.png`로 `meshy-7.1`, triangle, **4,000 폴리곤 목표**, PBR 2048², `image_enhancement=false`로 생성. 결과 **4,057 triangles**를 Blender에서 감량 없이 보존했다. 작업 ID `01a0bec3-d0aa-7536-ac71-74632ebcfe9f`.
-  - 원본: `assets/stethoscope/meshy-4000-v2/stethoscope_meshy.glb`. 작업 파일: `assets/stethoscope/stethoscope.blend`. [생성·가공·검증 기록](stethoscope-model.json).
+  - 원본: `assets/stethoscope/meshy-4000-v2/stethoscope_meshy.glb`. 작업 파일: `assets/stethoscope/stethoscope.blend`. 상세 [생성·가공·검증 기록](https://huggingface.co/datasets/jake-song-openmmo/onlinerpg-assets/blob/6d4e586983cb6c74953276a3975799d856807a8a/assets/stethoscope/meshy-4000-v2/generation.json)은 원본과 함께 Hugging Face에서 관리한다.
   - Blender 5.2.0 LTS에서 X −90°로 눕혀 긴 변 0.45m, **0.396×0.035×0.450m (W×H×D)**로 맞췄다. 기존 단검(0.42m)·벨트(0.40m)와 비교한 바닥 소지품 크기다. 원점은 바닥 중심, 회전·스케일 적용, emissive 제거, base color·normal·metallic/roughness 3장 **512² WebP q90**, GLB **407,804 bytes**.
-  - 아이콘은 같은 메시를 Cycles 직교 사선 구도로 512² 렌더한 뒤 **128² RGBA**로 축소했다. 아이콘 회전 `(24, −8, −18)°`, 노출 `−0.5`. `assets/stethoscope/stethoscope-render.png`에 큰 렌더, `ground-preview.png`에 기존 벨트와의 바닥 크기 비교를 보관한다.
+  - 아이콘은 같은 메시를 Cycles 직교 사선 구도로 512² 렌더한 뒤 **128² RGBA**로 축소했다. 아이콘 회전 `(24, −8, −18)°`, 노출 `−0.5`. 중간 렌더·검토 이미지와 로그는 정리했으며, 원본 GLB·PBR 텍스처·Blender 파일과 생성·검증 기록을 보존한다.
   - 재생성: `blender -b --python-exit-code 1 -P tools/blender-scripts/export_item_asset.py -- --source assets/stethoscope/meshy-4000-v2/stethoscope_meshy.glb --name stethoscope --size 0.45 --rotation -90 0 0 --icon-rotation 24 -8 -18 --exposure -0.5`
-  - **[미사용]** `assets/stethoscope/unused-6000/`의 첫 생성(6,000 목표)과 `meshy-4000/`의 첫 4,000 목표 생성(관 연결 오류)은 최종 원본으로 사용하지 않는다. 생성 3회 각 30크레딧, 총 90크레딧; 작업별 기록은 위 JSON에 보존한다.
+  - **[미사용]** 첫 6,000 목표 생성 원본과 관 연결 오류가 있는 첫 4,000 목표 생성 원본·Blender 검토본은 2026-09-21에 삭제했다. 생성 3회 각 30크레딧, 총 90크레딧; 작업 ID와 생성 이력은 위 JSON에 보존한다.
   - `data-src/items.csv`에 `stethoscope` / `Stethoscope`로 등록했다(2026-09-20). category `tool`, material `metal`, 무게 0.5kg, 기준 가격 1,000 copper, 목 슬롯(`neck`) 장착·중첩 불가·비소모성(`consumable=false`). 가방에서 더블클릭하면 장착하며, [청진 스킬](../abilities/AUSCULTATION.md)을 퀵슬롯에서 실행한 뒤 대상을 좌클릭해 조사한다. 스킬 아이콘도 같은 청진기 아이콘을 사용한다.
 
 ## Item models
