@@ -332,46 +332,41 @@ class NetworkManager {
       this.reconnectTimer = null
       monsterManager.reset()
       remotePlayerManager.reset()
-      // The old connection's party died with it server-side (disconnect =
-      // leave); a rejoin into an empty area sends no GameState snapshot.
+      // Disconnect leaves the party; an empty area may send no new snapshot.
       resetPartyStores()
-      // Friendships survive, but the roster and presence arrive fresh with
-      // the rejoin — until then everything on hand is stale.
+      // Refresh the friend roster and presence after rejoining.
       resetFriendStores()
-      // A disconnect drops any open trade server-side, so the window must
-      // not survive the reconnect either.
+      // Disconnect cancels any open trade.
       resetPlayerTrade()
       this.connect()
       const googleIdToken = getApiAuthToken()
-      if (googleIdToken && this.lastCharacterId) {
-        const opened = await this.waitForSocketOpen(5000)
-        if (opened) {
-          this.authenticateWithGoogle(googleIdToken)
-          let unsubSuccess = () => {}
-          let unsubError = () => {}
-          const cleanup = () => {
-            unsubSuccess()
-            unsubError()
-          }
-          unsubSuccess = this.authSuccess.on(() => {
-            cleanup()
-            if (this.lastCharacterId) {
-              this.sendAndSerialize({
-                EnterGame: { character_id: this.lastCharacterId },
-              })
-            }
-          })
-          // A cached Google ID token expires ~1h after login, so a reconnect
-          // past that point fails re-auth. Surface it instead of leaving the
-          // player silently stuck on an authenticated-but-empty socket.
-          unsubError = this.authError.on((message) => {
-            cleanup()
-            console.warn('Reconnect auth failed:', message)
-            this.disconnect()
-            this.kicked.emit('Your session expired. Please sign in again.')
+      if (!googleIdToken) return
+
+      const opened = await this.waitForSocketOpen(5000)
+      if (!opened) return
+
+      this.authenticateWithGoogle(googleIdToken)
+      let unsubSuccess = () => {}
+      let unsubError = () => {}
+      const cleanup = () => {
+        unsubSuccess()
+        unsubError()
+      }
+      unsubSuccess = this.authSuccess.on(() => {
+        cleanup()
+        if (this.lastCharacterId) {
+          this.sendAndSerialize({
+            EnterGame: { character_id: this.lastCharacterId },
           })
         }
-      }
+      })
+      // Prompt for sign-in when the cached token is no longer valid.
+      unsubError = this.authError.on((message) => {
+        cleanup()
+        console.warn('Reconnect auth failed:', message)
+        this.disconnect()
+        this.kicked.emit('Your session expired. Please sign in again.')
+      })
     }, delay)
   }
 
