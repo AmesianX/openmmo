@@ -1510,10 +1510,11 @@ async fn handle_client_message(
         ClientMessage::UseAbility {
             ability,
             monster_id,
+            target_player_id,
         } => {
             if let Some(id) = &state.player_id {
                 game_state
-                    .use_targeted_ability(id, ability, monster_id.as_deref())
+                    .use_targeted_ability(id, ability, monster_id.as_deref(), target_player_id)
                     .await;
             }
         }

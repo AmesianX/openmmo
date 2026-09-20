@@ -1,0 +1,143 @@
+{
+  "name": "stethoscope",
+  "generation_date": "2026-09-20",
+  "service": "Meshy Image to 3D API",
+  "tier": "Premium (user-confirmed in project asset records)",
+  "input_image": "doc/images/items/stethoscope-meshy-input.png",
+  "input_sha256": "97c08aae99703e549cc45e779052fb3a53c812c23332c52f219424c259b19012",
+  "task_id": "01a0bec3-d0aa-7536-ac71-74632ebcfe9f",
+  "request": {
+    "ai_model": "meshy-7.1",
+    "model_type": "standard",
+    "should_remesh": true,
+    "topology": "triangle",
+    "target_polycount": 4000,
+    "should_texture": true,
+    "enable_pbr": true,
+    "texture_resolution": "2k",
+    "image_enhancement": false,
+    "target_formats": [
+      "glb"
+    ]
+  },
+  "source_glb": "assets/stethoscope/meshy-4000-v2/stethoscope_meshy.glb",
+  "license_url": "https://help.meshy.ai/en/articles/10137554-what-is-the-ownership-of-the-generated-models",
+  "api_documentation": "https://docs.meshy.ai/en/api/image-to-3d",
+  "blender_version": "5.2.0 LTS",
+  "export_command": [
+    "blender",
+    "-b",
+    "--python-exit-code",
+    "1",
+    "-P",
+    "tools/blender-scripts/export_item_asset.py",
+    "--",
+    "--source",
+    "assets/stethoscope/meshy-4000-v2/stethoscope_meshy.glb",
+    "--name",
+    "stethoscope",
+    "--size",
+    "0.45",
+    "--rotation",
+    "-90",
+    "0",
+    "0",
+    "--icon-rotation",
+    "24",
+    "-8",
+    "-18",
+    "--exposure",
+    "-0.5"
+  ],
+  "validation": {
+    "source_triangles": 4057,
+    "final_triangles": 4057,
+    "blender_decimation": false,
+    "dimensions_world_xyz_m": [
+      0.3962462246417999,
+      0.035242751240730286,
+      0.44999998807907104
+    ],
+    "floor_y": 0.0,
+    "textures": [
+      {
+        "mime_type": "image/webp",
+        "size": [
+          512,
+          512
+        ]
+      },
+      {
+        "mime_type": "image/webp",
+        "size": [
+          512,
+          512
+        ]
+      },
+      {
+        "mime_type": "image/webp",
+        "size": [
+          512,
+          512
+        ]
+      }
+    ],
+    "icon_size": [
+      128,
+      128
+    ],
+    "icon_alpha_bounds": [
+      31,
+      11,
+      107,
+      112
+    ],
+    "files": [
+      {
+        "path": "assets/stethoscope/meshy-4000-v2/stethoscope_meshy.glb",
+        "bytes": 10937784,
+        "sha256": "a6a68a28bde47ad671dfdfeaee62d8c4fb91d3257f9e7e4aba6f3544b2899951"
+      },
+      {
+        "path": "client/public/models/objects/stethoscope.glb",
+        "bytes": 407804,
+        "sha256": "8bc111297c08c4945bce1ae1b03a5598d42c8451d44cea2b52309303b01f5358"
+      },
+      {
+        "path": "client/public/items/objects/stethoscope.png",
+        "bytes": 7724,
+        "sha256": "03f0fc41b2795b743dc0468cd12a9e25e7da4b25ffc2be43eb060b65b14df950"
+      },
+      {
+        "path": "assets/stethoscope/stethoscope.blend",
+        "bytes": 1654309,
+        "sha256": "1279828609eb324543d3ee0db212dcb9c4e89b789f4dc157567a12a592fa65dc"
+      }
+    ]
+  },
+  "generation_history": [
+    {
+      "task_id": "01a0beb6-f629-72a6-9e3c-cc26567ae300",
+      "target_polycount": 6000,
+      "consumed_credits": 30,
+      "usage": "unused: superseded by the user-requested 4000-polygon generation",
+      "record": "assets/stethoscope/unused-6000/generation.json"
+    },
+    {
+      "task_id": "01a0beba-35f7-7090-80ef-373e29e1fbf4",
+      "target_polycount": 4000,
+      "consumed_credits": 30,
+      "usage": "unused: incorrect tube-to-chestpiece connection",
+      "record": "assets/stethoscope/meshy-4000/generation.json"
+    },
+    {
+      "task_id": "01a0bec3-d0aa-7536-ac71-74632ebcfe9f",
+      "target_polycount": 4000,
+      "consumed_credits": 30,
+      "usage": "selected: clear tube layout, final game asset source",
+      "record": "assets/stethoscope/meshy-4000-v2/generation.json"
+    }
+  ],
+  "total_meshy_credits": 90,
+  "runtime_item_registration": "Registered as stethoscope in data-src/items.csv with icon and worldModel. Tool; weight 0.5 kg; basePrice 1000 copper; equipped in the neck slot; not stackable. Enables the Auscultation skill while equipped; consumable=false."
+}

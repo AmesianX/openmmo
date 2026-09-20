@@ -1,6 +1,7 @@
 <script lang="ts">
   import ItemLockButton from './ItemLockButton.svelte'
   import SkillIcon from './SkillIcon.svelte'
+  import { EQUIP_SLOT_LABELS } from '../data/equipSlots'
   import { ABILITIES, isAbilityAvailable } from '../data/abilities'
   import {
     inventoryStore,
@@ -124,23 +125,6 @@
     const start = skill_xp_for_level(progress.level)
     const next = skill_xp_for_level(progress.level + 1)
     return Math.min(100, ((progress.xp - start) / (next - start)) * 100)
-  }
-
-  const EQUIP_SLOT_LABELS: Record<EquipSlot, string> = {
-    head: 'Head',
-    main_hand: 'Main Hand',
-    off_hand: 'Off Hand',
-    chest: 'Chest',
-    ear: 'Ear',
-    neck: 'Neck',
-    belt: 'Belt',
-    pants: 'Pants',
-    boots: 'Boots',
-    ring: 'Ring R',
-    ring_left: 'Ring L',
-    hands: 'Hands',
-    back: 'Back',
-    shirt: 'Shirt',
   }
 
   // null = wire slot without a panel cell yet (shirt until its items ship)

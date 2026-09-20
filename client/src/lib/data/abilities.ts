@@ -69,7 +69,9 @@ export const TRUE_AIM = {
 } as const
 
 export const BUFF_ABILITIES = [GUARDIAN_WARD, RADIANCE, TRUE_AIM] as const
-export type AbilityId = (typeof BUFF_ABILITIES)[number]['id']
+export type AbilityId =
+  | (typeof BUFF_ABILITIES)[number]['id']
+  | typeof AUSCULTATION.id
 export type AbilityTimer = {
   ability: AbilityId | typeof DAGGER_SKILL.clip
   remaining_ms: number
@@ -92,11 +94,32 @@ export const DOUBLE_SLASH = {
   ],
 } as const
 
+export const AUSCULTATION = {
+  id: 'auscultation',
+  name: 'Auscultation',
+  icon: '/items/objects/stethoscope.png',
+  get manaCost() {
+    return ability_mana_cost('auscultation')
+  },
+  description: 'Examine a nearby player or monster with your stethoscope.',
+  stats: [
+    { label: 'Equipment', value: 'Stethoscope (Neck)' },
+    { label: 'Range', value: '2 m' },
+    { label: 'Cost', value: '0 MP' },
+    { label: 'Cooldown', value: '0.8 s' },
+  ],
+  details: [
+    'Activate, then left-click a target. Press Escape to cancel.',
+    'Shows level, HP, guard and equipped items. No training required.',
+  ],
+} as const
+
 export const ABILITIES = [
   GUARDIAN_WARD,
   DOUBLE_SLASH,
   RADIANCE,
   TRUE_AIM,
+  AUSCULTATION,
 ] as const
 
 export function isAbilityAvailable(
@@ -104,6 +127,7 @@ export function isAbilityAvailable(
   characterClass: CharacterClass | undefined
 ) {
   return (
+    id === AUSCULTATION.id ||
     (id === DOUBLE_SLASH.id && characterClass === 'rogue') ||
     (id === GUARDIAN_WARD.id && characterClass === 'knight')
   )
@@ -117,6 +141,8 @@ export function abilityEquipmentAllowed(
   id: AbilityId | typeof DOUBLE_SLASH.id,
   equipped: PlayerInventory['equipped']
 ) {
+  if (id === AUSCULTATION.id)
+    return equipped.neck?.item_def_id === 'stethoscope'
   if (id === TRUE_AIM.id || id === DOUBLE_SLASH.id)
     return (
       getItemDef(equipped.main_hand?.item_def_id ?? '')?.weaponType ===
@@ -127,6 +153,11 @@ export function abilityEquipmentAllowed(
 
 export function abilityRequirementsNotMet(name: string) {
   return `Cannot use ${name}.`
+}
+
+export function abilityEquipmentNotMet(id: string) {
+  if (id === AUSCULTATION.id) return 'You need a stethoscope.'
+  return abilityRequirementsNotMet(getAbility(id)?.name ?? id)
 }
 
 export function guardianWardEquipment(equipped: PlayerInventory['equipped']) {

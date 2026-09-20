@@ -462,8 +462,18 @@ class NetworkManager {
     this.sendMessage('WorldReady')
   }
 
-  sendUseAbility(ability: AbilityId, monsterId: string | null = null) {
-    this.sendMessage({ UseAbility: { ability, monster_id: monsterId } })
+  sendUseAbility(
+    ability: AbilityId,
+    monsterId: string | null = null,
+    targetPlayerId: number | null = null
+  ) {
+    this.sendMessage({
+      UseAbility: {
+        ability,
+        monster_id: monsterId,
+        target_player_id: targetPlayerId,
+      },
+    })
   }
 
   sendPlayerAttack(monsterId: string) {

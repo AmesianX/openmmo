@@ -80,12 +80,15 @@ export function timerSnapshot(
   )
 }
 
-export function beginAbility(id: AbilityId, now = Date.now()) {
-  if (
+export function canBeginAbility(id: AbilityId, now = Date.now()) {
+  return !(
     (get(abilityCooldowns)[id] ?? 0) > now ||
     (get(abilityPending)[id] ?? 0) > now
   )
-    return false
+}
+
+export function beginAbility(id: AbilityId, now = Date.now()) {
+  if (!canBeginAbility(id, now)) return false
   abilityPending.update((state) => ({ ...state, [id]: now + 3000 }))
   return true
 }
@@ -101,7 +104,7 @@ export function applyAbilityCooldowns(
 }
 
 export type AbilityEffectEvent = {
-  ability: Exclude<AbilityId, 'bow_mark'>
+  ability: Exclude<AbilityId, 'bow_mark' | 'auscultation'>
   player_id: number
   position: Position
   floor_level: number

@@ -1,5 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import {
+    inspectionTargeting,
+    cancelInspection,
+    takeInspectionTarget,
+  } from '../stores/inspectionStore'
   import { landscapingMode } from '../stores/landscapingStore'
   import {
     estateFurnitureEditorActive,
@@ -40,6 +45,7 @@
   import { DAGGER_SKILL } from '../data/daggerSkill'
   import {
     abilityEquipmentAllowed,
+    AUSCULTATION,
     isAbilityAvailable,
   } from '../data/abilities'
   import {
@@ -2328,6 +2334,37 @@
   }
 
   function handleCanvasClickIntent(event: MouseEvent) {
+    if (get(inspectionTargeting)) {
+      if (event.button !== 0) return
+      const hover = inputHandler.processHover(event, {
+        camera,
+        objectMeshes: [],
+        tipHatMeshes: [],
+        stallMeshes: [],
+        mealMeshes: [],
+        propMeshes: [],
+        groundItemMeshes: [],
+        monsterMeshes: monsterHoverMeshes,
+        playerMeshes: playerHoverMeshes,
+        isHoverable,
+        ownerName,
+      })
+      const target = takeInspectionTarget(
+        hover?.kind === 'monster'
+          ? { kind: 'monster', monster_id: hover.monsterId }
+          : hover?.kind === 'player'
+            ? { kind: 'player', player_id: hover.playerId }
+            : null,
+        get(inventoryStore).equipped
+      )
+      if (target)
+        networkManager.sendUseAbility(
+          AUSCULTATION.id,
+          target.kind === 'monster' ? target.monster_id : null,
+          target.kind === 'player' ? target.player_id : null
+        )
+      return
+    }
     if (event.button === 0 && $cameraRotationEnabled) return
     const editorMode =
       $mapEditorMode ||
@@ -2618,6 +2655,18 @@
   currentDungeonDepth.subscribe(() => clearHover())
 
   onMount(() => {
+    const canvasCursor = renderer.domElement.style.cursor
+    const unsubscribeInspection = inspectionTargeting.subscribe((active) => {
+      renderer.domElement.style.cursor = active ? 'crosshair' : canvasCursor
+      if (!active || !currentPlayer) return
+      cancelAutoTravel()
+      combatController.cancelCombat()
+      clearPropSwingTimers()
+      const movement = movingState()
+      if (movement) movement.approach = null
+      stopMovement()
+      sendPlayerMove(currentPlayer.position, playerRotation)
+    })
     const unsubscribeTravel = travelDestination.subscribe((destination) => {
       const wasTravelling = autoTravelTarget !== null
       autoTravelTarget = destination
@@ -2716,6 +2765,9 @@
     })
 
     return () => {
+      unsubscribeInspection()
+      cancelInspection()
+      renderer.domElement.style.cursor = canvasCursor
       unsubscribeTravel()
       unsubscribeTeleport()
       unsubscribeTravelPlayer()

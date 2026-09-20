@@ -855,6 +855,8 @@ pub enum ClientMessage {
     UseAbility {
         ability: crate::ability::AbilityId,
         monster_id: Option<String>,
+        #[serde(default)]
+        target_player_id: Option<PlayerId>,
     },
 }
 
@@ -1827,6 +1829,9 @@ pub enum ServerMessage {
         ability: crate::ability::AbilityId,
         reason: crate::ability::AbilityRejectReason,
     },
+    InspectionResult {
+        inspection: crate::ability::InspectionResult,
+    },
     AbilityUsed {
         ability: crate::ability::AbilityId,
         player_id: PlayerId,
@@ -2045,6 +2050,7 @@ impl ServerMessage {
             | Self::AbilityCooldowns { .. }
             | Self::BuffUpdate { .. }
             | Self::AbilityRejected { .. }
+            | Self::InspectionResult { .. }
             | Self::BowMarkUpdate { .. } => DeliveryClass::Participants,
             Self::GameTimeSync { .. } | Self::WeatherSync { .. } | Self::ServerNotice { .. } => {
                 DeliveryClass::Global

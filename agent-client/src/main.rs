@@ -572,6 +572,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::BuffUpdate { .. } => "BuffUpdate",
         ServerMessage::PlayerRadianceToggled { .. } => "PlayerRadianceToggled",
         ServerMessage::BowMarkUpdate { .. } => "BowMarkUpdate",
+        ServerMessage::InspectionResult { .. } => "InspectionResult",
         ServerMessage::AbilityRejected { .. } => "AbilityRejected",
         ServerMessage::AbilityUsed { .. } => "AbilityUsed",
         ServerMessage::CampfireSpawned { .. } => "CampfireSpawned",

@@ -1,5 +1,7 @@
 use super::*;
-use onlinerpg_shared::ability::{AbilityId, AbilityRejectReason};
+use onlinerpg_shared::ability::{
+    AbilityId, AbilityRejectReason, InspectionResult, InspectionTarget,
+};
 use onlinerpg_shared::hunger::SATIATION_START;
 use std::time::Duration;
 
@@ -9,18 +11,37 @@ const MARK: AbilityId = AbilityId::BowMark;
 
 #[tokio::test]
 async fn abilities_and_save_complete_with_queued_writers() {
-    for ability in [WARD, RADIANCE, MARK] {
+    for ability in [WARD, RADIANCE, MARK, AbilityId::Auscultation] {
         let gs = make_test_game_state(&format!("ability_save_locks_{ability:?}"));
         let _rx = if ability == MARK {
             add_mark_player(&gs, "caster", 1).await
         } else {
             add_ward_player(&gs, "caster", 0.0, 1).await
         };
-        add_mark_target(&gs, "target", 5.0).await;
+        if ability == AbilityId::Auscultation {
+            gs.inventories
+                .write()
+                .await
+                .get_mut(&pid("caster"))
+                .unwrap()
+                .equipped
+                .insert(EquipSlot::Neck, bag_item(4, "stethoscope", 1));
+        }
+        add_mark_target(&gs, "target", 1.0).await;
+        gs.monsters
+            .write()
+            .await
+            .get_mut("target")
+            .unwrap()
+            .monster_type = "goblin".into();
         let id = pid("caster");
         let chars = gs.player_characters.write().await;
-        let cast =
-            futures_util::future::maybe_done(gs.use_targeted_ability(&id, ability, Some("target")));
+        let cast = futures_util::future::maybe_done(gs.use_targeted_ability(
+            &id,
+            ability,
+            Some("target"),
+            None,
+        ));
         let save = futures_util::future::maybe_done(gs.get_player_save_data(&id));
         let ready = futures_util::future::maybe_done(gs.mark_world_ready(&id));
         let unequip = futures_util::future::maybe_done(gs.unequip_item(&id, EquipSlot::OffHand));
@@ -79,11 +100,11 @@ async fn bow_mark_does_not_bypass_attack_reach_ammo_or_line_of_sight() {
         .position
         .z = 0.5;
     gs.sync_region_furniture(0, 0, &[table_placement(4.5, 0.5)]);
-    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
         .await;
     rejected(&mut rx, AbilityRejectReason::Unavailable);
     gs.sync_region_furniture(0, 0, &[]);
-    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
         .await;
     assert!(gs
         .abilities
@@ -197,7 +218,7 @@ async fn bow_mark_rejects_dead_loading_and_mounted_casters() {
             caster.ready_at = ready_at;
             caster.mount = mounted.then_some(onlinerpg_shared::mount::MountKind::Horse);
         }
-        gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+        gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
             .await;
         rejected(&mut rx, AbilityRejectReason::Unavailable);
     }
@@ -207,7 +228,7 @@ async fn bow_mark_rejects_dead_loading_and_mounted_casters() {
         .get_mut(&pid("caster"))
         .unwrap()
         .mount = None;
-    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
         .await;
     assert!(gs
         .abilities
@@ -225,7 +246,7 @@ async fn bow_mark_is_private_and_only_guarantees_its_casters_selected_target() {
     add_mark_target(&gs, "target", 5.0).await;
     messages(&mut caster_rx);
     messages(&mut party_rx);
-    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
         .await;
     let state = gs.abilities.read().await;
     assert!(state.marks_target(&pid("caster"), "target"));
@@ -269,8 +290,8 @@ async fn bow_mark_cooldown_is_atomic_and_survives_reconnect() {
     add_mark_target(&gs, "target", 5.0).await;
     let caster = pid("caster");
     tokio::join!(
-        gs.use_targeted_ability(&caster, MARK, Some("target")),
-        gs.use_targeted_ability(&caster, MARK, Some("target"))
+        gs.use_targeted_ability(&caster, MARK, Some("target"), None),
+        gs.use_targeted_ability(&caster, MARK, Some("target"), None)
     );
     let updates = messages(&mut rx);
     assert_eq!(
@@ -298,11 +319,11 @@ async fn bow_mark_cooldown_is_atomic_and_survives_reconnect() {
     assert!(!gs.abilities.read().await.marks_target(&caster, "target"));
     let mut rx = add_mark_player(&gs, "reconnected", 1).await;
     tokio::time::advance(Duration::from_millis(9999)).await;
-    gs.use_targeted_ability(&pid("reconnected"), MARK, Some("target"))
+    gs.use_targeted_ability(&pid("reconnected"), MARK, Some("target"), None)
         .await;
     rejected(&mut rx, AbilityRejectReason::Cooldown);
     tokio::time::advance(Duration::from_millis(1)).await;
-    gs.use_targeted_ability(&pid("reconnected"), MARK, Some("target"))
+    gs.use_targeted_ability(&pid("reconnected"), MARK, Some("target"), None)
         .await;
     assert!(gs
         .abilities
@@ -317,7 +338,7 @@ async fn bow_mark_rejects_wrong_equipment_missing_dead_far_or_other_floor_target
     let gs = make_test_game_state("bow_mark_validation");
     let mut rx = add_ward_player(&gs, "caster", 0.0, 1).await;
     add_mark_target(&gs, "target", 5.0).await;
-    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
         .await;
     rejected(&mut rx, AbilityRejectReason::Equipment);
     gs.inventories
@@ -328,7 +349,8 @@ async fn bow_mark_rejects_wrong_equipment_missing_dead_far_or_other_floor_target
         .equipped
         .insert(EquipSlot::MainHand, bag_item(1, "bow", 1));
     for target in [None, Some("missing")] {
-        gs.use_targeted_ability(&pid("caster"), MARK, target).await;
+        gs.use_targeted_ability(&pid("caster"), MARK, target, None)
+            .await;
         rejected(&mut rx, AbilityRejectReason::Unavailable);
     }
     for (x, floor, health, reason) in [
@@ -343,7 +365,7 @@ async fn bow_mark_rejects_wrong_equipment_missing_dead_far_or_other_floor_target
             target.floor_level = floor;
             target.health = health;
         }
-        gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+        gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
             .await;
         rejected(&mut rx, reason);
         assert!(!gs
@@ -358,7 +380,7 @@ async fn bow_mark_rejects_wrong_equipment_missing_dead_far_or_other_floor_target
         ));
     }
     add_mark_target(&gs, "target", 10.0).await;
-    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+    gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
         .await;
     assert!(gs
         .abilities
@@ -373,7 +395,7 @@ async fn bow_mark_clears_when_target_dies_disappears_or_caster_changes_floor() {
         let gs = make_test_game_state(&format!("bow_mark_clear_{change}"));
         let mut rx = add_mark_player(&gs, "caster", 1).await;
         add_mark_target(&gs, "target", 5.0).await;
-        gs.use_targeted_ability(&pid("caster"), MARK, Some("target"))
+        gs.use_targeted_ability(&pid("caster"), MARK, Some("target"), None)
             .await;
         messages(&mut rx);
         match change {
@@ -657,7 +679,7 @@ async fn ward_spends_two_mana_and_syncs_and_saves_the_new_state() {
         gs.mana.write().await.get_mut(&id).unwrap().mana = before;
         gs.register_hunger(&id, 0).await;
         gs.remove_dirty(&id).await;
-        gs.use_targeted_ability(&id, WARD, None).await;
+        gs.use_targeted_ability(&id, WARD, None, None).await;
         assert_eq!(gs.mana.read().await[&id].mana, before - 2);
         assert_eq!(gs.hunger_satiation(&id).await, Some(0));
         assert!(gs.dirty_players.read().await.contains(&id));
@@ -730,7 +752,7 @@ async fn ward_rejects_other_classes_without_buff_or_cooldown() {
         CharacterClass::Priest,
     ] {
         gs.players.write().await.get_mut(&id).unwrap().class = class;
-        gs.use_targeted_ability(&id, WARD, None).await;
+        gs.use_targeted_ability(&id, WARD, None, None).await;
         let responses = messages(&mut rx);
         assert!(responses.iter().any(|message| matches!(message,
             ServerMessage::AbilityRejected { ability, reason: AbilityRejectReason::Unavailable }
@@ -747,7 +769,7 @@ async fn ward_rejects_other_classes_without_buff_or_cooldown() {
                 if cooldowns.iter().all(|timer| timer.remaining_ms == 0))));
     }
     gs.players.write().await.get_mut(&id).unwrap().class = CharacterClass::Knight;
-    gs.use_targeted_ability(&id, WARD, None).await;
+    gs.use_targeted_ability(&id, WARD, None, None).await;
     assert_eq!(gs.effective_guard(&id).await, 34);
     assert!(messages(&mut rx).iter().any(|message| matches!(message,
         ServerMessage::AbilityUsed { ability, .. } if *ability == WARD)));
@@ -965,4 +987,357 @@ async fn reconnect_removes_ward_but_preserves_character_cooldown() {
     tokio::time::advance(Duration::from_secs(45)).await;
     gs.use_ability(&pid("new"), WARD).await;
     assert_eq!(gs.effective_guard(&pid("new")).await, 34);
+}
+
+async fn add_examiner(gs: &GameState) -> DirectRx {
+    let rx = add_ward_player(gs, "examiner", 0.0, 1).await;
+    gs.inventories
+        .write()
+        .await
+        .get_mut(&pid("examiner"))
+        .unwrap()
+        .equipped
+        .insert(EquipSlot::Neck, bag_item(4, "stethoscope", 1));
+    rx
+}
+
+async fn examine(gs: &GameState, monster: Option<&str>, player: Option<PlayerId>) {
+    gs.use_targeted_ability(&pid("examiner"), AbilityId::Auscultation, monster, player)
+        .await;
+}
+
+fn inspection(rx: &mut DirectRx) -> InspectionResult {
+    messages(rx)
+        .into_iter()
+        .find_map(|m| match m {
+            ServerMessage::InspectionResult { inspection } => Some(inspection),
+            _ => None,
+        })
+        .expect("inspection reply")
+}
+
+fn inspection_rejected(rx: &mut DirectRx, reason: AbilityRejectReason) {
+    let updates = messages(rx);
+    assert!(!updates
+        .iter()
+        .any(|m| matches!(m, ServerMessage::InspectionResult { .. })));
+    assert!(updates.iter().any(|m| matches!(m,
+        ServerMessage::AbilityRejected { ability: AbilityId::Auscultation, reason: actual }
+        if *actual == reason)));
+}
+
+#[tokio::test]
+async fn auscultation_reports_live_player_stats_and_only_equipped_items_privately() {
+    let gs = make_test_game_state("auscultation_player");
+    let mut rx = add_examiner(&gs).await;
+    let mut target_rx = add_ward_player(&gs, "target", 2.0, 2).await;
+    let target_id = pid("target");
+    {
+        let mut players = gs.players.write().await;
+        let target = players.get_mut(&target_id).unwrap();
+        target.level = 17;
+        target.health = 43;
+        target.max_health = 120;
+    }
+    gs.inventories
+        .write()
+        .await
+        .get_mut(&target_id)
+        .unwrap()
+        .bag
+        .push(bag_item(99, "gold_ring", 1));
+    gs.use_ability(&target_id, WARD).await;
+    messages(&mut target_rx);
+    messages(&mut rx);
+    examine(&gs, None, Some(target_id)).await;
+    let result = inspection(&mut rx);
+    assert_eq!(
+        result.target,
+        InspectionTarget::Player {
+            player_id: target_id
+        }
+    );
+    assert_eq!(
+        (result.level, result.health, result.max_health),
+        (17, 43, 120)
+    );
+    assert_eq!(result.guard, gs.effective_guard(&target_id).await);
+    assert_eq!(result.equipment.len(), 2);
+    assert!(result
+        .equipment
+        .iter()
+        .any(|item| item.slot == EquipSlot::OffHand
+            && item.item_def_id == "raven_shield"
+            && item.enchant == 9));
+    assert!(messages(&mut target_rx).is_empty());
+    assert_eq!(
+        gs.inventories.read().await[&pid("examiner")].equipped[&EquipSlot::Neck].quantity,
+        1
+    );
+    assert_eq!(gs.players.read().await[&target_id].health, 43);
+    let bytes = onlinerpg_shared::serialize_server_msg(&ServerMessage::InspectionResult {
+        inspection: result.clone(),
+    })
+    .unwrap();
+    let decoded = onlinerpg_shared::deserialize_server_msg(&bytes).unwrap();
+    assert!(
+        matches!(decoded, ServerMessage::InspectionResult { inspection } if inspection == result)
+    );
+}
+
+#[tokio::test]
+async fn auscultation_can_examine_signe_without_interrupting_her_performance() {
+    let gs = make_test_game_state("auscultation_signe_performance");
+    let mut rx = add_examiner(&gs).await;
+    let mut signe_rx = add_ward_player(&gs, "Signe", 1.0, 2).await;
+    let signe = pid("Signe");
+    {
+        let mut players = gs.players.write().await;
+        let player = players.get_mut(&signe).unwrap();
+        player.class = CharacterClass::Bard;
+        player.is_official_npc = true;
+    }
+    gs.inventories
+        .write()
+        .await
+        .get_mut(&signe)
+        .unwrap()
+        .bag
+        .push(bag_item(99, "worn_mandolin", 1));
+    gs.start_live_instrument(&signe).await;
+    assert!(gs.live_instrument_players.read().await.contains(&signe));
+    messages(&mut rx);
+    messages(&mut signe_rx);
+
+    examine(&gs, None, Some(signe)).await;
+
+    let result = inspection(&mut rx);
+    assert_eq!(result.name, "Signe");
+    assert_eq!(result.target, InspectionTarget::Player { player_id: signe });
+    assert_eq!(
+        gs.players.read().await[&signe].object_type.as_deref(),
+        Some(onlinerpg_shared::messages::MUSIC_EMOTE)
+    );
+    assert!(gs.live_instrument_players.read().await.contains(&signe));
+    assert!(messages(&mut signe_rx).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn auscultation_preserves_seated_and_resting_player_poses() {
+    let gs = make_test_game_state("auscultation_target_pose");
+    let mut rx = add_examiner(&gs).await;
+    let _target_rx = add_ward_player(&gs, "target", 1.0, 2).await;
+    let target = pid("target");
+    for kind in ["chair", "bed"] {
+        gs.set_player_interaction(&target, Some(kind.to_owned()), Some(39))
+            .await;
+        messages(&mut rx);
+
+        examine(&gs, None, Some(target)).await;
+
+        assert_eq!(inspection(&mut rx).name, "target");
+        let players = gs.players.read().await;
+        assert_eq!(players[&target].object_type.as_deref(), Some(kind));
+        assert_eq!(players[&target].object_id, Some(39));
+        drop(players);
+        tokio::time::advance(Duration::from_millis(800)).await;
+    }
+}
+
+#[tokio::test]
+async fn auscultation_reports_depth_scaled_monster_level_and_current_hp() {
+    let gs = make_test_game_state("auscultation_monster");
+    let mut rx = add_examiner(&gs).await;
+    add_mark_target(&gs, "target", 1.0).await;
+    {
+        let mut monsters = gs.monsters.write().await;
+        let m = monsters.get_mut("target").unwrap();
+        m.monster_type = "goblin".into();
+        m.level_override = Some(12);
+        m.health = 71;
+    }
+    examine(&gs, Some("target"), None).await;
+    let result = inspection(&mut rx);
+    assert_eq!(
+        result.target,
+        InspectionTarget::Monster {
+            monster_id: "target".into()
+        }
+    );
+    assert_eq!(
+        (result.level, result.health, result.max_health),
+        (12, 71, 1000)
+    );
+    let def = gs.monster_defs.get("goblin").unwrap();
+    assert_eq!(result.name, def.name);
+    assert_eq!(result.guard, i32::from(def.guard));
+    assert_eq!(
+        result
+            .equipment
+            .first()
+            .map(|item| item.item_def_id.as_str()),
+        def.weapon.as_deref()
+    );
+}
+
+#[tokio::test]
+async fn auscultation_requires_neck_equipment_even_if_carried_or_removed_after_selection() {
+    let gs = make_test_game_state("auscultation_equipment");
+    let mut rx = add_examiner(&gs).await;
+    let _target_rx = add_ward_player(&gs, "target", 1.0, 2).await;
+    gs.unequip_item(&pid("examiner"), EquipSlot::Neck).await;
+    messages(&mut rx);
+    examine(&gs, None, Some(pid("target"))).await;
+    inspection_rejected(&mut rx, AbilityRejectReason::Equipment);
+    gs.equip_item(&pid("examiner"), 4).await;
+    messages(&mut rx);
+    examine(&gs, None, Some(pid("target"))).await;
+    inspection(&mut rx);
+    gs.unequip_item(&pid("examiner"), EquipSlot::Neck).await;
+    messages(&mut rx);
+    examine(&gs, None, Some(pid("target"))).await;
+    inspection_rejected(&mut rx, AbilityRejectReason::Equipment);
+}
+
+#[tokio::test]
+async fn auscultation_rejects_missing_ambiguous_dead_distant_or_other_floor_players() {
+    let gs = make_test_game_state("auscultation_player_gates");
+    let mut rx = add_examiner(&gs).await;
+    let _target_rx = add_ward_player(&gs, "target", 1.0, 2).await;
+    for (monster, player) in [
+        (None, None),
+        (None, Some(pid("missing"))),
+        (None, Some(pid("examiner"))),
+        (Some("monster"), Some(pid("target"))),
+    ] {
+        examine(&gs, monster, player).await;
+        inspection_rejected(&mut rx, AbilityRejectReason::Unavailable);
+    }
+    for (x, floor, health, reason) in [
+        (2.01, 0, 100, AbilityRejectReason::OutOfRange),
+        (1.0, -1, 100, AbilityRejectReason::Unavailable),
+        (1.0, 0, 0, AbilityRejectReason::Unavailable),
+        (f32::NAN, 0, 100, AbilityRejectReason::Unavailable),
+    ] {
+        {
+            let mut players = gs.players.write().await;
+            let p = players.get_mut(&pid("target")).unwrap();
+            p.position.x = x;
+            p.floor_level = floor;
+            p.health = health;
+        }
+        examine(&gs, None, Some(pid("target"))).await;
+        inspection_rejected(&mut rx, reason);
+    }
+}
+
+#[tokio::test]
+async fn auscultation_rejects_invalid_monsters_and_obstructed_targets_without_spending_cooldown() {
+    let gs = make_test_game_state("auscultation_monster_gates");
+    let mut rx = add_examiner(&gs).await;
+    examine(&gs, Some("missing"), None).await;
+    inspection_rejected(&mut rx, AbilityRejectReason::Unavailable);
+    add_mark_target(&gs, "target", 1.0).await;
+    for (x, floor, health, reason) in [
+        (2.01, 0, 100, AbilityRejectReason::OutOfRange),
+        (1.0, 1, 100, AbilityRejectReason::Unavailable),
+        (1.0, 0, 0, AbilityRejectReason::Unavailable),
+    ] {
+        {
+            let mut monsters = gs.monsters.write().await;
+            let m = monsters.get_mut("target").unwrap();
+            m.monster_type = "goblin".into();
+            m.position.x = x;
+            m.position.z = 0.5;
+            m.floor_level = floor;
+            m.health = health;
+        }
+        gs.players
+            .write()
+            .await
+            .get_mut(&pid("examiner"))
+            .unwrap()
+            .position
+            .z = 0.5;
+        examine(&gs, Some("target"), None).await;
+        inspection_rejected(&mut rx, reason);
+    }
+    gs.monsters.write().await.get_mut("target").unwrap().health = 100;
+    gs.sync_region_furniture(0, 0, &[table_placement(0.5, 0.5)]);
+    examine(&gs, Some("target"), None).await;
+    inspection_rejected(&mut rx, AbilityRejectReason::Unavailable);
+    gs.sync_region_furniture(0, 0, &[]);
+    examine(&gs, Some("target"), None).await;
+    inspection(&mut rx);
+}
+
+#[tokio::test(start_paused = true)]
+async fn auscultation_is_class_independent_but_rejects_dead_loading_or_mounted_casters() {
+    let gs = make_test_game_state("auscultation_caster_gates");
+    let mut rx = add_examiner(&gs).await;
+    let _target_rx = add_ward_player(&gs, "target", 1.0, 2).await;
+    for (health, mount, ready_at) in [
+        (0, None, 0),
+        (100, Some(onlinerpg_shared::mount::MountKind::Horse), 0),
+        (100, None, u64::MAX),
+    ] {
+        {
+            let mut players = gs.players.write().await;
+            let p = players.get_mut(&pid("examiner")).unwrap();
+            p.health = health;
+            p.mount = mount;
+            p.ready_at = ready_at;
+        }
+        examine(&gs, None, Some(pid("target"))).await;
+        inspection_rejected(&mut rx, AbilityRejectReason::Unavailable);
+    }
+    for class in [
+        CharacterClass::Knight,
+        CharacterClass::Rogue,
+        CharacterClass::Merchant,
+    ] {
+        {
+            let mut players = gs.players.write().await;
+            let p = players.get_mut(&pid("examiner")).unwrap();
+            p.health = 100;
+            p.mount = None;
+            p.ready_at = 0;
+            p.class = class;
+        }
+        examine(&gs, None, Some(pid("target"))).await;
+        inspection(&mut rx);
+        tokio::time::advance(Duration::from_millis(800)).await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn auscultation_serializes_simultaneous_casts_and_releases_cooldown_after_800ms() {
+    let gs = make_test_game_state("auscultation_cooldown");
+    let mut rx = add_examiner(&gs).await;
+    let _target_rx = add_ward_player(&gs, "target", 1.0, 2).await;
+    tokio::join!(
+        examine(&gs, None, Some(pid("target"))),
+        examine(&gs, None, Some(pid("target")))
+    );
+    let updates = messages(&mut rx);
+    assert_eq!(
+        updates
+            .iter()
+            .filter(|m| matches!(m, ServerMessage::InspectionResult { .. }))
+            .count(),
+        1
+    );
+    assert!(updates.iter().any(|m| matches!(
+        m,
+        ServerMessage::AbilityRejected {
+            reason: AbilityRejectReason::Cooldown,
+            ..
+        }
+    )));
+    tokio::time::advance(Duration::from_millis(799)).await;
+    examine(&gs, None, Some(pid("target"))).await;
+    inspection_rejected(&mut rx, AbilityRejectReason::Cooldown);
+    tokio::time::advance(Duration::from_millis(1)).await;
+    examine(&gs, None, Some(pid("target"))).await;
+    inspection(&mut rx);
 }

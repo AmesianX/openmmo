@@ -1,5 +1,27 @@
 # Item Assets
 
+## Stethoscope
+
+- `doc/images/items/stethoscope.png` — 플레이어·몬스터 조사용 청진기의 3D 제작 원화. 낡은 황동 귀관·흉부 접촉부, 짙은 갈색 가죽 피복관, 밝은 뿔 재질 이어팁으로 구성한 단독 소품 이미지.
+  - `doc/images/items/stethoscope-reference-sheet.png` — 위 원화를 참조한 정면·후면 사선·접촉부·이어팁 제작 참고 시트.
+  - `doc/images/items/stethoscope-meshy-input.png` — 같은 디자인에서 관과 접촉판 사이 간격을 벌린 Meshy 입력용 원화. 첫 생성에서 관이 접촉판으로 잘못 연결되어 배치를 정리했다.
+  - 출처: OpenAI Codex built-in ImageGen. 요금제: ChatGPT Pro 20x(사용자 확인). 생성일: 2026-09-20.
+  - 라이선스: OpenAI 출력물 이용 조건 적용, 별도 CC 라이선스 지정 없음. NetHack의 아이템 용도에서 착안한 새 디자인이며 원작 이미지·모델은 사용하지 않았다.
+  - [이미지 생성 프롬프트](stethoscope-prompts.json).
+  - ![청진기 원화](../images/items/stethoscope.png)
+  - ![청진기 제작 참고 시트](../images/items/stethoscope-reference-sheet.png)
+
+- `client/public/models/objects/stethoscope.glb` / `client/public/items/objects/stethoscope.png` — Meshy.ai **Premium** 등급(프로젝트의 사용자 확인 기록), Image to 3D API, 2026-09-20. [Meshy 유료 생성물 이용 조건](https://help.meshy.ai/en/articles/10137554-what-is-the-ownership-of-the-generated-models) 적용.
+  - 위 `stethoscope-meshy-input.png`로 `meshy-7.1`, triangle, **4,000 폴리곤 목표**, PBR 2048², `image_enhancement=false`로 생성. 결과 **4,057 triangles**를 Blender에서 감량 없이 보존했다. 작업 ID `01a0bec3-d0aa-7536-ac71-74632ebcfe9f`.
+  - 원본: `assets/stethoscope/meshy-4000-v2/stethoscope_meshy.glb`. 작업 파일: `assets/stethoscope/stethoscope.blend`. [생성·가공·검증 기록](stethoscope-model.json).
+  - Blender 5.2.0 LTS에서 X −90°로 눕혀 긴 변 0.45m, **0.396×0.035×0.450m (W×H×D)**로 맞췄다. 기존 단검(0.42m)·벨트(0.40m)와 비교한 바닥 소지품 크기다. 원점은 바닥 중심, 회전·스케일 적용, emissive 제거, base color·normal·metallic/roughness 3장 **512² WebP q90**, GLB **407,804 bytes**.
+  - 아이콘은 같은 메시를 Cycles 직교 사선 구도로 512² 렌더한 뒤 **128² RGBA**로 축소했다. 아이콘 회전 `(24, −8, −18)°`, 노출 `−0.5`. `assets/stethoscope/stethoscope-render.png`에 큰 렌더, `ground-preview.png`에 기존 벨트와의 바닥 크기 비교를 보관한다.
+  - 재생성: `blender -b --python-exit-code 1 -P tools/blender-scripts/export_item_asset.py -- --source assets/stethoscope/meshy-4000-v2/stethoscope_meshy.glb --name stethoscope --size 0.45 --rotation -90 0 0 --icon-rotation 24 -8 -18 --exposure -0.5`
+  - **[미사용]** `assets/stethoscope/unused-6000/`의 첫 생성(6,000 목표)과 `meshy-4000/`의 첫 4,000 목표 생성(관 연결 오류)은 최종 원본으로 사용하지 않는다. 생성 3회 각 30크레딧, 총 90크레딧; 작업별 기록은 위 JSON에 보존한다.
+  - `data-src/items.csv`에 `stethoscope` / `Stethoscope`로 등록했다(2026-09-20). category `tool`, material `metal`, 무게 0.5kg, 기준 가격 1,000 copper, 목 슬롯(`neck`) 장착·중첩 불가·비소모성(`consumable=false`). 가방에서 더블클릭하면 장착하며, [청진 스킬](../abilities/AUSCULTATION.md)을 퀵슬롯에서 실행한 뒤 대상을 좌클릭해 조사한다. 스킬 아이콘도 같은 청진기 아이콘을 사용한다.
+
+## Item models
+
 - sword.glb https://www.fab.com/listings/5fe82d66-eaac-48e0-899d-1fedacdf409a
 - spear.glb https://sketchfab.com/3d-models/spear-f13ddd24e2fe47aa8aca23487afd893e
 - torch.glb https://sketchfab.com/3d-models/torch-stick-d8eadee1a5c14483aade99b1fe5bc150

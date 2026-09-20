@@ -180,7 +180,13 @@ export type ClientMessage =
   | { PlayerFloorChanged: { floor_level: number } }
   | { ChatMessage: { message: string } }
   | { PlayerAttack: { monster_id: string } }
-  | { UseAbility: { ability: AbilityId; monster_id: string | null } }
+  | {
+      UseAbility: {
+        ability: AbilityId
+        monster_id: string | null
+        target_player_id: number | null
+      }
+    }
   | { DaggerDoubleSlash: { monster_id: string } }
   | 'RequestRespawn'
   | { FishingCast: { position: Position } }

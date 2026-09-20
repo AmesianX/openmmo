@@ -1,4 +1,8 @@
 import { manaState } from '../stores/manaStore'
+import {
+  inspectionResult,
+  type InspectionResult,
+} from '../stores/inspectionStore'
 import { get } from 'svelte/store'
 import { attackLog, daggerSkippedLog } from './combatLog'
 import {
@@ -20,6 +24,7 @@ import {
   DOUBLE_SLASH,
   GUARDIAN_WARD,
   abilityRequirementsNotMet,
+  abilityEquipmentNotMet,
   getAbility,
   type AbilityTimer,
 } from '../data/abilities'
@@ -32,6 +37,7 @@ import {
   gameStore,
   updatePlayer,
   addChatMessage,
+  reportSkillFailure,
   addCombatMessage,
   addChatBubble,
   resetGameStore,
@@ -1335,13 +1341,11 @@ export function handleServerMessage(
         attacker_dead: 'you are dead',
         busy: 'finish your current action',
       }
-      addChatMessage({
-        text:
-          data.reason === 'dagger_required' || data.reason === 'rogue_required'
-            ? abilityRequirementsNotMet(DOUBLE_SLASH.name)
-            : `Double Slash: ${reasons[data.reason] ?? data.reason}.`,
-        sender: 'system',
-      })
+      reportSkillFailure(
+        data.reason === 'dagger_required' || data.reason === 'rogue_required'
+          ? abilityRequirementsNotMet(DOUBLE_SLASH.name)
+          : `Double Slash: ${reasons[data.reason] ?? data.reason}.`
+      )
       break
     }
 
@@ -2389,7 +2393,7 @@ export function handleServerMessage(
     }
 
     case 'FishingError':
-      addCombatMessage({ text: data.message, sender: 'local' })
+      reportSkillFailure(data.message, 'combat')
       break
 
     case 'SkillXpGained': {
@@ -2467,6 +2471,9 @@ export function handleServerMessage(
         addCombatMessage({ text: 'True Aim ended.', sender: 'local' })
       break
     }
+    case 'InspectionResult':
+      inspectionResult.set(data.inspection as InspectionResult)
+      break
     case 'AbilityRejected': {
       abilityPending.set({})
       const name = getAbility(data.ability)?.name ?? data.ability
@@ -2474,8 +2481,10 @@ export function handleServerMessage(
       if (data.reason === 'not_enough_mana') text = 'Not enough mana.'
       else if (data.reason === 'out_of_range') text = 'Target is too far away.'
       else if (data.reason === 'cooldown') text = `${name} is not ready yet.`
+      else if (data.reason === 'equipment')
+        text = abilityEquipmentNotMet(data.ability)
       else text = abilityRequirementsNotMet(name)
-      addChatMessage({ text, sender: 'system' })
+      reportSkillFailure(text)
       break
     }
     case 'AbilityUsed':

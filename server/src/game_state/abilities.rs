@@ -2,9 +2,10 @@ use super::GameState;
 use crate::item_defs::{ArmorType, WeaponType};
 use crate::types::{CharacterClass, PlayerId, ServerMessage};
 use onlinerpg_shared::ability::{
-    AbilityId, AbilityRejectReason, AbilityTimer, BOW_MARK_COOLDOWN_MS, BOW_MARK_DURATION_MS,
-    GUARDIAN_WARD_COOLDOWN_MS, GUARDIAN_WARD_DURATION_MS, GUARDIAN_WARD_RADIUS,
-    RADIANCE_COOLDOWN_MS, RADIANCE_DURATION_MS,
+    AbilityId, AbilityRejectReason, AbilityTimer, InspectedEquipment, InspectionResult,
+    InspectionTarget, AUSCULTATION_COOLDOWN_MS, AUSCULTATION_RANGE, BOW_MARK_COOLDOWN_MS,
+    BOW_MARK_DURATION_MS, GUARDIAN_WARD_COOLDOWN_MS, GUARDIAN_WARD_DURATION_MS,
+    GUARDIAN_WARD_RADIUS, RADIANCE_COOLDOWN_MS, RADIANCE_DURATION_MS,
 };
 use onlinerpg_shared::inventory::EquipSlot;
 use std::collections::{HashMap, HashSet};
@@ -89,6 +90,7 @@ impl GameState {
                 AbilityId::GuardianWard,
                 AbilityId::Radiance,
                 AbilityId::BowMark,
+                AbilityId::Auscultation,
             ]
             .into_iter()
             .map(|ability| AbilityTimer {
@@ -114,7 +116,7 @@ impl GameState {
         let result = match ability {
             AbilityId::GuardianWard => self.try_guardian_ward(player_id).await,
             AbilityId::Radiance => self.try_radiance(player_id).await,
-            AbilityId::BowMark | AbilityId::DaggerDoubleSlash => {
+            AbilityId::BowMark | AbilityId::DaggerDoubleSlash | AbilityId::Auscultation => {
                 Err(AbilityRejectReason::Unavailable)
             }
         };
@@ -170,7 +172,22 @@ impl GameState {
         player_id: &PlayerId,
         ability: AbilityId,
         monster_id: Option<&str>,
+        target_player_id: Option<PlayerId>,
     ) {
+        if ability == AbilityId::Auscultation {
+            self.stop_bed_rest(player_id).await;
+            let result = self
+                .try_auscultation(player_id, monster_id, target_player_id)
+                .await;
+            let message = match result {
+                Ok(inspection) => ServerMessage::InspectionResult { inspection },
+                Err(reason) => ServerMessage::AbilityRejected { ability, reason },
+            };
+            self.send_direct_message(player_id, message).await;
+            self.send_direct_message(player_id, self.ability_cooldown_message(player_id).await)
+                .await;
+            return;
+        }
         if ability != AbilityId::BowMark {
             self.use_ability(player_id, ability).await;
             return;
@@ -191,6 +208,151 @@ impl GameState {
         }
         self.send_direct_message(player_id, self.ability_cooldown_message(player_id).await)
             .await;
+    }
+
+    async fn try_auscultation(
+        &self,
+        player_id: &PlayerId,
+        monster_id: Option<&str>,
+        target_player_id: Option<PlayerId>,
+    ) -> Result<InspectionResult, AbilityRejectReason> {
+        use super::combat::{reachable_dist_sq, wall_between};
+        use crate::types::MonsterState;
+
+        let target = match (monster_id, target_player_id) {
+            (Some(id), None) => InspectionTarget::Monster {
+                monster_id: id.to_owned(),
+            },
+            (None, Some(id)) if id != *player_id => InspectionTarget::Player { player_id: id },
+            _ => return Err(AbilityRejectReason::Unavailable),
+        };
+        let monster = if let InspectionTarget::Monster { monster_id } = &target {
+            let mut monster = self
+                .monsters
+                .read()
+                .await
+                .get(monster_id)
+                .filter(|m| m.health > 0 && m.state != MonsterState::Dead)
+                .cloned()
+                .ok_or(AbilityRejectReason::Unavailable)?;
+            if let Some(position) = self.brain_position_now(monster_id).await {
+                monster.position = position;
+            }
+            Some(monster)
+        } else {
+            None
+        };
+        let players = self.players.read().await;
+        let caster = players
+            .get(player_id)
+            .filter(|p| p.is_damageable(Self::now_ms()) && !p.is_mounted())
+            .ok_or(AbilityRejectReason::Unavailable)?;
+        let chars = self.player_characters.read().await;
+        let character = chars
+            .get(player_id)
+            .ok_or(AbilityRejectReason::Unavailable)?
+            .0;
+        let inventories = self.inventories.read().await;
+        if !inventories
+            .get(player_id)
+            .and_then(|inv| inv.equipped.get(&EquipSlot::Neck))
+            .is_some_and(|item| item.item_def_id == "stethoscope")
+        {
+            return Err(AbilityRejectReason::Equipment);
+        }
+        let (position, floor, mut inspection) = match &target {
+            InspectionTarget::Monster { .. } => {
+                let monster = monster.as_ref().ok_or(AbilityRejectReason::Unavailable)?;
+                let def = self
+                    .monster_defs
+                    .get(&monster.monster_type)
+                    .ok_or(AbilityRejectReason::Unavailable)?;
+                let equipment = def
+                    .weapon
+                    .iter()
+                    .map(|id| InspectedEquipment {
+                        slot: EquipSlot::MainHand,
+                        item_def_id: id.clone(),
+                        enchant: 0,
+                    })
+                    .collect();
+                (
+                    monster.position,
+                    monster.floor_level,
+                    InspectionResult {
+                        target: target.clone(),
+                        name: def.name.clone(),
+                        level: u32::from(monster.level_override.unwrap_or(def.level)),
+                        health: monster.health,
+                        max_health: monster.max_health,
+                        guard: i32::from(def.guard),
+                        equipment,
+                    },
+                )
+            }
+            InspectionTarget::Player { player_id: id } => {
+                let player = players
+                    .get(id)
+                    .filter(|p| p.is_damageable(Self::now_ms()))
+                    .ok_or(AbilityRejectReason::Unavailable)?;
+                let inv = inventories.get(id);
+                let equipment = inv
+                    .into_iter()
+                    .flat_map(|inv| &inv.equipped)
+                    .map(|(slot, item)| InspectedEquipment {
+                        slot: *slot,
+                        item_def_id: item.item_def_id.clone(),
+                        enchant: item.enchant,
+                    })
+                    .collect();
+                let guard = chars
+                    .get(id)
+                    .map(|(_, _, a)| i32::from(a.guard))
+                    .unwrap_or(10)
+                    + inv.map(|inv| self.equipped_guard(inv)).unwrap_or(0);
+                (
+                    player.position,
+                    player.floor_level,
+                    InspectionResult {
+                        target: target.clone(),
+                        name: player.name.clone(),
+                        level: player.level,
+                        health: player.health,
+                        max_health: player.max_health,
+                        guard,
+                        equipment,
+                    },
+                )
+            }
+        };
+        let distance = reachable_dist_sq(caster.position, caster.floor_level, position, floor)
+            .filter(|_| caster.position.y.is_finite() && position.y.is_finite())
+            .ok_or(AbilityRejectReason::Unavailable)?;
+        if distance > AUSCULTATION_RANGE.powi(2) {
+            return Err(AbilityRejectReason::OutOfRange);
+        }
+        if wall_between(
+            &self.passability_read(),
+            caster.position,
+            position,
+            floor,
+            true,
+        ) {
+            return Err(AbilityRejectReason::Unavailable);
+        }
+        let mut state = self.abilities.write().await;
+        if state.cooldown_ms(character, AbilityId::Auscultation) > 0 {
+            return Err(AbilityRejectReason::Cooldown);
+        }
+        if let InspectionTarget::Player { player_id } = target {
+            inspection.guard = state.guard(&player_id, inspection.guard);
+        }
+        inspection.equipment.sort_by_key(|item| item.slot.as_str());
+        state.cooldowns.insert(
+            (character, AbilityId::Auscultation),
+            Instant::now() + Duration::from_millis(AUSCULTATION_COOLDOWN_MS),
+        );
+        Ok(inspection)
     }
 
     async fn try_bow_mark(

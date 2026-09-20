@@ -1,5 +1,7 @@
 # Blender Asset Workflow
 
+폴리곤 목표와 이미지 생성 요금제는 [애셋 제작 지침](creation-guidelines.md)을 따른다.
+
 ## Version
 
 - Use version 5.1.0

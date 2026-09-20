@@ -17,6 +17,8 @@ import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
 import { resetDebuffStore } from './debuffStore'
 import { resetAbilities } from './abilityStore'
+import { resetInspection } from './inspectionStore'
+import { clearSkillFailure, showSkillFailure } from './skillFailureStore'
 import { resetHousingStore } from './housingStore'
 import { resetInstrumentStore } from './instrumentStore'
 import { stopAllInstrumentAudio } from '../managers/instrumentAudio'
@@ -197,6 +199,8 @@ export const resetGameStore = () => {
   resetHungerStore()
   resetDebuffStore()
   resetAbilities()
+  resetInspection()
+  clearSkillFailure()
   resetHousingStore()
   resetInstrumentStore()
   stopAllInstrumentAudio()
@@ -251,6 +255,15 @@ export const addChatMessage = (entry: ChatEntry) =>
 
 export const addCombatMessage = (entry: ChatEntry) =>
   addMessageTo('combatMessages', entry)
+
+export function reportSkillFailure(
+  text: string,
+  channel: 'chat' | 'combat' = 'chat'
+) {
+  if (channel === 'combat') addCombatMessage({ text, sender: 'local' })
+  else addChatMessage({ text, sender: 'system' })
+  showSkillFailure(text)
+}
 
 const MIN_BUBBLE_DURATION = 5000
 const MAX_BUBBLE_DURATION = 10000

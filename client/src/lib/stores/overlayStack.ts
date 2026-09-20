@@ -27,6 +27,8 @@ export type OverlayId =
   | 'chatChannelMenu'
   | 'socialMenu'
   | 'itemUnlock'
+  | 'inspection'
+  | 'inspectionTarget'
 
 /** `layer` is paint order, not raw z-index: `.game-hud`'s z-index:1 stacking
  *  context traps the panel band (see panelLayout) below the root-level dialogs
@@ -57,6 +59,8 @@ const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   chatChannelMenu: { layer: 6 },
   socialMenu: { layer: 6 },
   itemUnlock: { layer: 7 },
+  inspection: { layer: 0 },
+  inspectionTarget: { layer: 7 },
 }
 
 const stack = writable<OverlayId[]>([])

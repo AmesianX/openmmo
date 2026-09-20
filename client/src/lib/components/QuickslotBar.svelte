@@ -2,7 +2,8 @@
   import { manaState } from '../stores/manaStore'
   import {
     DOUBLE_SLASH,
-    abilityRequirementsNotMet,
+    AUSCULTATION,
+    abilityEquipmentNotMet,
     getAbility,
     isAbilityAvailable,
     abilityEquipmentAllowed,
@@ -16,7 +17,7 @@
   } from '../stores/daggerSkillStore'
   import {
     gameStore,
-    addChatMessage,
+    reportSkillFailure,
     hoveredMonsterId,
   } from '../stores/gameStore'
   import { isMounted } from '../utils/mounts'
@@ -42,6 +43,11 @@
   import { dragMeta, dragPos, quickslotAt } from '../stores/dragStore'
   import { itemTooltip } from '../actions/itemTooltip'
   import { instrumentPanelVisible } from '../stores/instrumentStore'
+  import {
+    inspectionTargeting,
+    queueInspection,
+    cancelInspection,
+  } from '../stores/inspectionStore'
 
   interface Props {
     characterId: number | null
@@ -84,22 +90,36 @@
   function useSlot(index: number) {
     const entry = slots[index]
     if (!entry) return
+    if (entry.kind !== 'ability' || entry.skill.id !== AUSCULTATION.id)
+      cancelInspection()
     if (entry.kind === 'ability') {
-      if (
-        !$gameStore.currentPlayer ||
-        $gameStore.currentPlayer.health <= 0 ||
-        isMounted($gameStore.currentPlayer)
-      )
+      if (!$gameStore.currentPlayer) return
+      if ($gameStore.currentPlayer.health <= 0) {
+        reportSkillFailure('You cannot use skills while dead.')
         return
+      }
+      if (isMounted($gameStore.currentPlayer)) {
+        reportSkillFailure('You cannot use skills while mounted.')
+        return
+      }
       if (!abilityEquipmentAllowed(entry.skill.id, $inventoryStore.equipped)) {
-        addChatMessage({
-          text: abilityRequirementsNotMet(entry.skill.name),
-          sender: 'system',
-        })
+        reportSkillFailure(abilityEquipmentNotMet(entry.skill.id))
         return
       }
       if (entry.skill.manaCost > ($manaState?.mana ?? 0)) {
-        addChatMessage({ text: 'Not enough mana.', sender: 'system' })
+        reportSkillFailure('Not enough mana.')
+        return
+      }
+      const cooldownUntil =
+        entry.skill.id === DOUBLE_SLASH.id
+          ? $daggerSkillState.cooldownUntil
+          : ($abilityCooldowns[entry.skill.id] ?? 0)
+      if (cooldownUntil > Date.now()) {
+        reportSkillFailure(`${entry.skill.name} is not ready yet.`)
+        return
+      }
+      if (entry.skill.id === AUSCULTATION.id) {
+        queueInspection($inventoryStore.equipped)
         return
       }
       if (entry.skill.id === DOUBLE_SLASH.id) {
@@ -114,10 +134,9 @@
           )
         : null
       if (needsTarget && !target) {
-        addChatMessage({
-          text: `Select or hover over a target for ${entry.skill.name}.`,
-          sender: 'system',
-        })
+        reportSkillFailure(
+          `Select or hover over a target for ${entry.skill.name}.`
+        )
         return
       }
       if (beginAbility(entry.skill.id))
@@ -171,8 +190,8 @@
       class:empty={!entry}
       class:drop-target={i === dropIndex}
       class:skill-queued={entry?.kind === 'ability' &&
-        entry.skill.id === DOUBLE_SLASH.id &&
-        $daggerSkillState.queued}
+        ((entry.skill.id === DOUBLE_SLASH.id && $daggerSkillState.queued) ||
+          (entry.skill.id === AUSCULTATION.id && $inspectionTargeting))}
       class:skill-active={entry?.kind === 'ability' &&
         entry.skill.id !== DOUBLE_SLASH.id &&
         ($activeBuffs[entry.skill.id] ?? 0) > $abilityClock}

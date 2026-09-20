@@ -10,6 +10,7 @@
   import HousingEditorPanel from './map-editor/HousingEditorPanel.svelte'
   import CharacterPanel from './CharacterPanel.svelte'
   import InventoryPanel from './InventoryPanel.svelte'
+  import InspectionPanel from './InspectionPanel.svelte'
   import LandscapingPanel from './LandscapingPanel.svelte'
   import FurnitureShopPanel from './FurnitureShopPanel.svelte'
   import EstateStorageWindow from './EstateStorageWindow.svelte'
@@ -44,6 +45,7 @@
   import { capeTextureDialog } from '../stores/capeTextureStore'
   import WorldMapDialog from './WorldMapDialog.svelte'
   import ServerNotice from './ServerNotice.svelte'
+  import SkillFailureToast from './SkillFailureToast.svelte'
   import {
     mapEditorMode,
     worldMapVisible,
@@ -161,6 +163,8 @@
 
 <div class="game-hud" style:--cluster-width="{clusterWidth}px">
   <ServerNotice />
+  <SkillFailureToast />
+  <InspectionPanel />
   <div class="top-left-hud">
     {#if selectedCharacter && !$mapEditorMode}
       <div class="status-row">
