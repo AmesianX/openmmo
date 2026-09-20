@@ -14,8 +14,10 @@
 - stone bridge https://sketchfab.com/3d-models/stone-bridge-a5d380cd08654b508b4b643056038605
 - bridge wood https://sketchfab.com/3d-models/bridge-wood-20c090db0a7345898e20e2621fc2ba4c
 - big bridge https://sketchfab.com/3d-models/bridge-9328bbfc04a84202a6a97bd59408473a
-- bridge_wood_long.glb https://sketchfab.com/3d-models/wooden-bridge-deep-27b22af7020c4755b5cb788d75db8ee7
+- bridge_wood_long.glb — Alex Gimson의 [Wooden Bridge Deep](https://sketchfab.com/3d-models/wooden-bridge-deep-27b22af7020c4755b5cb788d75db8ee7), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
   - 2026-09-17: `tools/repack-glb-textures.py`로 base color·normal PNG를 JPEG q92 4:4:4로 변환. 1024² 해상도, 메시·UV·재질 설정·투명 충돌면은 유지. 6,519,420 → 3,651,048 bytes (44.0% 감소), 로컬 Nginx gzip level 6 전송 실측 1,795,527 bytes (원본 무압축 대비 72.5% 감소). Three.js 전체·근접 렌더 비교 및 메시 버퍼 일치 확인. 원본은 최적화 전 `assets.lock`의 SHA-256 `9a4f9a3104d22cc1d0b5eb17f4f8ef54f8aef324339577a876bc5505e7eef189`로 식별.
+  - 2026-09-20: `tools/compress-glb-meshes.mjs`로 중복 정리·정점 양자화·`EXT_meshopt_compression` 적용. 삼각형 53,666개, JPEG 2장, 투명 충돌면을 보존했다. 3,651,048 → 1,938,312 bytes; 운영과 같은 Node gzip level 6 기준 1,836,596 → 1,302,813 bytes (29.1% 감소). 게임·GLB 편집기의 Three.js 로더에 내장 MeshoptDecoder를 연결했다. 전체·근접 렌더 비교와 실제 다리 바닥 7,105점 비교에서 통행 가능 영역 변화 없음, 높이 차이 최대 0.574mm.
+  - 재생성: `npm install --prefix tools --no-save --package-lock=false @gltf-transform/core@4.4.2 @gltf-transform/extensions@4.4.2 @gltf-transform/functions@4.4.2 meshoptimizer@1.2.0` 후 `node tools/compress-glb-meshes.mjs SOURCE.glb client/public/models/objects/bridge_wood_long.glb`. 압축 전 원본 SHA-256은 `48c36af6d1a1f9eb99205f03a98a4e9bc1e2f98d4d2f641e93c718c7c6b6efb4` (`assets.lock` revision `675ce6a06ddd0742d346c66af18f0a9ca3a6aa97`). 이미 meshopt 압축된 입력은 재양자화를 피하도록 거부한다.
 - signpost.glb https://sketchfab.com/3d-models/road-sign-blacksmiths-workshop-assets-3a230f0520034890931c32539955223a
   - `client/public/items/objects/signpost.png`, `signpost_mirrored.png` — 기존 표지판 모델과 좌우 반전 모델의 ORKEA 아이콘 (2026-09-19). 원본: Kyan0s의 Road sign - Blacksmith's workshop assets, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Blender 5.2.0 LTS, 투명 배경·직교 사선 구도 512²→128². `blender -b -P tools/blender-scripts/render_furniture_icon.py -- MODEL`로 재생성한다.
 - dungeon objects https://sketchfab.com/3d-models/fps-dungeon-extras-87425249dded42aa891516c31a5b94cf
