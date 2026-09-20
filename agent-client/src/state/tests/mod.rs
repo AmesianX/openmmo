@@ -1,4 +1,5 @@
 mod dungeon_tests;
+mod estate_storage_tests;
 mod events_tests;
 mod inventory_tests;
 mod movement_tests;

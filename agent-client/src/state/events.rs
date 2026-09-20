@@ -132,7 +132,8 @@ impl SharedState {
             | ServerMessage::GroundItemRemoved { .. }
             | ServerMessage::GroundItemQuantityChanged { .. }
             | ServerMessage::TradeBusy { .. } => EventUrgency::Noise,
-            ServerMessage::FenceVisibility { .. } => EventUrgency::Noise,
+            ServerMessage::FenceVisibility { .. }
+            | ServerMessage::EstateChestVisibility { .. } => EventUrgency::Noise,
 
             // Urgent: another player attacks a monster (so we can join in)
             ServerMessage::PlayerAttacked { player_id, .. } => {
@@ -334,6 +335,7 @@ impl SharedState {
                     world.remove_house_view(viewer);
                     world.remove_dungeon_view(viewer);
                     world.remove_fence_view(viewer);
+                    world.remove_estate_chest_view(viewer);
                     drop(world);
                     self.nearby_players.clear();
                     self.nearby_monsters.clear();
@@ -382,6 +384,13 @@ impl SharedState {
                             }
                         }
                         self.terrain_notify.notify_one();
+                        continue;
+                    }
+                    if event.subject.starts_with("chest:") {
+                        self.world_cache
+                            .write()
+                            .unwrap()
+                            .apply_estate_chest_event(viewer, event);
                         continue;
                     }
                     if event.subject.starts_with("fence:") {
@@ -436,7 +445,9 @@ impl SharedState {
         match &msg {
             ServerMessage::JoinSuccess { player, .. } => {
                 if let Some(id) = self.self_player_id {
-                    self.world_cache.write().unwrap().remove_fence_view(id);
+                    let mut world = self.world_cache.write().unwrap();
+                    world.remove_fence_view(id);
+                    world.remove_estate_chest_view(id);
                 }
                 self.in_game = true;
                 self.self_player_id = Some(player.id);
@@ -942,6 +953,14 @@ impl SharedState {
                         .write()
                         .unwrap()
                         .update_fences(id, added, removed);
+                }
+            }
+            ServerMessage::EstateChestVisibility { added, removed } => {
+                if let Some(id) = self.self_player_id {
+                    self.world_cache
+                        .write()
+                        .unwrap()
+                        .update_estate_chests(id, added, removed);
                 }
             }
             ServerMessage::TradeBusy { busy } => {

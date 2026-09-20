@@ -8,6 +8,7 @@ impl Drop for SharedState {
         if let Some(id) = self.self_player_id {
             if let Ok(mut world) = self.world_cache.write() {
                 world.remove_fence_view(id);
+                world.remove_estate_chest_view(id);
                 world.remove_house_view(id);
                 world.remove_dungeon_view(id);
             }

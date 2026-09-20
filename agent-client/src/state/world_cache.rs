@@ -1,4 +1,7 @@
 use super::*;
+use onlinerpg_shared::estate_storage::EstateChest;
+
+mod estate_storage;
 
 /// Versioned world bodies and collision shared by independent NPC views.
 pub struct WorldCache {
@@ -29,6 +32,10 @@ pub struct WorldCache {
     fence_revisions: HashMap<String, u64>,
     fence_deleted: HashSet<String>,
     fence_bodies: HashMap<String, onlinerpg_shared::fence::Fence>,
+    estate_chest_views: HashMap<PlayerId, HashSet<i64>>,
+    estate_chests: HashMap<i64, EstateChest>,
+    estate_chest_revisions: HashMap<i64, u64>,
+    estate_chest_deleted: HashSet<i64>,
 }
 
 impl WorldCache {
@@ -79,6 +86,7 @@ impl WorldCache {
         for viewer in viewers {
             self.remove_fence_view(viewer);
         }
+        self.clear_estate_chests();
         self.world_epoch = epoch.to_owned();
         true
     }
@@ -103,6 +111,14 @@ impl WorldCache {
                         .house_views
                         .get(&viewer)
                         .is_some_and(|ids| ids.contains(id))
+            } else if let Some(id) = subject.strip_prefix("chest:") {
+                id.parse().is_ok_and(|id| {
+                    self.estate_chests.contains_key(&id)
+                        && self
+                            .estate_chest_views
+                            .get(&viewer)
+                            .is_some_and(|ids| ids.contains(&id))
+                })
             } else if subject.starts_with("door:") || subject.starts_with("prop:") {
                 self.dungeon_cached.contains(subject)
                     && self
@@ -214,6 +230,10 @@ impl WorldCache {
             fence_revisions: HashMap::new(),
             fence_deleted: HashSet::new(),
             fence_bodies: HashMap::new(),
+            estate_chest_views: HashMap::new(),
+            estate_chests: HashMap::new(),
+            estate_chest_revisions: HashMap::new(),
+            estate_chest_deleted: HashSet::new(),
         }
     }
 
