@@ -400,6 +400,7 @@ pub struct SharedState {
     /// A path that produced a refused step will produce it again, so movers
     /// watch this and abandon the path instead of grinding the same wall.
     pub position_corrections: u32,
+    pending_movement_ack: Option<u64>,
     pub last_correction_at: Option<std::time::Instant>,
     pub mount_recovery_id: u32,
     pub mount_recovery_result: Option<bool>,
@@ -517,6 +518,7 @@ impl SharedState {
             game_minute: None,
             self_floor_level: 0,
             position_corrections: 0,
+            pending_movement_ack: None,
             last_correction_at: None,
             mount_recovery_id: 0,
             mount_recovery_result: None,

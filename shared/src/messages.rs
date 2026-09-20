@@ -371,6 +371,14 @@ pub enum ClientMessage {
     /// The scene has finished compiling, so the player can be hit again. See
     /// `entity::WORLD_LOADING_GRACE_MS`.
     WorldReady,
+    PlayerMovementSample {
+        position: Position,
+        rotation: f32,
+        floor_level: i8,
+    },
+    MovementResyncAck {
+        resync_id: u64,
+    },
     /// Start an arc turn from the authoritative position or cancel it.
     PlayerMountTurn {
         rotation: f32,
@@ -1709,6 +1717,12 @@ pub enum ServerMessage {
         #[serde(default)]
         floor_level: i8,
     },
+    MovementResync {
+        resync_id: u64,
+        position: Position,
+        rotation: f32,
+        floor_level: i8,
+    },
     /// Direct to the owner only (exact satiation is private, doc/HUNGER.md).
     /// Sent on band transitions, eating and debuff changes — not on every
     /// decay tick. Carries the effective multipliers (hunger × debuffs) so
@@ -2021,6 +2035,7 @@ impl ServerMessage {
             | Self::DealResult { .. }
             | Self::MountRecovery { .. }
             | Self::PositionCorrected { .. }
+            | Self::MovementResync { .. }
             | Self::HungerUpdate { .. }
             | Self::DebuffUpdate { .. }
             | Self::StallState { .. }

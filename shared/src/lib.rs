@@ -178,7 +178,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v87: ORKEA checkout and editable estate decorations.
 /// v88: moving placed estate furniture.
 /// v89: showroom selections notify the furniture clerk.
-pub const PROTOCOL_VERSION: u32 = 89;
+/// v90: movement samples and acknowledged authoritative movement resync.
+pub const PROTOCOL_VERSION: u32 = 90;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

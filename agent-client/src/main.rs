@@ -462,6 +462,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PlayerTeleported { .. } => "PlayerTeleported",
         ServerMessage::MountRecovery { .. } => "MountRecovery",
         ServerMessage::PositionCorrected { .. } => "PositionCorrected",
+        ServerMessage::MovementResync { .. } => "MovementResync",
         ServerMessage::DungeonChestOpened { .. } => "DungeonChestOpened",
         ServerMessage::DungeonPropBroken { .. } => "DungeonPropBroken",
         ServerMessage::DungeonPropOpened { .. } => "DungeonPropOpened",

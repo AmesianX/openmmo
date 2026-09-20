@@ -316,6 +316,7 @@
   // state drops that data, so there are no movement flags to reset here.
   // lastSentPosition is kinematic (send dedup), not state-membership data.
   let lastSentPosition = $state<Position | null>(null)
+  let lastMovementSampleAt = 0
   let mountRecoveryId = 0
   let mountRecoveryAttempted = false
   let mountRecovery: {
@@ -859,6 +860,45 @@
   }
 
   function applyPositionCorrection(correction: PositionCorrection) {
+    if (correction.resyncId !== undefined) {
+      const moving = movingState()
+      const goal = moving?.waypoints.at(-1)
+      const destination = goal
+        ? {
+            x: goal.x,
+            y: waypointHeight(goal.floor, goal.x, goal.z),
+            z: goal.z,
+          }
+        : null
+      const approach = moving?.approach
+      const sprinting = clickSprinting
+      mountRecovery = null
+      mountRecoveryAttempted = false
+      keyboardMoveSender.reset()
+      keyboardSpeedRamp.reset()
+      lastSentPosition = null
+      lastSentFloorLevel = null
+      lastMovementSampleAt = 0
+      currentSpeed = 0
+      clearStandUpTimer()
+      playerRotation = correction.rotation
+      writePlayerPosition(correction, correction.rotation)
+      transitionTo('idle')
+      updatePlayerState()
+      networkManager.acknowledgeMovementResync(correction.resyncId)
+      if (autoTravelTarget) {
+        travelPlanCooldownMs = 0
+        travelStalledMs = 0
+        travelProgressPosition = null
+      } else if (destination && !combatController.isInCombat) {
+        handleClickToMove(destination, {
+          approach,
+          sprinting,
+          recovering: true,
+        })
+      }
+      return
+    }
     if (mountRecovery) return
     keyboardMoveSender.reset()
     keyboardSpeedRamp.reset()
@@ -2464,6 +2504,20 @@
       if (currentPlayer) clearDaggerCast(currentPlayer.id)
     }
     playerControlMachine.update(deltaTime, options)
+    const now = performance.now()
+    if (
+      !options.editorMode &&
+      currentPlayer &&
+      currentPlayer.health > 0 &&
+      now - lastMovementSampleAt >= 200
+    ) {
+      lastMovementSampleAt = now
+      networkManager.sendMovementSample(
+        currentPlayer.position,
+        playerRotation,
+        wireFloorLevel()
+      )
+    }
   }
 
   // Hover overlays: signpost speech bubble, ground-item, prop and monster names.

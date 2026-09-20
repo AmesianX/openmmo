@@ -165,7 +165,7 @@ impl LayoutGrind {
 /// speed.
 #[derive(Clone, serde::Serialize)]
 pub(super) struct MoveIntent {
-    request: Option<movement_audit::Request>,
+    pub(super) request: Option<movement_audit::Request>,
     keyboard_forward: Option<i8>,
     keyboard_speed: f32,
     turn_only: bool,
@@ -968,6 +968,9 @@ impl super::GameState {
         keyboard_forward: Option<i8>,
     ) {
         let received_ms = Self::now_ms();
+        if self.movement_resync_pending(player_id) {
+            return;
+        }
         let MoveCommand {
             position: mut new_position,
             rotation: new_rotation,
@@ -1088,12 +1091,15 @@ impl super::GameState {
             self.clear_pose_on_move(player_id, "move").await;
         }
         let mut queues = self.movement_intents.write().await;
-        let Some((current_mount, current_y)) = self
+        if self.movement_resync_pending(player_id) {
+            return;
+        }
+        let Some((current_mount, current_y, authoritative_pose)) = self
             .players
             .read()
             .await
             .get(player_id)
-            .map(|p| (p.mount, p.position.y))
+            .map(|p| (p.mount, p.position.y, Pose::from(p)))
         else {
             return;
         };
@@ -1109,6 +1115,43 @@ impl super::GameState {
         }
         let queue = queues.entry(*player_id).or_default();
         let queue_before = queue.len();
+        if append && !is_official_npc && queue_before >= super::movement_sync::RESYNC_QUEUE_LENGTH {
+            if let Some(resync_id) = self.begin_movement_resync(*player_id) {
+                self.record_recovery_cancel(*player_id, queue, "queue_resync");
+                queue.clear();
+                self.movement_audit.correction(
+                    *player_id,
+                    authoritative_pose.position,
+                    authoritative_pose.floor,
+                );
+                {
+                    let mut versions = self.player_movement_versions.write().await;
+                    let version = versions.entry(*player_id).or_default();
+                    *version = version.wrapping_add(1);
+                }
+                drop(queues);
+                self.log_movement_sync(
+                    *player_id,
+                    "queue_resync",
+                    serde_json::json!({
+                        "resync_id": resync_id, "queue_len": queue_before,
+                        "authoritative_pose": authoritative_pose, "rejected_move": cmd,
+                    }),
+                    true,
+                );
+                self.send_direct_message(
+                    player_id,
+                    ServerMessage::MovementResync {
+                        resync_id,
+                        position: authoritative_pose.position,
+                        rotation: authoritative_pose.rotation,
+                        floor_level: authoritative_pose.floor,
+                    },
+                )
+                .await;
+            }
+            return;
+        }
         let keyboard_speed = queue
             .front()
             .filter(|intent| keyboard_forward == Some(1) && intent.keyboard_forward == Some(1))

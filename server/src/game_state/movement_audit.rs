@@ -1,3 +1,4 @@
+use super::movement_sync::SyncHistory;
 use crate::types::{Player, PlayerId, Position};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -86,6 +87,7 @@ struct RecoveryEvent {
 
 #[derive(Default)]
 struct History {
+    sync: SyncHistory,
     requests: VecDeque<Request>,
     ticks: VecDeque<Tick>,
     requests_evicted: u64,
@@ -111,15 +113,17 @@ impl History {
         Snapshot {
             requests: self.requests.iter().copied().collect(),
             ticks: self.ticks.iter().cloned().collect(),
-            requests_evicted: self.requests_evicted,
-            ticks_evicted: self.ticks_evicted,
-            corrections: self.corrections,
-            overflows: self.overflows,
-            last_correction: self.last_correction,
-            recovery_requests: self.recovery_requests,
-            recovery_traces_suppressed: self.recovery_traces_suppressed,
             recovery_events: self.recovery_events.iter().cloned().collect(),
-            recovery_events_evicted: self.recovery_events_evicted,
+            counters: SnapshotCounters {
+                requests_evicted: self.requests_evicted,
+                ticks_evicted: self.ticks_evicted,
+                corrections: self.corrections,
+                overflows: self.overflows,
+                last_correction: self.last_correction,
+                recovery_requests: self.recovery_requests,
+                recovery_traces_suppressed: self.recovery_traces_suppressed,
+                recovery_events_evicted: self.recovery_events_evicted,
+            },
         }
     }
 }
@@ -128,6 +132,13 @@ impl History {
 pub(super) struct Snapshot {
     requests: Vec<Request>,
     ticks: Vec<Tick>,
+    recovery_events: Vec<RecoveryEvent>,
+    #[serde(flatten)]
+    counters: SnapshotCounters,
+}
+
+#[derive(Serialize)]
+struct SnapshotCounters {
     requests_evicted: u64,
     ticks_evicted: u64,
     corrections: u64,
@@ -135,8 +146,42 @@ pub(super) struct Snapshot {
     last_correction: Option<Correction>,
     recovery_requests: u64,
     recovery_traces_suppressed: u64,
-    recovery_events: Vec<RecoveryEvent>,
     recovery_events_evicted: u64,
+}
+
+impl Snapshot {
+    pub(super) fn log_sync_parts(&self, trace_id: u64, player_id: PlayerId) {
+        emit_sync_parts(trace_id, player_id, "requests", &self.requests);
+        emit_sync_parts(trace_id, player_id, "ticks", &self.ticks);
+        emit_sync_parts(
+            trace_id,
+            player_id,
+            "recovery_events",
+            &self.recovery_events,
+        );
+        emit_sync_parts(
+            trace_id,
+            player_id,
+            "counters",
+            std::slice::from_ref(&self.counters),
+        );
+    }
+}
+
+pub(super) fn emit_sync_parts<T: Serialize>(
+    trace_id: u64,
+    player_id: PlayerId,
+    kind: &str,
+    entries: &[T],
+) {
+    let parts = entries.len().div_ceil(2);
+    for (part, entries) in entries.chunks(2).enumerate() {
+        let detail = serde_json::json!({
+            "schema": 2, "trace_id": trace_id, "player_id": player_id, "kind": kind,
+            "part": part, "parts": parts, "entries": entries,
+        });
+        tracing::info!(target: "movement_audit", detail = %detail, "Movement sync history");
+    }
 }
 
 #[derive(Default)]
@@ -145,6 +190,33 @@ pub(super) struct MovementAudit {
 }
 
 impl MovementAudit {
+    pub(super) fn with_sync<R>(
+        &self,
+        id: PlayerId,
+        f: impl FnOnce(&mut SyncHistory) -> R,
+    ) -> Option<R> {
+        let mut histories = self.histories.lock().expect("movement audit");
+        histories.get_mut(&id).map(|history| f(&mut history.sync))
+    }
+
+    pub(super) fn sync_trace(&self, id: PlayerId) -> Option<Snapshot> {
+        self.histories
+            .lock()
+            .expect("movement audit")
+            .get(&id)
+            .map(History::snapshot)
+    }
+
+    pub(super) fn last_tick(&self, id: PlayerId) -> Option<Tick> {
+        self.histories
+            .lock()
+            .expect("movement audit")
+            .get(&id)?
+            .ticks
+            .back()
+            .cloned()
+    }
+
     pub fn register(&self, id: PlayerId) {
         self.histories
             .lock()

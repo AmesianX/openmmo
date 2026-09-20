@@ -183,7 +183,7 @@ async fn movement_audit_links_raw_request_queue_tick_and_correction() {
 async fn movement_audit_bounds_history_tracks_overflow_and_cleans_up() {
     let (game, id) = orc_player("trace_bounds").await;
     for _ in 0..40 {
-        game.update_player_position(&id, command(-1637.8, 4890.8, true), false)
+        game.update_player_position(&id, command(-1637.8, 4890.8, true), true)
             .await;
     }
     let now = Instant::now();
@@ -238,7 +238,7 @@ async fn movement_audit_keeps_blocked_intent_after_request_history_eviction() {
     async {
         game.update_player_position(&id, command(-1637.8, 4891.3, false), false)
             .await;
-        for _ in 0..31 {
+        for _ in 0..23 {
             game.update_player_position(&id, command(-1637.8, 4890.8, true), false)
                 .await;
         }
@@ -261,13 +261,13 @@ async fn movement_audit_keeps_blocked_intent_after_request_history_eviction() {
         request["raw"]["position"]["z"],
         serde_json::json!(4891.3_f32)
     );
-    assert_eq!(trace["history"]["requests_evicted"], 16);
+    assert_eq!(trace["history"]["requests_evicted"], 8);
     assert!(trace["history"]["requests"]
         .as_array()
         .unwrap()
         .iter()
         .all(|r| r["id"] != request["id"]));
-    assert_eq!(trace["step"]["queue"].as_array().unwrap().len(), 32);
+    assert_eq!(trace["step"]["queue"].as_array().unwrap().len(), 24);
     assert_eq!(trace["step"]["queue"][0]["request_id"], request["id"]);
 }
 
@@ -301,7 +301,7 @@ async fn movement_audit_traces_waypoint_overflow_once_per_interval() {
     let sent = super::super::player::MAX_QUEUED_WAYPOINTS + 8;
     async {
         for _ in 0..sent {
-            game.update_player_position(&id, command(-1637.8, 4890.8, true), false)
+            game.update_player_position(&id, command(-1637.8, 4890.8, true), true)
                 .await;
         }
         game.tick_player_movement(0.2).await;
@@ -344,6 +344,105 @@ async fn movement_audit_traces_waypoint_overflow_once_per_interval() {
     let tick = later["ticks"].as_array().unwrap().last().unwrap();
     assert_eq!(tick["hunger_mult"], 1.0);
     assert_eq!(tick["sprint_allowed"], true);
+}
+
+#[tokio::test]
+async fn queue_resync_logs_authority_history_and_ack_with_discarded_count() {
+    let (game, id) = orc_player("resync_audit").await;
+    let mut rx = game.register_direct_channel(&id).await;
+    let subscriber = trace_capture();
+    let buffer = subscriber.0.clone();
+    async {
+        for _ in 0..30 {
+            game.update_player_position(&id, command(-1637.8, 4890.8, true), false)
+                .await;
+        }
+        let message = std::iter::from_fn(|| rx.try_recv().ok())
+            .find(|m| matches!(m, ServerMessage::MovementResync { .. }))
+            .unwrap();
+        let ServerMessage::MovementResync {
+            resync_id,
+            position,
+            floor_level,
+            ..
+        } = message
+        else {
+            unreachable!()
+        };
+        assert_eq!(position, game.players.read().await[&id].position);
+        assert_eq!(floor_level, -6);
+        game.acknowledge_movement_resync(&id, resync_id);
+    }
+    .with_subscriber(subscriber)
+    .await;
+    let traces: Vec<_> = buffer
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|v| v["player_id"] == serde_json::json!(id))
+        .cloned()
+        .collect();
+    let header = traces
+        .iter()
+        .find(|v| v["event"] == "queue_resync")
+        .unwrap();
+    assert_eq!(header["detail"]["queue_len"], 24);
+    let requests: Vec<_> = traces
+        .iter()
+        .filter(|v| v["trace_id"] == header["trace_id"] && v["kind"] == "requests")
+        .collect();
+    assert_eq!(requests.len(), 8);
+    for (i, part) in requests.iter().enumerate() {
+        assert_eq!(part["part"], i);
+        assert_eq!(part["parts"], requests.len());
+        assert_eq!(part["entries"].as_array().unwrap().len(), 2);
+    }
+    let ack = traces
+        .iter()
+        .find(|v| v["event"] == "resync_acknowledged")
+        .unwrap();
+    assert_eq!(ack["detail"]["resync_id"], header["detail"]["resync_id"]);
+    assert_eq!(ack["detail"]["discarded_messages"], 5);
+}
+
+#[tokio::test]
+async fn movement_samples_use_actual_pose_not_a_distant_destination_and_wrap_x() {
+    let (game, id) = orc_player("sample_position").await;
+    let position = game.players.read().await[&id].position;
+    game.update_player_position(&id, command(position.x + 10.0, position.z, false), false)
+        .await;
+    let subscriber = trace_capture();
+    let buffer = subscriber.0.clone();
+    async {
+        game.record_movement_sample(
+            &id,
+            Position {
+                x: position.x + onlinerpg_shared::WORLD_WIDTH_X,
+                ..position
+            },
+            0.0,
+            -6,
+        )
+        .await;
+        game.log_movement_sync(id, "test_sample", serde_json::json!({}), true);
+    }
+    .with_subscriber(subscriber)
+    .await;
+    let traces: Vec<_> = buffer
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|v| v["player_id"] == serde_json::json!(id))
+        .cloned()
+        .collect();
+    let sample = &traces.iter().find(|v| v["kind"] == "samples").unwrap()["entries"][0];
+    assert!(sample["gap"].as_f64().unwrap() < 0.01);
+    assert_eq!(sample["queue_len"], 1);
+    assert_eq!(
+        sample["server_pose"]["position"],
+        serde_json::to_value(position).unwrap()
+    );
+    assert!(!traces.iter().any(|v| v["event"] == "divergence_started"));
 }
 
 #[tokio::test]

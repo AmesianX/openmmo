@@ -463,6 +463,26 @@ impl SharedState {
                 }
                 return EventUrgency::Noise;
             }
+            ServerMessage::MovementResync {
+                resync_id,
+                position,
+                rotation,
+                floor_level,
+            } => {
+                self.relocate_self(*position, *rotation, *floor_level);
+                self.cancel_mount_recovery();
+                self.pending_movement_ack = Some(*resync_id);
+                self.pending_commands.retain(|message| {
+                    !matches!(
+                        message,
+                        ClientMessage::PlayerMove { .. }
+                            | ClientMessage::PlayerKeyboardMove { .. }
+                            | ClientMessage::PlayerMountTurn { .. }
+                            | ClientMessage::PlayerMountRecover { .. }
+                            | ClientMessage::PlayerFloorChanged { .. }
+                    )
+                });
+            }
             ServerMessage::PositionCorrected {
                 position,
                 rotation,
@@ -1171,7 +1191,8 @@ impl SharedState {
             | ServerMessage::MonsterMoved { .. }
             | ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
-            | ServerMessage::PositionCorrected { .. } => {
+            | ServerMessage::PositionCorrected { .. }
+            | ServerMessage::MovementResync { .. } => {
                 self.check_sightings();
             }
             ServerMessage::PlayerMoved { player_id, .. }

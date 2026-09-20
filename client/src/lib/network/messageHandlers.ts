@@ -928,17 +928,19 @@ export function handleServerMessage(
       break
     }
 
+    case 'MovementResync':
     case 'PositionCorrected': {
-      // No id to match: it only ever goes to the player it corrects.
-      if (performance.now() - lastCorrection < 3000) resyncWorld()
-      lastCorrection = performance.now()
-      // A correction is how a refused floor claim comes back.
+      if (type === 'PositionCorrected') {
+        if (performance.now() - lastCorrection < 3000) resyncWorld()
+        lastCorrection = performance.now()
+      }
       syncOwnFloor(data.floor_level, data.position.x, data.position.z)
       events.positionCorrected.emit({
         x: data.position.x,
         y: data.position.y,
         z: data.position.z,
         rotation: data.rotation,
+        resyncId: type === 'MovementResync' ? data.resync_id : undefined,
       })
       break
     }

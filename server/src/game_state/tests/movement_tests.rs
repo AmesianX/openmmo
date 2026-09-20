@@ -328,27 +328,42 @@ async fn replace_drops_queued_waypoints() {
 }
 
 #[tokio::test]
-async fn full_waypoint_queue_drops_oldest_leg() {
-    let game_state = make_test_game_state("movement_queue_cap");
+async fn approaching_full_queue_resyncs_and_rejects_old_moves_until_ack() {
+    let game = make_test_game_state("movement_queue_resync");
     let player_id = pid("spammer");
-    game_state
-        .add_player(make_player("spammer", 0.0, 0.0))
-        .await;
-
-    game_state
-        .update_player_position(&player_id, move_cmd(pos(1.0), false), false)
-        .await;
-    for i in 2..=40 {
-        game_state
-            .update_player_position(&player_id, move_cmd(pos(i as f32), true), false)
+    game.add_player(make_player("spammer", 0.0, 0.0)).await;
+    let mut rx = game.register_direct_channel(&player_id).await;
+    for i in 1..=40 {
+        game.update_player_position(&player_id, move_cmd(pos(i as f32), i > 1), false)
             .await;
     }
-
-    // Overflow evicts from the front, so the tail survives and the sim still
-    // reaches the client's final position (a reject-newest policy would strand
-    // the player at 32).
-    game_state.tick_player_movement(600.0).await;
-    assert_eq!(player_x(&game_state, &player_id).await, 40.0);
+    let messages = drain(&mut rx);
+    let corrections: Vec<_> = messages
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::MovementResync {
+                resync_id,
+                position,
+                ..
+            } => Some((*resync_id, *position)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(corrections.len(), 1);
+    let (resync_id, position) = corrections[0];
+    assert_eq!(position, pos(0.0));
+    game.tick_player_movement(600.0).await;
+    assert_eq!(player_x(&game, &player_id).await, 0.0);
+    game.acknowledge_movement_resync(&player_id, resync_id + 1);
+    game.update_player_position(&player_id, move_cmd(pos(40.0), false), false)
+        .await;
+    game.tick_player_movement(1.0).await;
+    assert_eq!(player_x(&game, &player_id).await, 0.0);
+    game.acknowledge_movement_resync(&player_id, resync_id);
+    game.update_player_position(&player_id, move_cmd(pos(1.0), false), false)
+        .await;
+    game.tick_player_movement(1.0).await;
+    assert_eq!(player_x(&game, &player_id).await, 1.0);
 }
 
 #[tokio::test]

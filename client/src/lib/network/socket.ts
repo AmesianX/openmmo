@@ -489,6 +489,16 @@ class NetworkManager {
     this.sendMessage({ PlayerMountRecover: { request_id: requestId, goal } })
   }
 
+  sendMovementSample(position: Position, rotation: number, floorLevel: number) {
+    this.sendMessage({
+      PlayerMovementSample: { position, rotation, floor_level: floorLevel },
+    })
+  }
+
+  acknowledgeMovementResync(resyncId: number) {
+    this.sendMessage({ MovementResyncAck: { resync_id: resyncId } })
+  }
+
   sendPlayerMountTurn(rotation: number, stop = false, sprinting = false) {
     this.sendMessage({ PlayerMountTurn: { rotation, stop, sprinting } })
   }

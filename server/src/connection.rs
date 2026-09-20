@@ -849,6 +849,21 @@ async fn handle_client_message(
         });
     }
 
+    if matches!(
+        client_msg,
+        ClientMessage::PlayerMove { .. }
+            | ClientMessage::PlayerKeyboardMove { .. }
+            | ClientMessage::PlayerMountTurn { .. }
+            | ClientMessage::PlayerMountRecover { .. }
+            | ClientMessage::PlayerFloorChanged { .. }
+            | ClientMessage::PlayerMovementSample { .. }
+    ) && state
+        .player_id
+        .is_some_and(|id| game_state.movement_resync_pending(&id))
+    {
+        return Ok(vec![]);
+    }
+
     match client_msg {
         ClientMessage::Authenticate { google_id_token } => {
             let Some(verifier) = &auth_ctx.google else {
@@ -1375,6 +1390,22 @@ async fn handle_client_message(
             return Ok(responses);
         }
 
+        ClientMessage::PlayerMovementSample {
+            position,
+            rotation,
+            floor_level,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .record_movement_sample(id, position, rotation, floor_level)
+                    .await;
+            }
+        }
+        ClientMessage::MovementResyncAck { resync_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.acknowledge_movement_resync(id, resync_id);
+            }
+        }
         ClientMessage::PlayerMountRecover { request_id, goal } => {
             if let Some(id) = &state.player_id {
                 game_state.recover_horse(id, request_id, goal).await;

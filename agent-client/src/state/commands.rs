@@ -49,6 +49,12 @@ impl SharedState {
         msg: ClientMessage,
         from_action: bool,
     ) -> anyhow::Result<()> {
+        if let Some(resync_id) = self.pending_movement_ack {
+            self.cmd_tx
+                .send(ClientMessage::MovementResyncAck { resync_id })
+                .await?;
+            self.pending_movement_ack = None;
+        }
         if matches!(
             &msg,
             ClientMessage::PlayerMove { .. }
@@ -140,6 +146,10 @@ impl SharedState {
 
     /// Drain pending commands (from monster AI reactions, spawn requests, etc.)
     pub fn drain_pending_commands(&mut self) -> Vec<ClientMessage> {
-        std::mem::take(&mut self.pending_commands)
+        let mut commands = std::mem::take(&mut self.pending_commands);
+        if let Some(resync_id) = self.pending_movement_ack.take() {
+            commands.insert(0, ClientMessage::MovementResyncAck { resync_id });
+        }
+        commands
     }
 }

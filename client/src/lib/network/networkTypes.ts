@@ -124,6 +124,14 @@ export type RollCharacterStatsResult =
 // Serde externally tagged enum shapes
 export type ClientMessage =
   | {
+      PlayerMovementSample: {
+        position: Position
+        rotation: number
+        floor_level: number
+      }
+    }
+  | { MovementResyncAck: { resync_id: number } }
+  | {
       PlayerKeyboardMove: {
         position: Position
         rotation: number
@@ -537,6 +545,7 @@ export type PositionCorrection = {
   y: number
   z: number
   rotation: number
+  resyncId?: number
 }
 
 export type MountRecovery = {

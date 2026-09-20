@@ -200,6 +200,7 @@ mod deals;
 mod debuff;
 pub(crate) mod fishing;
 mod movement_audit;
+mod movement_sync;
 pub(crate) use deals::band_invariant_holds;
 /// Only the tests name the id from outside; the logic lives in debuff.rs.
 #[cfg(test)]
