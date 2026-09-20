@@ -156,7 +156,8 @@ export function abilityRequirementsNotMet(name: string) {
 }
 
 export function abilityEquipmentNotMet(id: string) {
-  if (id === AUSCULTATION.id) return 'You need a stethoscope.'
+  if (id === AUSCULTATION.id) return 'Equip a stethoscope to use Auscultation.'
+  if (id === DOUBLE_SLASH.id) return 'Equip a dagger to use Double Slash.'
   return abilityRequirementsNotMet(getAbility(id)?.name ?? id)
 }
 

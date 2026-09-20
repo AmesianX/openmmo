@@ -3,29 +3,20 @@
   import {
     DOUBLE_SLASH,
     AUSCULTATION,
-    abilityEquipmentNotMet,
     getAbility,
     isAbilityAvailable,
     abilityEquipmentAllowed,
   } from '../data/abilities'
-  import { combatController } from '../managers/combatController'
-  import { monsterManager } from '../managers/monsterManager'
   import {
     daggerSkillState,
     daggerSkillClock,
-    queueDaggerSkill,
   } from '../stores/daggerSkillStore'
-  import {
-    gameStore,
-    reportSkillFailure,
-    hoveredMonsterId,
-  } from '../stores/gameStore'
-  import { isMounted } from '../utils/mounts'
+  import { gameStore } from '../stores/gameStore'
+  import { useAbility } from '../utils/useAbility'
   import {
     abilityCooldowns,
     abilityPending,
     abilityClock,
-    beginAbility,
     activeBuffs,
   } from '../stores/abilityStore'
   import { skillTooltip } from '../actions/skillTooltip'
@@ -45,7 +36,6 @@
   import { instrumentPanelVisible } from '../stores/instrumentStore'
   import {
     inspectionTargeting,
-    queueInspection,
     cancelInspection,
   } from '../stores/inspectionStore'
 
@@ -90,59 +80,11 @@
   function useSlot(index: number) {
     const entry = slots[index]
     if (!entry) return
-    if (entry.kind !== 'ability' || entry.skill.id !== AUSCULTATION.id)
-      cancelInspection()
     if (entry.kind === 'ability') {
-      if (!$gameStore.currentPlayer) return
-      if ($gameStore.currentPlayer.health <= 0) {
-        reportSkillFailure('You cannot use skills while dead.')
-        return
-      }
-      if (isMounted($gameStore.currentPlayer)) {
-        reportSkillFailure('You cannot use skills while mounted.')
-        return
-      }
-      if (!abilityEquipmentAllowed(entry.skill.id, $inventoryStore.equipped)) {
-        reportSkillFailure(abilityEquipmentNotMet(entry.skill.id))
-        return
-      }
-      if (entry.skill.manaCost > ($manaState?.mana ?? 0)) {
-        reportSkillFailure('Not enough mana.')
-        return
-      }
-      const cooldownUntil =
-        entry.skill.id === DOUBLE_SLASH.id
-          ? $daggerSkillState.cooldownUntil
-          : ($abilityCooldowns[entry.skill.id] ?? 0)
-      if (cooldownUntil > Date.now()) {
-        reportSkillFailure(`${entry.skill.name} is not ready yet.`)
-        return
-      }
-      if (entry.skill.id === AUSCULTATION.id) {
-        queueInspection($inventoryStore.equipped)
-        return
-      }
-      if (entry.skill.id === DOUBLE_SLASH.id) {
-        queueDaggerSkill()
-        return
-      }
-      const needsTarget =
-        'target' in entry.skill && entry.skill.target === 'monster'
-      const target = needsTarget
-        ? combatController.getAbilityTarget($hoveredMonsterId, (id) =>
-            monsterManager.monsters.get(id)
-          )
-        : null
-      if (needsTarget && !target) {
-        reportSkillFailure(
-          `Select or hover over a target for ${entry.skill.name}.`
-        )
-        return
-      }
-      if (beginAbility(entry.skill.id))
-        networkManager.sendUseAbility(entry.skill.id, target)
+      useAbility(entry.skill.id)
       return
     }
+    cancelInspection()
     const action = quickslotAction(entry.def, entry)
     if (!action) return
     if (action.kind === 'unequip') networkManager.sendUnequipItem(action.slot)
@@ -359,17 +301,13 @@
     color: #e06c6c;
   }
 
-  /* Very narrow (<1000px): wrap the 10 slots into exactly two rows of five.
-     The width is pinned to five slots wide and the action cluster is rigid
-     (flex-shrink:0 in GameHud), so the bar can never be squeezed into a third
-     or fourth row — the chat panel takes all the shrinking instead. */
+  /* Keep narrow screens at two rows of five slots. */
   @media (max-width: 999.98px) {
     .quickslot-bar {
       flex-wrap: wrap;
       justify-content: center;
       --quickslot-size: 40px;
-      /* Exactly five slots + four gaps per row (+1px guards against rounding
-         bumping the fifth slot to a new row). */
+      /* Include 1px for rounding. */
       width: calc(5 * var(--quickslot-size) + 4 * var(--quickslot-gap) + 1px);
       max-width: calc(100vw - 18px);
     }

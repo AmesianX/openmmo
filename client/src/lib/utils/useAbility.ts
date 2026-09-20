@@ -1,0 +1,76 @@
+import { get } from 'svelte/store'
+import {
+  AUSCULTATION,
+  DOUBLE_SLASH,
+  abilityEquipmentAllowed,
+  abilityEquipmentNotMet,
+  getAbility,
+  isAbilityAvailable,
+} from '../data/abilities'
+import { combatController } from '../managers/combatController'
+import { monsterManager } from '../managers/monsterManager'
+import { networkManager } from '../network/socket'
+import { abilityCooldowns, beginAbility } from '../stores/abilityStore'
+import { daggerSkillState, queueDaggerSkill } from '../stores/daggerSkillStore'
+import {
+  gameStore,
+  hoveredMonsterId,
+  reportSkillFailure,
+} from '../stores/gameStore'
+import { cancelInspection, queueInspection } from '../stores/inspectionStore'
+import { inventoryStore } from '../stores/inventoryStore'
+import { manaState } from '../stores/manaStore'
+import { isMounted } from './mounts'
+
+export function useAbility(id: string) {
+  const ability = getAbility(id)
+  const player = get(gameStore).currentPlayer
+  if (!ability || !player || !isAbilityAvailable(id, player.characterClass))
+    return
+  if (id !== AUSCULTATION.id) cancelInspection()
+  if (player.health <= 0) {
+    reportSkillFailure('You cannot use skills while dead.')
+    return
+  }
+  if (isMounted(player)) {
+    reportSkillFailure('You cannot use skills while mounted.')
+    return
+  }
+  const { equipped } = get(inventoryStore)
+  if (!abilityEquipmentAllowed(ability.id, equipped)) {
+    reportSkillFailure(abilityEquipmentNotMet(id))
+    return
+  }
+  if (ability.manaCost > (get(manaState)?.mana ?? 0)) {
+    reportSkillFailure('Not enough mana.')
+    return
+  }
+  const cooldownUntil =
+    ability.id === DOUBLE_SLASH.id
+      ? get(daggerSkillState).cooldownUntil
+      : (get(abilityCooldowns)[ability.id] ?? 0)
+  if (cooldownUntil > Date.now()) {
+    reportSkillFailure(`${ability.name} is not ready yet.`)
+    return
+  }
+  if (ability.id === AUSCULTATION.id) {
+    queueInspection(equipped)
+    return
+  }
+  if (ability.id === DOUBLE_SLASH.id) {
+    queueDaggerSkill()
+    return
+  }
+  const needsTarget = 'target' in ability && ability.target === 'monster'
+  const target = needsTarget
+    ? combatController.getAbilityTarget(get(hoveredMonsterId), (monsterId) =>
+        monsterManager.monsters.get(monsterId)
+      )
+    : null
+  if (needsTarget && !target) {
+    reportSkillFailure(`Select or hover over a target for ${ability.name}.`)
+    return
+  }
+  if (beginAbility(ability.id))
+    networkManager.sendUseAbility(ability.id, target)
+}

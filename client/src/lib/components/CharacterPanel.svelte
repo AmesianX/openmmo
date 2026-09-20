@@ -1,6 +1,6 @@
 <script lang="ts">
   import ItemLockButton from './ItemLockButton.svelte'
-  import SkillIcon from './SkillIcon.svelte'
+  import SkillListItem from './SkillListItem.svelte'
   import { EQUIP_SLOT_LABELS } from '../data/equipSlots'
   import { ABILITIES, isAbilityAvailable } from '../data/abilities'
   import {
@@ -20,6 +20,7 @@
   } from '../network/networkTypes'
   import { skill_xp_for_level, skill_level_cap } from '../wasm/onlinerpg_shared'
   import { levelProgress } from '../utils/xpProgress'
+  import { useAbility } from '../utils/useAbility'
   import { equipBgCandidates, equipBgFilter } from '../utils/equipBackground'
   import { SvelteSet } from 'svelte/reactivity'
   import { skillsStore, SKILL_DISPLAY_NAMES } from '../stores/skillsStore'
@@ -160,12 +161,7 @@
   const heldInLeft = $derived(isRangedWeapon(mainHandId))
   const offHandBlocked = $derived(isTwoHanded(mainHandId) && !heldInLeft)
 
-  // The bow is drawn with the right hand, so the arrow it draws belongs in
-  // the right-hand cell — which the bow itself has vacated for the left. The
-  // stack stays in the bag (stackables cannot occupy a slot); this cell shows
-  // which pile the next shot comes from and how much of it is left.
-  /** What the wielded weapon spends, so the quiver cell can say which rounds
-   *  it will take — a dragged bolt must not light up a bow's cell. */
+  // The right-hand cell shows compatible ammo from the bag.
   const ammoKind = $derived(
     heldInLeft ? getItemDef(mainHandId ?? '')?.ammoKind : undefined
   )
@@ -406,11 +402,16 @@
         {#if $characterPanelTab === 'skills'}
           <div class="pane-skills">
             {#if availableAbilities.length > 0}
-              <div class="skill-grid" role="group" aria-label="Skills">
+              <ul class="ability-list" aria-label="Skills">
                 {#each availableAbilities as ability (ability.id)}
-                  <SkillIcon {...ability} quickslotSkill={ability.id} />
+                  <li>
+                    <SkillListItem
+                      {...ability}
+                      onUse={() => useAbility(ability.id)}
+                    />
+                  </li>
                 {/each}
-              </div>
+              </ul>
             {/if}
             {#if trainedSkills.length > 0}
               <div class="skills-list">
@@ -701,11 +702,13 @@
     box-shadow: 0 0 10px rgba(88, 166, 255, 0.4);
   }
 
-  .skill-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, var(--equip-slot-size));
+  .ability-list {
+    display: flex;
+    flex-direction: column;
     gap: 6px;
+    margin: 0;
     padding: 6px 0;
+    list-style: none;
   }
 
   .skills-list {
