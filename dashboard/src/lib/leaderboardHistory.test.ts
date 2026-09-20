@@ -1,6 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import { createCharacterColors, sampleAt, stepPath } from './leaderboardHistory'
+import { createCharacterColors, sampleAt, stepChangesAt, stepPath } from './leaderboardHistory'
 import { leaderboardPeriods, parseArmorEnchantLeaderboard, parseGoldLeaderboard, parseLandLeaderboard, parseLevelLeaderboard, parseWeaponEnchantLeaderboard } from './metrics'
+
+describe('weapon enchant change hit detection', () => {
+  const x = (time: number) => time * 2
+  const y = (value: number) => 200 - value * 20
+  const value = (sample: { timestamp: number, weapon_enchant: number }) => sample.weapon_enchant
+  const hero = { name: '샷', samples: [{ timestamp: 50, weapon_enchant: 5 }, { timestamp: 100, weapon_enchant: 8 }] }
+
+  it('identifies the whole vertical segment and snaps nearby pointers to its observation', () => {
+    for (const point of [{ x: 200, y: 40 }, { x: 200, y: 70 }, { x: 200, y: 100 }, { x: 195, y: 70 }]) {
+      expect(stepChangesAt([hero], point, x, y, value)).toEqual([{ name: '샷', timestamp: 100, before: 5, after: 8 }])
+    }
+    expect(stepChangesAt([hero], { x: 193, y: 70 }, x, y, value)).toEqual([])
+    expect(stepChangesAt([hero], { x: 200, y: 120 }, x, y, value)).toEqual([])
+  })
+
+  it('returns all overlapping owners even with more than ten characters', () => {
+    const series = Array.from({ length: 12 }, (_, index) => ({ ...hero, name: `Hero${index}` }))
+    expect(stepChangesAt(series, { x: 200, y: 70 }, x, y, value).map((change) => change.name)).toEqual(series.map((entry) => entry.name))
+    const lower = { name: 'Lower', samples: [{ timestamp: 50, weapon_enchant: 0 }, { timestamp: 100, weapon_enchant: 3 }] }
+    expect(stepChangesAt([hero, lower], { x: 200, y: 70 }, x, y, value).map((change) => change.name)).toEqual(['샷'])
+  })
+
+  it('selects the nearest change and preserves decreases', () => {
+    const falling = { name: '래인저', samples: [{ timestamp: 50, weapon_enchant: 8 }, { timestamp: 104, weapon_enchant: 0 }] }
+    for (const series of [[hero, falling], [falling, hero]]) {
+      expect(stepChangesAt(series, { x: 207, y: 70 }, x, y, value)).toEqual([{ name: '래인저', timestamp: 104, before: 8, after: 0 }])
+    }
+  })
+
+  it('does not invent changes at the first sample or on unchanged values', () => {
+    expect(stepChangesAt([hero], { x: 100, y: 100 }, x, y, value)).toEqual([])
+    const steady = { name: 'Steady', samples: [{ timestamp: 50, weapon_enchant: 8 }, { timestamp: 100, weapon_enchant: 8 }] }
+    expect(stepChangesAt([steady], { x: 200, y: 40 }, x, y, value)).toEqual([])
+    expect(stepChangesAt([], { x: 200, y: 70 }, x, y, value)).toEqual([])
+  })
+})
 
 describe('land ownership history', () => {
   const timestamp = 1800000000

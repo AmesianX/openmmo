@@ -4,7 +4,7 @@
   import PeriodFilter from './PeriodFilter.svelte'
   import { createChartSelection } from './chartSelection.svelte'
   import { axisRange, formatAxisTime, formatDateTime, leaderboardMetrics, leaderboardPeriods, type LeaderboardHours, type CharacterLeaderboard, type LeaderboardMetric } from './metrics'
-  import { sampleAt, stepPath } from './leaderboardHistory'
+  import { sampleAt, stepChangesAt, stepPath, type StepChange } from './leaderboardHistory'
 
   let { metric, hours = $bindable(), leaderboard, colors, selectedCharacter = $bindable(), loading, refreshing, error, refresh }: {
     metric: M
@@ -22,12 +22,16 @@
   let container = $state<HTMLDivElement>()
   let width = $state(600)
   let height = $state(360)
-  const selection = createChartSelection(timeAtPointer, () => leaderboard?.timestamp ?? null, () => `${hours}:${metric}`)
+  let changes = $state<StepChange[]>([])
+  const selection = createChartSelection(timeAtPointer, () => leaderboard?.timestamp ?? null, () => `${hours}:${metric}`, () => { changes = [] })
   let period = $derived(leaderboardPeriods.find((option) => option.hours === hours)!)
   let series = $derived(leaderboard?.series ?? [])
   let focused = $derived(series.some((entry) => entry.name === selectedCharacter) ? selectedCharacter : null)
-  let markerSeries = $derived(focused ? series.filter((entry) => entry.name === focused) : series)
-  let tooltipSeries = $derived(focused || series.length <= 10 ? markerSeries : [])
+  let selected = $derived(leaderboard && selection.time !== null && selection.time >= leaderboard.from && selection.time <= leaderboard.timestamp ? selection.time : null)
+  let activeChanges = $derived(selected === null ? [] : changes.filter((change) => change.timestamp === selected && series.some((entry) => entry.name === change.name)))
+  let highlighted = $derived(new Set(activeChanges.length ? activeChanges.map((change) => change.name) : focused ? [focused] : []))
+  let markerSeries = $derived(highlighted.size ? series.filter((entry) => highlighted.has(entry.name)) : series)
+  let tooltipSeries = $derived(highlighted.size || series.length <= 10 ? markerSeries : [])
   let left = $derived(metric === 'gold' ? 64 : 42)
   const right = 12
   const top = 20
@@ -49,13 +53,21 @@
   let { floor, ceiling, ticks } = $derived(axisRange(minimum, maximum, padding, maximum - minimum + (metric === 'gold' ? padding * 2 : 0)))
   const x = (timestamp: number) => left + (timestamp - (leaderboard?.from ?? 0)) / (hours * 3600) * plotWidth
   const y = (value: number) => top + plotHeight * (1 - (value - floor) / (ceiling - floor))
-  let selected = $derived(leaderboard && selection.time !== null && selection.time >= leaderboard.from && selection.time <= leaderboard.timestamp ? selection.time : null)
   let tooltipLeft = $derived(selected === null ? 0 : Math.max(8, Math.min(width - 276, x(selected) - 132)))
+
+  $effect(() => {
+    void selectedCharacter
+    changes = []
+  })
 
   function timeAtPointer(event: MouseEvent) {
     if (!leaderboard || !container) return null
-    const fraction = Math.max(0, Math.min(1, (event.clientX - container.getBoundingClientRect().left - left) / plotWidth))
-    return Math.round(leaderboard.from + fraction * hours * 3600)
+    const rect = container.getBoundingClientRect()
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    changes = metric === 'weapon_enchant' && point.x >= left && point.x <= width - right && point.y >= top && point.y <= height - bottom
+      ? stepChangesAt(series, point, x, y, (sample) => sample[metric]) : []
+    const fraction = Math.max(0, Math.min(1, (point.x - left) / plotWidth))
+    return changes[0]?.timestamp ?? Math.round(leaderboard.from + fraction * hours * 3600)
   }
 </script>
 
@@ -64,7 +76,7 @@
     <div>
       <h2 id={titleId}>{label} 변화</h2>
       {#if metric === 'land_plots'}<p>현재 상위 10명의 보유량 · 시간별 관측값</p>{/if}
-      {#if metric === 'weapon_enchant'}<p>현재 +7 이상 무기 보유 캐릭터 전체 · 시간별 관측값</p>{/if}
+      {#if metric === 'weapon_enchant'}<p>현재 +7 이상 무기 보유 캐릭터 전체 · 시간별 관측값<br />세로선에 마우스를 올리면 캐릭터와 변화가 표시됩니다. 클릭하면 고정됩니다.</p>{/if}
     </div>
     <PeriodFilter bind:hours options={leaderboardPeriods} label={`${label} 변화 조회 기간`} />
   </div>
@@ -73,7 +85,7 @@
   {#if leaderboard && series.length > 0}
     <div class="chart-canvas" style:min-height={width < 450 ? '280px' : '360px'} bind:this={container}
       bind:contentRect={null, (rect: DOMRectReadOnly | null | undefined) => { if (rect) { width = rect.width; height = rect.height } }}>
-      <svg viewBox={`0 0 ${width} ${height}`} role="button" tabindex="0" aria-pressed={selection.pinned} aria-label={`최근 ${period.label} ${metric === 'weapon_enchant' ? '+7 이상 무기 보유' : '상위'} ${series.length}명 ${label} 변화. 캐릭터별 색상은 표와 같습니다. 클릭 또는 Enter로 시점 고정, 다시 클릭 또는 Esc로 해제.`}
+      <svg viewBox={`0 0 ${width} ${height}`} role="button" tabindex="0" aria-pressed={selection.pinned} aria-label={`최근 ${period.label} ${metric === 'weapon_enchant' ? '+7 이상 무기 보유' : '상위'} ${series.length}명 ${label} 변화. 캐릭터별 색상은 표와 같습니다.${metric === 'weapon_enchant' ? ' 세로선에 마우스를 올리면 캐릭터와 변화가 표시됩니다.' : ''} 클릭 또는 Enter로 시점 고정, 다시 클릭 또는 Esc로 해제.`}
         {...selection.handlers}>
         {#each ticks as tick (tick)}
           <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} class="grid-line" />
@@ -84,11 +96,11 @@
             {formatAxisTime(leaderboard.from + hours * 3600 * tick / 6, hours)}
           </text>
         {/each}
-        {#each [...series].sort((a, b) => Number(a.name === focused) - Number(b.name === focused)) as entry (entry.name)}
+        {#each [...series].sort((a, b) => Number(highlighted.has(a.name)) - Number(highlighted.has(b.name))) as entry (entry.name)}
           {@const last = entry.samples[entry.samples.length - 1]}
-          <g opacity={focused && focused !== entry.name ? 0.16 : 1}>
-            <path d={stepPath(entry.samples, leaderboard.timestamp, x, y, (sample) => sample[metric])} fill="none" stroke={colors[entry.name]} stroke-width={focused === entry.name ? 3 : 2} stroke-linejoin="round" />
-            <circle cx={x(leaderboard.timestamp)} cy={y(last[metric])} r={focused === entry.name ? 4 : 3} fill={colors[entry.name]} />
+          <g opacity={highlighted.size && !highlighted.has(entry.name) ? 0.16 : 1}>
+            <path d={stepPath(entry.samples, leaderboard.timestamp, x, y, (sample) => sample[metric])} fill="none" stroke={colors[entry.name]} stroke-width={highlighted.has(entry.name) ? 3 : 2} stroke-linejoin="round" />
+            <circle cx={x(leaderboard.timestamp)} cy={y(last[metric])} r={highlighted.has(entry.name) ? 4 : 3} fill={colors[entry.name]} />
           </g>
         {/each}
         {#if selected !== null}
@@ -104,11 +116,17 @@
       {#if selected !== null}
         <div class="chart-tooltip" style:left={`${tooltipLeft}px`}>
           <span>{formatDateTime(selected)} KST</span>
-          {#if tooltipSeries.length === 0}<span>표나 범례에서 캐릭터를 선택하면 상세 기록을 볼 수 있어요.</span>{/if}
-          {#each tooltipSeries as entry (entry.name)}
-            {@const sample = sampleAt(entry.samples, selected)}
-            <div class="tooltip-entry"><span><i style:background={colors[entry.name]}></i>{entry.name}</span><b>{#if !sample}기록 없음{:else if metric === 'gold'}<GoldAmount copper={sample[metric]} />{:else if metric === 'land_plots'}{sample[metric].toLocaleString('ko-KR')} 필지{:else}{enchantPrefix || 'Lv. '}{sample[metric]}{/if}</b></div>
-          {/each}
+          {#if activeChanges.length}
+            {#each activeChanges as change (change.name)}
+              <div class="tooltip-entry"><span><i style:background={colors[change.name]}></i>{change.name}</span><b>+{change.before} → +{change.after}</b></div>
+            {/each}
+          {:else}
+            {#if tooltipSeries.length === 0}<span>세로선에 마우스를 올리거나 표·범례에서 캐릭터를 선택해 주세요.</span>{/if}
+            {#each tooltipSeries as entry (entry.name)}
+              {@const sample = sampleAt(entry.samples, selected)}
+              <div class="tooltip-entry"><span><i style:background={colors[entry.name]}></i>{entry.name}</span><b>{#if !sample}기록 없음{:else if metric === 'gold'}<GoldAmount copper={sample[metric]} />{:else if metric === 'land_plots'}{sample[metric].toLocaleString('ko-KR')} 필지{:else}{enchantPrefix || 'Lv. '}{sample[metric]}{/if}</b></div>
+            {/each}
+          {/if}
           <span>{selection.hint}</span>
         </div>
       {/if}

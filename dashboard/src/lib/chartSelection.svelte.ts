@@ -1,4 +1,4 @@
-export function createChartSelection(timeAtPointer: (event: MouseEvent) => number | null, defaultTime: () => number | null, period: () => string | number) {
+export function createChartSelection(timeAtPointer: (event: MouseEvent) => number | null, defaultTime: () => number | null, period: () => string | number, clearDetail?: () => void) {
   let time = $state<number | null>(null)
   let pinned = $state(false)
   const activePeriod = $derived.by(period)
@@ -6,10 +6,11 @@ export function createChartSelection(timeAtPointer: (event: MouseEvent) => numbe
   function clear() {
     time = null
     pinned = false
+    clearDetail?.()
   }
 
   function leave() {
-    if (!pinned) time = null
+    if (!pinned) clear()
   }
 
   function toggle(timestamp: number | null) {
