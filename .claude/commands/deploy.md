@@ -1,5 +1,5 @@
 ---
-description: "Deploy the current master to the prod server (build both binaries + client bundle on the prod host, publish, restart the systemd units) and verify it came up. Use when the user asks to deploy, ship, or push to prod. Restarts the game — it disconnects every live player."
+description: "Deploy OpenMMO to prod, transfer complete public village changes while preserving player data, and verify services and the changed world. Use when the user asks to deploy, ship, or push to prod. A full deployment restarts the game and disconnects live players."
 ---
 
 You are deploying OnlineRPG to production. The deploy script (`tools/deploy-prod.sh`)
@@ -12,9 +12,13 @@ the reference.
 
 ## 1. Preflight — before touching prod
 
-Gitignored operator data (announcements, banned names, terrain, housing) does
-not ride the deploy — sync it **before** launching so the deploy's restart
-loads it; syncing after costs prod a second restart.
+Read `~/work/notes/DEPLOY_NOTES.md` first. Follow pending transfers, production
+data preservation rules, and completed hotfix records; do not replay completed
+transfers or replace a production correction with an older development file.
+
+Gitignored operator data does not ride the deploy. Prepare and validate scoped
+patches before launching. Coordinate their application with runtime caches and
+the planned restart; the script does not discover or transfer village data.
 
 - **Push first.** The script pulls `master` on prod, so anything not on
   `origin/master` will not deploy. Run `git status` and `git log origin/master..HEAD`;
@@ -44,35 +48,29 @@ loads it; syncing after costs prod a second restart.
   scp data/banned_names.txt prod:~/work/OnlineRPG/data/banned_names.txt
   ```
   Identical files → say so and skip the scp.
-- **Terrain and housing sync — check both every deploy.** `data/terrain/` and
-  `data/housing/` are not in git, so the deploy does not carry them. Sync
-  **before** launching so the deploy's restart loads them — syncing after
-  costs prod a second restart (server + agent-client, which caches houses
-  for pathfinding).
-  - Terrain: `REMOTE=prod bash tools/sync-terrain.sh` (mtime-based dry run;
-    do **not** add `--checksum` — 1.16M files, it reads every one). Review
-    the transferred-files count (a handful is normal), rerun with `--apply`,
-    then spot-check an md5sum on prod.
-  - Housing: houses, rooms, and furniture placements all live in the
-    per-house JSONs under `data/housing/`; the sync script excludes the
-    directory on purpose because the server writes live state (door
-    open/close) into these files and prod is authoritative. Handle one file
-    at a time, never a bulk rsync. Diff both directions, deletions included:
-    ```bash
-    rsync -ain --delete data/housing/ prod:work/OnlineRPG/data/housing/
-    ```
-    Ignore `*.bak-*` lines and `t`-only (mtime) lines. What remains:
-    - `<f+++` / `<f.s` (new or changed here): fetch prod's copy and diff it —
-      prod-only changes (placed furniture, new houses, doors) would be lost;
-      merge if both sides changed. Back it up on prod as
-      `<file>.bak-YYYYMMDD`, then scp the local file over.
-    - `*deleting <house>.json` (removed here): confirm the house is gone from
-      the local editor on purpose, check the prod copy's `ownerId` and
-      furniture (a player-owned house is not deleted without asking), then
-      `mv` it to `<file>.bak-YYYYMMDD` on prod. Do not leave it — its terrain
-      edits (grass regrown, flattening undone) do ride the terrain sync, so a
-      house left behind stands on regrown grass.
-  Nothing to sync when neither directory has local edits — say so and move on.
+- **Public village changes — inventory every deploy.** Check the deployment
+  notes, requested map changes, and scoped development/production data against
+  the last deployment record. Git status and mtimes cannot establish that the
+  village is unchanged. Follow [the deployment skill's village procedure](../../.codex/skills/deploy-prod/SKILL.md#public-village-transfers)
+  whenever public buildings, furniture, terrain, paths, or vegetation changed.
+  - Inventory each affected facility or area with its building/object IDs,
+    world bounds, dependent terrain layers, planned operation, and expected
+    result. Every relevant layer needs an action or a verified no-change reason.
+  - Preserve production estates, DB rows, private houses, furniture, fences,
+    and edits outside the chosen public area. Objects/furniture can live in
+    `data/terrain/objects/` or estate DB tables; housing JSON alone is incomplete.
+  - `tools/sync-terrain.sh` is a whole-tree copier, not a village migration.
+    Do not use its `--apply` or `--delete` for selective village transfers.
+    A small rsync count does not establish safe scope; a shared tile may contain
+    both public work and private player edits. Compare relevant content and
+    merge only selected cells/IDs into the current production data.
+  - Validate the staged result's floor clearance, grass/tree exclusions, and
+    paving removal masks even when development and production hashes match.
+    Copying a building file does not run the construction side effects.
+  - Prepare backups and verify the production baseline again before applying.
+    Apply file-based changes in the planned maintenance window, or use supported
+    edit APIs and explicitly refresh dependent caches and terrain versions.
+  Record why no village transfer is needed when the inventory finds none.
 
 ## 2. Launch the deploy, detached
 
@@ -81,9 +79,9 @@ detach it:
 ```bash
 ssh prod 'setsid nohup bash ~/work/OnlineRPG/tools/deploy-prod.sh > ~/deploy-latest.log 2>&1 < /dev/null &'
 ```
-The script builds everything before it touches live state (rsync + restarts at the
-very end), so an interruption before that leaves the old bundle and old server
-running as a matched pair — never a half-deploy.
+The script builds before publishing binaries/web assets and restarting services.
+Separately applied world-data edits are already live changes; account for them
+in the deployment's backup, cache-refresh, and recovery plan.
 
 ## 3. Watch it to completion — with a monitor that ends itself
 
@@ -124,6 +122,13 @@ Confirm both units are `active`, the startup log shows no panics, and the
 "Passability cache ready" / "Server started successfully" lines are present.
 A dead `openmmo-agent-client` (expired LLM login, outage) does **not** fail the
 deploy — the game is already live — but flag it.
+
+For a village transfer, also complete the data and in-game checks in
+[the deployment skill's village procedure](../../.codex/skills/deploy-prod/SKILL.md#public-village-transfers). Check the public files
+referenced by current terrain manifests, actual floor/vegetation conditions,
+and preservation outside the patch. Enter the game and inspect the changed
+area. If in-game access is unavailable, finish available data checks and record
+the visual check as pending; do not mark the village transfer fully verified.
 
 ## 5. Agent-client release — when the deploy needs one
 
@@ -166,5 +171,8 @@ needed. If the deploy was to fix a bug with a log
 signal (e.g. the `Blocked move` warns), compare its rate before vs after the
 restart with `journalctl` rather than claiming success from a clean build alone —
 a clean build only proves it compiled, not that the fix worked in play.
+Include the village areas transferred and any pending visual checks. Update
+`~/work/notes/DEPLOY_NOTES.md` with completed transfers, corrections, backup
+locations, and unresolved work so subsequent deployments preserve the result.
 
 $ARGUMENTS
