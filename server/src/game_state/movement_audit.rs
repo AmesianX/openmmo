@@ -41,6 +41,7 @@ pub(super) struct Request {
     pub queue_before: usize,
     pub replaced: bool,
     pub dropped: Option<u64>,
+    pub connection_waypoints: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]

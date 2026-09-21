@@ -22,6 +22,7 @@ mod chat_tests;
 mod collision_tests;
 mod combat_audit_tests;
 mod combat_tests;
+mod dungeon_movement_tests;
 mod dungeon_tests;
 mod enchant_tests;
 mod estate_storage_tests;

@@ -18,6 +18,8 @@ use tracing::{error, info, warn};
 
 /// Most queued waypoints per player; legit smoothed paths stay well under.
 pub(super) const MAX_QUEUED_WAYPOINTS: usize = 32;
+const SLIDE_STALL_SECONDS: f32 = 1.0;
+const SLIDE_MIN_PROGRESS: f32 = 0.2;
 
 /// Arrival ring radius (m) around a teleport's center (`arrival_beside`);
 /// golden-angle spacing keeps simultaneous arrivals apart.
@@ -168,6 +170,8 @@ pub(super) struct MoveIntent {
     pub(super) request: Option<movement_audit::Request>,
     keyboard_forward: Option<i8>,
     keyboard_speed: f32,
+    slide_stall_seconds: f32,
+    server_waypoint: bool,
     turn_only: bool,
     recovery: Option<movement_audit::RecoveryRequest>,
     pub(super) target: Position,
@@ -1152,6 +1156,42 @@ impl super::GameState {
             }
             return;
         }
+        let connection = if !append
+            && queue_before > 0
+            && !is_official_npc
+            && keyboard_forward.is_none()
+            && current_mount.is_none()
+        {
+            match self
+                .replacement_waypoints(authoritative_pose.position, new_position, floor_level)
+                .await
+            {
+                Ok(waypoints) => waypoints,
+                Err(()) => {
+                    self.record_recovery_cancel(*player_id, queue, "new_move");
+                    queues.remove(player_id);
+                    {
+                        let mut versions = self.player_movement_versions.write().await;
+                        let version = versions.entry(*player_id).or_default();
+                        *version = version.wrapping_add(1);
+                    }
+                    drop(queues);
+                    if self.snap_refused_move_back(player_id).await {
+                        self.log_movement_sync(
+                            *player_id,
+                            "replacement_route_unavailable",
+                            serde_json::json!({
+                                "authoritative_pose": authoritative_pose, "rejected_move": cmd,
+                            }),
+                            true,
+                        );
+                    }
+                    return;
+                }
+            }
+        } else {
+            Vec::new()
+        };
         let keyboard_speed = queue
             .front()
             .filter(|intent| keyboard_forward == Some(1) && intent.keyboard_forward == Some(1))
@@ -1187,12 +1227,15 @@ impl super::GameState {
             queue_before,
             replaced,
             dropped,
+            connection_waypoints: connection.len(),
         };
         let request = self.movement_audit.request(*player_id, request);
-        queue.push_back(MoveIntent {
+        let intent = MoveIntent {
             request: Some(request),
             keyboard_forward,
             keyboard_speed,
+            slide_stall_seconds: 0.0,
+            server_waypoint: false,
             turn_only: false,
             recovery: None,
             target: new_position,
@@ -1200,7 +1243,19 @@ impl super::GameState {
             floor_level,
             check_collision: !is_official_npc,
             sprinting,
-        });
+        };
+        let mut from = authoritative_pose.position;
+        for (position, floor) in connection {
+            queue.push_back(MoveIntent {
+                target: position,
+                rotation: from.bearing_xz_to(&position).unwrap_or(0.0),
+                floor_level: floor,
+                server_waypoint: true,
+                ..intent.clone()
+            });
+            from = position;
+        }
+        queue.push_back(intent);
         {
             let mut versions = self.player_movement_versions.write().await;
             let version = versions.entry(*player_id).or_default();
@@ -1365,6 +1420,8 @@ impl super::GameState {
                 request: None,
                 keyboard_forward: None,
                 keyboard_speed: 0.0,
+                slide_stall_seconds: 0.0,
+                server_waypoint: false,
                 turn_only: false,
                 recovery: Some(request),
                 target,
@@ -1429,6 +1486,8 @@ impl super::GameState {
             request: None,
             keyboard_forward: None,
             keyboard_speed: 0.0,
+            slide_stall_seconds: 0.0,
+            server_waypoint: false,
             turn_only: true,
             recovery: None,
             target: player.position,
@@ -1452,15 +1511,17 @@ impl super::GameState {
 
         let mut activities: Vec<(PlayerId, f32, bool)> = Vec::new();
         let mut refused: Vec<RefusedMove> = Vec::new();
+        let mut stalled_resyncs = Vec::new();
         let mut recovery_updates = Vec::new();
         let tick_at_ms = Self::now_ms();
+        let mut queues = self.movement_intents.write().await;
+        if queues.is_empty() {
+            return;
+        }
         {
-            let mut queues = self.movement_intents.write().await;
-            if queues.is_empty() {
-                return;
-            }
             let mover_ids: Vec<PlayerId> = queues.keys().copied().collect();
             let hunger_profiles = self.hunger_movement_profiles_for(&mover_ids).await;
+            let dungeons = self.dungeons.read().await;
             let mut players = self.players.write().await;
             let cache = self.passability_read();
             queues.retain(|player_id, waypoints| {
@@ -1630,10 +1691,7 @@ impl super::GameState {
                             false,
                         )
                     };
-                    // Edge-crossing subset of the client's continuous-mover
-                    // check (no body radius, on the leg's own floor), including
-                    // its wall slide. Only a step both axes refuse stops the
-                    // player and drops the queue.
+                    // Check crossed edges and try sliding along a free axis.
                     if intent.check_collision {
                         let step_floor =
                             super::passability::authoritative_floor(&cache, &player.position);
@@ -1664,14 +1722,46 @@ impl super::GameState {
                             super::passability::StepOutcome::Clear => {}
                             super::passability::StepOutcome::Slid(slid_x, slid_z) => {
                                 tick_outcome = "slid";
-                                // The leg is unfinished: keep it queued so the
-                                // next tick resumes from the slid position.
+                                let attempted = shortest_world_delta_x(player.position.x, step_x)
+                                    .hypot(step_z - player.position.z);
+                                let travelled = shortest_world_delta_x(player.position.x, slid_x)
+                                    .hypot(slid_z - player.position.z);
+                                let slid_x = wrap_world_x(slid_x);
+                                let slid_y = self.dungeon_defs.entrance_at(slid_x, slid_z)
+                                    .and_then(|entrance| {
+                                        let rt = dungeons.get(&entrance.id)?;
+                                        onlinerpg_shared::dungeon::ground_y_for_floor(
+                                            &entrance.position(), &rt.layouts, step_floor, slid_x, slid_z,
+                                        )
+                                    })
+                                    .unwrap_or(step_y);
                                 player.rotation = facing;
                                 player.position = Position {
-                                    x: wrap_world_x(slid_x),
-                                    y: step_y,
+                                    x: slid_x,
+                                    y: slid_y,
                                     z: slid_z,
                                 };
+                                if let Some(intent) = waypoints.front_mut() {
+                                    intent.slide_stall_seconds = if travelled < attempted * SLIDE_MIN_PROGRESS {
+                                        intent.slide_stall_seconds + dt.max(0.0)
+                                    } else {
+                                        0.0
+                                    };
+                                    if intent.slide_stall_seconds >= SLIDE_STALL_SECONDS {
+                                        if let Some(resync_id) = self.begin_movement_resync(*player_id) {
+                                            let pose = Pose::from(&*player);
+                                            let detail = serde_json::json!({
+                                                "resync_id": resync_id, "authoritative_pose": pose,
+                                                "intent": intent, "attempted_distance": attempted,
+                                                "travelled_distance": travelled, "queue_len": waypoints.len(),
+                                            });
+                                            stalled_resyncs.push((*player_id, resync_id, pose, detail));
+                                            waypoints.clear();
+                                            tick_outcome = "slide_stalled";
+                                            blocked = true;
+                                        }
+                                    }
+                                }
                                 break;
                             }
                             super::passability::StepOutcome::Blocked(info) => {
@@ -1738,6 +1828,9 @@ impl super::GameState {
                         budget -= dist;
                         waypoints.pop_front();
                     } else if !player.is_mounted() {
+                        if let Some(intent) = waypoints.front_mut() {
+                            intent.slide_stall_seconds = 0.0;
+                        }
                         break;
                     }
                 }
@@ -1792,7 +1885,30 @@ impl super::GameState {
                 !blocked && !waypoints.is_empty()
             });
         }
+        if !stalled_resyncs.is_empty() {
+            let mut versions = self.player_movement_versions.write().await;
+            for (id, _, _, _) in &stalled_resyncs {
+                let version = versions.entry(*id).or_default();
+                *version = version.wrapping_add(1);
+            }
+        }
+        drop(queues);
 
+        for (id, resync_id, pose, detail) in stalled_resyncs {
+            self.movement_audit
+                .correction(id, pose.position, pose.floor);
+            self.log_movement_sync(id, "slide_stalled", detail, true);
+            self.send_direct_message(
+                &id,
+                ServerMessage::MovementResync {
+                    resync_id,
+                    position: pose.position,
+                    rotation: pose.rotation,
+                    floor_level: pose.floor,
+                },
+            )
+            .await;
+        }
         for (id, update) in recovery_updates {
             self.send_direct_message(&id, update).await;
         }
@@ -2129,10 +2245,11 @@ impl super::GameState {
         .await;
     }
 
-    /// Apply a floor change reported between waypoints, leaving the move queue
-    /// alone. Keeps AOI membership tracking where the player visually is while
-    /// they walk a stairwell, which is one uninterrupted leg.
+    /// Apply a floor report while preserving the server's connection waypoints.
     pub async fn update_player_floor(&self, player_id: &PlayerId, floor_level: i8) {
+        if self.movement_resync_pending(player_id) {
+            return;
+        }
         if exceeds_positive_floor_limit(floor_level) {
             self.reject_out_of_range_floor(player_id, floor_level, "floor change")
                 .await;
@@ -2182,21 +2299,22 @@ impl super::GameState {
             return;
         }
 
-        // Queued legs carry the floor they were sent with, and snapping to one
-        // re-applies it. Without this the explicit change is clobbered the
-        // moment the leg finishes, flickering the player back out of view.
-        // Legs are appended one at a time as each waypoint is reached, so every
-        // pending one belongs to the floor we just moved to.
-        {
+        let moved_player = {
             let mut queues = self.movement_intents.write().await;
+            if self.movement_resync_pending(player_id) {
+                return;
+            }
+            // Finishing an older waypoint must not restore the previous floor.
             if let Some(queue) = queues.get_mut(player_id) {
-                for intent in queue.iter_mut() {
+                let connecting = queue.front().is_some_and(|intent| intent.server_waypoint);
+                for intent in queue.iter_mut().filter(|intent| !intent.server_waypoint) {
                     intent.floor_level = floor_level;
                 }
+                if connecting {
+                    // The connection's waypoints advance the server's floor and height.
+                    return;
+                }
             }
-        }
-
-        let moved_player = {
             let mut players = self.players.write().await;
             let Some(player) = players.get_mut(player_id) else {
                 return;

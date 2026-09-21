@@ -93,7 +93,7 @@ async fn movement_audit_links_raw_request_queue_tick_and_correction() {
             .await;
         for _ in 0..2 {
             game.last_position_correction.write().await.clear();
-            game.update_player_position(&id, command(-1638.8, 4891.3, false), false)
+            game.update_keyboard_movement(&id, command(-1638.8, 4891.3, false), 1)
                 .await;
             game.tick_player_movement(0.2).await;
         }

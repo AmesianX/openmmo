@@ -213,6 +213,150 @@ async fn queued_waypoints_route_around_furniture() {
 }
 
 #[tokio::test]
+async fn replacing_a_route_rebuilds_the_furniture_detour() {
+    let game = make_test_game_state("movement_replace_detour");
+    let id = pid("detour_replacement");
+    game.add_player(make_player("detour_replacement", 0.5, 4.5))
+        .await;
+    game.sync_region_furniture(0, 0, &[table_placement(0.5, 5.5)]);
+    let mut rx = game.register_direct_channel(&id).await;
+    game.update_player_position(
+        &id,
+        move_cmd(
+            Position {
+                x: 1.5,
+                y: 0.0,
+                z: 4.5,
+            },
+            false,
+        ),
+        false,
+    )
+    .await;
+    game.update_player_position(
+        &id,
+        move_cmd(
+            Position {
+                x: 0.5,
+                y: 0.0,
+                z: 6.5,
+            },
+            false,
+        ),
+        false,
+    )
+    .await;
+    {
+        let queues = game.movement_intents.read().await;
+        let queue = &queues[&id];
+        assert!(queue.len() > 1);
+        assert_eq!(
+            queue.back().unwrap().request.unwrap().connection_waypoints,
+            queue.len() - 1
+        );
+    }
+    for _ in 0..30 {
+        if !game.movement_intents.read().await.contains_key(&id) {
+            break;
+        }
+        game.tick_player_movement(0.2).await;
+        assert_eq!(game.movement_audit.last_tick(id).unwrap().outcome, "clear");
+    }
+    assert_eq!(player_xz(&game, &id).await, (0.5, 6.5));
+    assert!(!game.movement_intents.read().await.contains_key(&id));
+    assert!(!drain(&mut rx).iter().any(|m| matches!(
+        m,
+        ServerMessage::PositionCorrected { .. } | ServerMessage::MovementResync { .. }
+    )));
+}
+
+#[tokio::test]
+async fn unreachable_replacement_stops_instead_of_following_the_old_route() {
+    let game = make_test_game_state("movement_replace_unreachable");
+    let id = pid("unreachable_replacement");
+    game.add_player(make_player("unreachable_replacement", 0.5, 4.5))
+        .await;
+    game.sync_region_furniture(0, 0, &[table_placement(0.5, 5.5)]);
+    let mut rx = game.register_direct_channel(&id).await;
+    game.update_player_position(
+        &id,
+        move_cmd(
+            Position {
+                x: 1.5,
+                y: 0.0,
+                z: 4.5,
+            },
+            false,
+        ),
+        false,
+    )
+    .await;
+    game.update_player_position(
+        &id,
+        move_cmd(
+            Position {
+                x: 0.5,
+                y: 0.0,
+                z: 5.5,
+            },
+            false,
+        ),
+        false,
+    )
+    .await;
+    assert!(!game.movement_intents.read().await.contains_key(&id));
+    let (position, _, floor) =
+        first_correction(&mut rx).expect("unreachable replacement is corrected");
+    assert_eq!((position.x, position.z, floor), (0.5, 4.5, 0));
+    game.tick_player_movement(1.0).await;
+    assert_eq!(player_xz(&game, &id).await, (0.5, 4.5));
+}
+
+#[tokio::test]
+async fn keyboard_replacement_does_not_add_a_detour() {
+    let game = make_test_game_state("movement_keyboard_replace_direct");
+    let id = pid("keyboard_replacement");
+    game.add_player(make_player("keyboard_replacement", 0.5, 4.5))
+        .await;
+    game.sync_region_furniture(0, 0, &[table_placement(0.5, 5.5)]);
+    let mut rx = game.register_direct_channel(&id).await;
+    game.update_player_position(
+        &id,
+        move_cmd(
+            Position {
+                x: 1.5,
+                y: 0.0,
+                z: 4.5,
+            },
+            false,
+        ),
+        false,
+    )
+    .await;
+    game.update_keyboard_movement(
+        &id,
+        move_cmd(
+            Position {
+                x: 0.5,
+                y: 0.0,
+                z: 6.5,
+            },
+            false,
+        ),
+        1,
+    )
+    .await;
+    assert_eq!(game.movement_intents.read().await[&id].len(), 1);
+    for _ in 0..5 {
+        game.tick_player_movement(0.2).await;
+    }
+    let (x, z) = player_xz(&game, &id).await;
+    assert_eq!(x, 0.5);
+    assert!(z < 5.0);
+    assert!(first_correction(&mut rx).is_some());
+}
+
+#[tokio::test]
 async fn blocked_leg_drops_remaining_queue() {
     let game_state = make_test_game_state("movement_queue_blocked_drop");
     let player_id = pid("stopper");
@@ -272,6 +416,90 @@ async fn grazing_corner_slides_instead_of_stalling() {
         .await;
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_xz(&game_state, &player_id).await, (0.5, 4.5));
+}
+
+#[tokio::test]
+async fn sustained_slide_along_a_wall_keeps_making_progress() {
+    let game = make_test_game_state("movement_wall_slide_progress");
+    let id = pid("wall_slider");
+    game.add_player(make_player("wall_slider", 1.001, 4.5))
+        .await;
+    let wall: Vec<_> = (0..17)
+        .map(|z| table_placement(0.5, z as f32 + 0.5))
+        .collect();
+    game.sync_region_furniture(0, 0, &wall);
+    let mut rx = game.register_direct_channel(&id).await;
+    game.update_player_position(
+        &id,
+        move_cmd(
+            Position {
+                x: 0.5,
+                y: 0.0,
+                z: 14.5,
+            },
+            false,
+        ),
+        false,
+    )
+    .await;
+
+    for _ in 0..10 {
+        game.tick_player_movement(0.2).await;
+        assert_eq!(game.movement_audit.last_tick(id).unwrap().outcome, "slid");
+    }
+    let (x, z) = player_xz(&game, &id).await;
+    assert_eq!(x, 1.001);
+    assert!(z > 9.5);
+    assert!(game.movement_intents.read().await.contains_key(&id));
+    assert!(!drain(&mut rx).iter().any(|message| matches!(
+        message,
+        ServerMessage::MovementResync { .. } | ServerMessage::PositionCorrected { .. }
+    )));
+}
+
+#[tokio::test]
+async fn clear_step_resets_a_partial_slide_stall() {
+    let game = make_test_game_state("movement_slide_stall_reset");
+    let id = pid("brief_slider");
+    game.add_player(make_player("brief_slider", 0.99, 0.5))
+        .await;
+    game.sync_region_furniture(0, 0, &[table_placement(1.5, 0.5)]);
+    let mut rx = game.register_direct_channel(&id).await;
+    game.update_player_position(
+        &id,
+        move_cmd(
+            Position {
+                x: 8.0,
+                y: 0.0,
+                z: 0.6,
+            },
+            false,
+        ),
+        false,
+    )
+    .await;
+    for _ in 0..4 {
+        game.tick_player_movement(0.2).await;
+        assert_eq!(game.movement_audit.last_tick(id).unwrap().outcome, "slid");
+    }
+    game.sync_region_furniture(0, 0, &[]);
+    game.tick_player_movement(0.2).await;
+    assert_eq!(game.movement_audit.last_tick(id).unwrap().outcome, "clear");
+
+    game.sync_region_furniture(0, 0, &[table_placement(2.5, 0.5)]);
+    for _ in 0..4 {
+        game.tick_player_movement(0.2).await;
+        assert_eq!(game.movement_audit.last_tick(id).unwrap().outcome, "slid");
+    }
+    assert!(!drain(&mut rx).iter().any(|message| matches!(
+        message,
+        ServerMessage::MovementResync { .. } | ServerMessage::PositionCorrected { .. }
+    )));
+    game.tick_player_movement(0.2).await;
+    assert!(drain(&mut rx)
+        .iter()
+        .any(|message| matches!(message, ServerMessage::MovementResync { .. })));
+    assert!(!game.movement_intents.read().await.contains_key(&id));
 }
 
 #[tokio::test]

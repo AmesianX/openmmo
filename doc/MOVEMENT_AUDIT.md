@@ -26,11 +26,12 @@
 | `request.received_pose` | 명령 처리 초기에 읽은 서버 위치·방향·층·탑승 상태 |
 | `request.leg_start`, `request.leg_floor`, `request.target` | 거리·층 검증 기준점과 서버가 높이 등을 보정한 목표 |
 | `request.queue_before`, `request.replaced`, `request.dropped` | 삽입 전 큐 길이, 기존 큐 교체 여부, 큐 포화로 버린 명령 ID |
+| `request.connection_waypoints`, `step.intent.server_waypoint` | 경로 교체 때 서버가 추가한 연결 경유점 수와 해당 큐 항목의 연결 경유점 여부. 연결 항목은 새 요청 ID를 공유하며 각자의 `target`·`floor_level`을 가진다. |
 | `request.corrections_issued_before_queue` | 이 명령을 큐에 넣기 전까지 서버가 발행한 위치 보정 수. 클라이언트 수신/처리 확인은 아님 |
 | `step.queue` | 차단 순간 아직 남아 있던 경유지의 ID·목표·층. 이 큐는 차단 후 폐기됨 |
 | `step.geometry` | 차단 객체 원점, 출발·시도 위치의 로컬 셀, 주변 3×3 충돌 마스크, 그리드 높이 |
 | `history.requests` | 최근 수락된 명령 최대 16개 |
-| `history.ticks` | 최근 이동 틱 최대 16개. 시작/종료 위치, 속도, clear/slid/blocked, 틱 시작 큐 머리/마지막 조회 명령 ID, 처리 후 남은 큐 길이 |
+| `history.ticks` | 최근 이동 틱 최대 16개. 시작/종료 위치, 속도, clear/slid/slide_stalled/blocked, 틱 시작 큐 머리/마지막 조회 명령 ID, 처리 후 남은 큐 길이 |
 | `history.corrections`, `history.last_correction` | 이번 차단의 보정을 발행하기 직전까지의 보정 수와 마지막 보정 시각·위치·층 |
 | `history.requests_evicted`, `history.ticks_evicted` | 보관 한도로 밀려난 레코드 수. 0이 아니면 전체 이력이 아님 |
 | `history.recovery_requests`, `history.recovery_traces_suppressed` | 세션 중 서버가 받은 복구 요청 수와 상세 로그를 생략한 요청 수 |

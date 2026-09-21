@@ -228,6 +228,7 @@ mod metrics;
 mod monster;
 mod monster_ai;
 mod mounts;
+mod movement_route;
 mod party;
 mod passability;
 mod player;
