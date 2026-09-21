@@ -266,6 +266,13 @@ The fishing level is captured when casting and used for that session.
   update. Casting, movement and equipment changes release the correction.
   The crank hand and forearm solve as one straight segment, with the elbow
   biased backward, so following the handle does not bend the wrist.
+- A successful fish catch keeps the fishing pose for a 3.6-second presentation:
+  raise the rod, draw the fish out of the water, then take the line in the right
+  hand and lift it for display. The fish hangs from its mouth and sways with a
+  moving tail; its appearance and display size follow the caught item and size.
+  The existing `FishingEnded` broadcast starts the same presentation for nearby
+  anglers. Movement, combat, recasting, departure and disconnect cancel it.
+  Rewards remain immediate; escapes and junk catches use their existing ending.
 
 Fishing events use the common world-event subscription system: delivery is
 within 32 m of the **angler**, in the same space, rather than centered on the

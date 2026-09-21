@@ -132,6 +132,7 @@ import {
   upsertBobber,
   markBobberBite,
   updateBobberFight,
+  landFishingCatch,
   removeBobber,
 } from '../stores/fishingStore'
 import { getItemDef } from '../data/itemDefs'
@@ -2354,7 +2355,12 @@ export function handleServerMessage(
     }
 
     case 'FishingEnded': {
-      removeBobber(data.player_id)
+      const caught = data.outcome?.Caught
+      if (caught && getItemDef(caught.item_def_id)?.category === 'fish') {
+        landFishingCatch(data.player_id, caught)
+      } else {
+        removeBobber(data.player_id)
+      }
       const isSelf = isSelfPlayer(data.player_id)
       if (!isSelf) remotePlayerManager.handleStopInteraction(data.player_id)
       // Bystander celebration: everyone in radius hears about a trophy.

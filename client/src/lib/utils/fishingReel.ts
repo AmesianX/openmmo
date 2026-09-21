@@ -1,7 +1,12 @@
 import * as THREE from 'three'
-import type { FishingStance } from '../stores/fishingStore'
+import {
+  FISHING_CATCH_DURATION,
+  type FishingCatch,
+  type FishingStance,
+} from '../stores/fishingStore'
 import { findBoneByName } from './characterAnimationUtils'
 import { RiderMotion, type HandTarget } from './riderMotion'
+import { FishingCatchVisual, catchLift, catchReach } from './fishingCatch'
 
 export class FishingReel {
   private readonly motion: RiderMotion
@@ -10,6 +15,8 @@ export class FishingReel {
   private readonly handle: THREE.Object3D | undefined
   private readonly grip: THREE.Object3D | undefined
   private readonly tip: THREE.Object3D | undefined
+  private readonly shoulder: THREE.Bone | undefined
+  private catchVisual: FishingCatchVisual | undefined
   private readonly axis = new THREE.Vector3()
   private readonly rotorRotation = new THREE.Quaternion()
   private readonly targets: HandTarget[] = [
@@ -36,10 +43,11 @@ export class FishingReel {
   private applied = false
 
   constructor(
-    root: THREE.Object3D,
+    private readonly root: THREE.Object3D,
     private readonly prop: THREE.Object3D
   ) {
     this.motion = new RiderMotion(root)
+    this.shoulder = findBoneByName(root, 'RightArm')
     this.hands = ['Left', 'Right'].flatMap((side) => {
       const hand = findBoneByName(root, `${side}Hand`)
       return hand ? [hand] : []
@@ -68,8 +76,27 @@ export class FishingReel {
     this.applied = false
   }
 
-  update(delta: number, stance: FishingStance | null, fishingIdle: boolean) {
+  dispose() {
     this.restore()
+    this.catchVisual?.dispose()
+    this.catchVisual = undefined
+  }
+
+  update(
+    delta: number,
+    stance: FishingStance | null,
+    fishingIdle: boolean,
+    caught?: FishingCatch,
+    now = Date.now()
+  ) {
+    this.restore()
+    const catchTime = caught ? (now - caught.startedAt) / 1000 : -1
+    if (!fishingIdle || catchTime < 0 || catchTime >= FISHING_CATCH_DURATION)
+      caught = undefined
+    if (this.catchVisual?.event !== caught) {
+      this.catchVisual?.dispose()
+      this.catchVisual = undefined
+    }
     if (
       !this.rotor ||
       !this.handle ||
@@ -80,6 +107,9 @@ export class FishingReel {
       !this.prop.parent
     )
       return
+    if (caught && !this.catchVisual && this.shoulder) {
+      this.catchVisual = new FishingCatchVisual(this.root, caught)
+    }
     if (!fishingIdle) {
       this.weight = this.speed = this.angle = 0
       this.rotor.quaternion.copy(this.rotorRotation)
@@ -89,11 +119,16 @@ export class FishingReel {
     const blend = 1 - Math.exp(-dt * 12)
     this.weight = THREE.MathUtils.lerp(
       this.weight,
-      stance === null ? 0 : 1,
+      stance === null && !caught ? 0 : 1,
       blend
     )
-    const targetSpeed =
-      stance === 'reel' ? -5.5 : stance === 'giveline' ? 3.8 : 0
+    const targetSpeed = caught
+      ? 0
+      : stance === 'reel'
+        ? -5.5
+        : stance === 'giveline'
+          ? 3.8
+          : 0
     this.speed = THREE.MathUtils.lerp(this.speed, targetSpeed, blend)
     this.angle = (this.angle + this.speed * dt * this.weight) % (Math.PI * 2)
     this.rotor.quaternion
@@ -111,7 +146,19 @@ export class FishingReel {
     this.grip.getWorldPosition(this.palm)
     this.drawBack.sub(this.palm)
     this.liftAxis.set(-this.drawBack.z, 0, this.drawBack.x).normalize()
-    this.rotation.setFromAxisAngle(this.liftAxis, 0.55 * this.weight)
+    let lift = 0.55
+    if (caught) {
+      const elevation = Math.atan2(
+        this.drawBack.y,
+        Math.hypot(this.drawBack.x, this.drawBack.z)
+      )
+      lift = THREE.MathUtils.lerp(
+        lift,
+        Math.PI * 0.43 - elevation,
+        catchLift(catchTime)
+      )
+    }
+    this.rotation.setFromAxisAngle(this.liftAxis, lift * this.weight)
     this.localMatrix.makeRotationFromQuaternion(this.rotation)
     this.liftAxis.copy(this.palm).applyQuaternion(this.rotation)
     this.localMatrix.setPosition(this.palm.sub(this.liftAxis))
@@ -135,6 +182,12 @@ export class FishingReel {
       if (target.gripOffset) {
         hand.worldToLocal(target.gripOffset.copy(this.palm))
         anchor.getWorldPosition(target.position)
+        if (this.catchVisual && this.shoulder) {
+          target.position.lerp(
+            this.catchVisual.target(this.shoulder, catchTime),
+            catchReach(catchTime)
+          )
+        }
       } else {
         hand.getWorldPosition(target.position)
         this.palm.sub(target.position)
@@ -145,6 +198,11 @@ export class FishingReel {
     this.motion.applyHandTargets(this.targets, this.weight)
     // The crank hand must not carry the rod around its circular path.
     this.placeProp()
+    if (this.catchVisual) {
+      this.hands[1].localToWorld(this.palm.copy(this.targets[1].gripOffset!))
+      this.tip.getWorldPosition(this.drawBack)
+      this.catchVisual.update(catchTime, this.drawBack, this.palm)
+    }
     this.applied = true
   }
 

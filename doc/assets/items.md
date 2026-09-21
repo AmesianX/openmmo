@@ -173,6 +173,15 @@
     - 아이콘 `client/public/items/objects/peddler_stall.png`: Cycles 128 samples, 투명 직교 렌더 512²→128² RGBA, Euler (-62°, 0°, 0°) — 카메라 쪽으로 눕혀 탁자 위의 물건이 판자가 아니라 상품으로 읽히게 하되, 롤은 주지 않아 가방 칸에서 수평으로 놓인다. 2026-09-09 생성.
     - 재현 명령: `/Applications/Blender.app/Contents/MacOS/Blender -b -P tools/blender-scripts/render_peddler_stall_icon.py`
 
+## 낚시 성공 생선
+
+- `client/src/lib/utils/fishingCatch.ts` — Three.js 절차적 메시 자체 제작 (2026-09-21).
+  낚시 성공 연출에만 쓰는 생선으로 몸통·지느러미·꼬리·눈·아가미·입을 코드로 생성한다.
+  어종에 따라 은색·농어 줄무늬·송어 반점·철갑상어 금색을 적용하고, 잡은 크기를
+  화면 표시용 18–120cm 범위로 제한한다. 별도 텍스처·외부 원본·유료 생성 서비스 사용 없음.
+  저장소 LICENSE(PolyForm Noncommercial 1.0.0) 적용. 원본은 해당 TypeScript 코드이며
+  검증 렌더는 `assets/fishing_rod/fishing_rod-catch*.png`, `fishing_rod-catch.gif`에 보관한다.
+
 ## Skeleton Knight Greatsword
 
 - `skeleton_greatsword.glb` — 사용자 제공 Tripo Pro 유료 생성 모델, 2026-09-12 생성(사용자 확인).

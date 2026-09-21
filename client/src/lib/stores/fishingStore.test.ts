@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
 import {
   applyFightUpdate,
   fishingBobbers,
+  fishingCatches,
+  FISHING_CATCH_DURATION,
+  landFishingCatch,
+  removeFishingCatch,
   fishingReelStance,
   markBobberBite,
   myFishing,
@@ -15,6 +19,57 @@ import {
 } from './fishingStore'
 
 const ID = 7
+
+describe('catch presentation', () => {
+  const fish = { item_def_id: 'raw_trout', size_cm: 42, trophy: false }
+  beforeEach(() => {
+    vi.useFakeTimers()
+    resetFishingStore()
+  })
+  afterEach(() => {
+    resetFishingStore()
+    vi.useRealTimers()
+  })
+
+  it('replaces the water bobber with a bounded catch and keeps late beats from reviving it', () => {
+    upsertBobber(ID, { x: 1, y: 2, z: 3 })
+    landFishingCatch(ID, fish)
+    expect(get(fishingBobbers).has(ID)).toBe(false)
+    expect(get(fishingCatches).get(ID)).toMatchObject({
+      fish,
+      waterPosition: { x: 1, y: 2, z: 3 },
+    })
+    updateBobberFight(ID, { x: 4, y: 2, z: 3 }, 'running', 50)
+    expect(get(fishingBobbers).has(ID)).toBe(false)
+    vi.advanceTimersByTime(FISHING_CATCH_DURATION * 1000)
+    expect(get(fishingCatches).size).toBe(0)
+  })
+
+  it('cancels a prior expiry when a new cast lands another fish', () => {
+    upsertBobber(ID, { x: 1, y: 2, z: 3 })
+    landFishingCatch(ID, fish)
+    vi.advanceTimersByTime(2000)
+    upsertBobber(ID, { x: 4, y: 2, z: 3 })
+    expect(get(fishingCatches).size).toBe(0)
+    landFishingCatch(ID, fish)
+    vi.advanceTimersByTime(2000)
+    expect(get(fishingCatches).has(ID)).toBe(true)
+    removeFishingCatch(ID)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('clears catches and timers when the angler leaves or the game resets', () => {
+    for (const id of [ID, ID + 1]) {
+      upsertBobber(id, { x: 1, y: 2, z: 3 })
+      landFishingCatch(id, fish)
+    }
+    removeBobber(ID)
+    expect(get(fishingCatches).has(ID)).toBe(false)
+    resetFishingStore()
+    expect(get(fishingCatches).size).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})
 
 function fight(overrides: Partial<FightStatus> = {}): FightStatus {
   return {

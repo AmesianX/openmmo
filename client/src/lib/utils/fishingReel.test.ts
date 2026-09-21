@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { FishingReel } from './fishingReel'
+import type { FishingCatch } from '../stores/fishingStore'
+import { WORLD_WIDTH_X } from '../terrain/world-wrap'
 
 function rig() {
   const root = new THREE.Group()
@@ -51,6 +53,51 @@ const palm = (hand: THREE.Object3D) =>
   hand.localToWorld(new THREE.Vector3(0, 0.075, 0))
 
 describe('fishing reel motion', () => {
+  it('lifts the rod, takes the line in the right hand, and hangs the catch from its mouth', () => {
+    const { root, hands, prop, tip } = rig()
+    const motion = new FishingReel(root, prop)
+    for (let i = 0; i < 90; i++) motion.update(1 / 60, 'hold', true)
+    const before = point(tip)
+    const caught: FishingCatch = {
+      startedAt: 0,
+      fish: { item_def_id: 'raw_trout', size_cm: 42, trophy: false },
+      waterPosition: { x: 40 + WORLD_WIDTH_X, y: 3, z: -16 },
+    }
+    motion.update(1 / 60, null, true, caught, 0)
+    expect(point(root.getObjectByName('landed_fish')!).x).toBeCloseTo(40)
+    for (let i = 0; i <= 120; i++)
+      motion.update(1 / 60, null, true, caught, (i * 1000) / 60)
+    expect(point(tip).y - before.y).toBeGreaterThan(0.5)
+    const fish = root.getObjectByName('landed_fish')!
+    const rightPalm = palm(hands[1])
+    expect(
+      point(fish).distanceTo(
+        rightPalm.clone().add(new THREE.Vector3(0, -0.3, 0))
+      )
+    ).toBeLessThan(1e-5)
+    const line = root
+      .getObjectByName('fishing_catch')!
+      .children.find((obj) => obj instanceof THREE.Line) as THREE.Line
+    const positions = line.geometry.getAttribute('position')
+    expect(
+      new THREE.Vector3()
+        .fromBufferAttribute(positions, 1)
+        .distanceTo(rightPalm)
+    ).toBeLessThan(1e-5)
+    expect(
+      new THREE.Vector3()
+        .fromBufferAttribute(positions, 2)
+        .distanceTo(point(fish))
+    ).toBeLessThan(1e-5)
+    const forearm = point(hands[1]).sub(point(hands[1].parent!)).normalize()
+    expect(
+      forearm.dot(rightPalm.clone().sub(point(hands[1])).normalize())
+    ).toBeGreaterThan(0.9999)
+    motion.update(1 / 60, null, false, caught, 2050)
+    expect(root.getObjectByName('fishing_catch')).toBeUndefined()
+    motion.dispose()
+  })
+
   it('keeps both hands on their targets while the crank turns independently of the rod', () => {
     const { root, hands, prop, grip, tip, rotor, handle } = rig()
     const motion = new FishingReel(root, prop)

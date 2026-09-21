@@ -36,7 +36,11 @@
     playerInsideHouseId,
   } from '../../stores/housingStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
-  import { myFishing } from '../../stores/fishingStore'
+  import {
+    myFishing,
+    fishingCatches,
+    removeFishingCatch,
+  } from '../../stores/fishingStore'
   import { FishingAnimationName } from '../../types/animations'
   import { housingManager } from '../../managers/housingManager'
   import { campfireManager } from '../../managers/campfireManager'
@@ -155,8 +159,24 @@
   $effect(() => {
     if ($myFishing.phase === 'casting') fishingCastDone = false
   })
+  const localCatch = $derived(
+    currentPlayer ? $fishingCatches.get(currentPlayer.id) : undefined
+  )
+  $effect(() => {
+    for (const [id] of $fishingCatches) {
+      const local = id === currentPlayer?.id
+      const state = local ? currentPlayerState : remotePlayers.get(id)
+      const health = local
+        ? currentPlayer?.health
+        : otherPlayers.get(id)?.health
+      if (!state || state.state !== 'idle' || !health || health <= 0) {
+        removeFishingCatch(id)
+      }
+    }
+  })
   const fishingOverrideActive = $derived(
-    $myFishing.phase !== 'idle' && currentPlayerState.state === 'idle'
+    ($myFishing.phase !== 'idle' || localCatch !== undefined) &&
+      currentPlayerState.state === 'idle'
   )
   const effectivePlayerState = $derived(
     fishingOverrideActive ? 'interact' : currentPlayerState.state
@@ -643,6 +663,7 @@
     title={currentPlayer.title}
     isCurrentPlayer={true}
     playerState={effectivePlayerState}
+    catchPresentation={localCatch}
     interactionAnim={effectiveInteractionAnim}
     interactionCounter={effectiveInteractionCounter}
     interactOffsetY={currentPlayerState.interactOffsetY}
@@ -691,6 +712,9 @@
         : remotePlayer.position.x}
       <!-- position.y is ground-resampled per tick by remotePlayerManager -->
       {@const baseY = remotePlayer.position.y}
+      {@const caught = $fishingCatches.get(player.id)}
+      {@const showingCatch =
+        caught !== undefined && remotePlayer.state === 'idle'}
       <PlayerModel
         bind:this={otherPlayerModels[index]}
         position={new THREE.Vector3(
@@ -701,8 +725,11 @@
         name={player.name}
         title={player.title}
         isCurrentPlayer={false}
-        playerState={remotePlayer.state}
-        interactionAnim={remotePlayer.interactionAnim}
+        playerState={showingCatch ? 'interact' : remotePlayer.state}
+        interactionAnim={showingCatch
+          ? FishingAnimationName.IDLE
+          : remotePlayer.interactionAnim}
+        catchPresentation={visible ? caught : undefined}
         interactionCounter={remotePlayer.interactionCounter}
         interactOffsetY={remotePlayer.interactOffsetY}
         attackCounter={remotePlayer.attackCounter}

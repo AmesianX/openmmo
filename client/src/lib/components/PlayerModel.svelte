@@ -52,7 +52,7 @@
   import { playerHealthDisplay } from '../stores/playerHealthDisplay'
   import { RiderMotion } from '../utils/riderMotion'
   import { FishingReel } from '../utils/fishingReel'
-  import { fishingReelStance } from '../stores/fishingStore'
+  import { fishingReelStance, type FishingCatch } from '../stores/fishingStore'
   import {
     ENCHANT_WEAPON_ANIMATION,
     ENCHANT_LEFT_WEAPON_ANIMATION,
@@ -184,6 +184,7 @@
     isCurrentPlayer: boolean
     playerState: PlayerStateName
     interactionAnim?: string
+    catchPresentation?: FishingCatch
     interactionCounter?: number
     mount?: MountKind | null
     interactOffsetY?: number
@@ -241,6 +242,7 @@
     isCurrentPlayer,
     playerState,
     interactionAnim,
+    catchPresentation,
     interactionCounter,
     mount = null,
     interactOffsetY = 0,
@@ -484,6 +486,7 @@
   let weaponObject: THREE.Object3D | null = null
   let weaponGrip: TwoHandedGrip | null = null
   let fishingReel: FishingReel | null = null
+  onDestroy(() => fishingReel?.dispose())
   let enchantGrip: EnchantWeaponGrip | null = null
   let enchantClips = new Map<string, THREE.AnimationClip>()
   let enchantAction: THREE.AnimationAction | null = null
@@ -557,7 +560,7 @@
   }
 
   function detachWeapon() {
-    fishingReel?.restore()
+    fishingReel?.dispose()
     fishingReel = null
     enchantGrip?.update(0)
     enchantGrip = null
@@ -1571,7 +1574,8 @@
       fishingReelStance(isCurrentPlayer ? undefined : remotePlayerId),
       playerState === 'interact' &&
         interactionAnim === FishingAnimationName.IDLE &&
-        !riding
+        !riding,
+      catchPresentation
     )
     updateCape(deltaTime, wind)
   }

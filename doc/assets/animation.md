@@ -105,6 +105,10 @@
     오른손은 전완과 일직선이 되도록 손바닥까지 함께 IK로 풀고, 팔꿈치는 뒤쪽으로 유도한다.
     새 외부 애니메이션 소스·유료 생성 서비스 사용 없음. 자체 코드와 리깅에는
     저장소 LICENSE(PolyForm Noncommercial 1.0.0)를 적용하며 기존 Mixamo 동작은 기존 라이선스를 따른다.
+  - 낚시 성공 연출 (2026-09-21): `fishingReel.ts`·`fishingCatch.ts`가 기존 idle 위에
+    낚싯대 들어 올리기 → 오른손으로 줄 잡기 → 매달린 생선 들어 보이기를 3.6초 동안 적용한다.
+    실제 캐릭터 포즈 검증 미리보기: `assets/fishing_rod/fishing_rod-catch.gif`와 `fishing_rod-catch*.png`.
+    자체 제작 절차적 동작이며 저장소 LICENSE(PolyForm Noncommercial 1.0.0)를 적용한다.
 
 - Guitar Playing https://www.mixamo.com/#/?page=1&query=Guitar+Playing&type=Motion%2CMotionPack (social pack, `guitar_playing`)
   - 체중 이동이 있어 Hips location bake가 필요한 첫 클립이다.
