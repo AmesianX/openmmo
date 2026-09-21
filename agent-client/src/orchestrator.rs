@@ -669,7 +669,16 @@ async fn handle_incoming(state: &Arc<Mutex<SharedState>>, label: &str, msg: Serv
         ServerMessage::JoinSuccess { .. } => true,
         ServerMessage::PlayerRespawned { player } => s.self_player_id == Some(player.id),
         ServerMessage::PlayerTeleported { player_id, .. } => s.self_player_id == Some(*player_id),
-        ServerMessage::WorldUpdate { reset, events, .. } => *reset || events.iter().flat_map(|event| &event.messages).any(|message| matches!(message, ServerMessage::PlayerTeleported { player_id, .. } if Some(*player_id) == s.self_player_id) || matches!(message, ServerMessage::PlayerRespawned { player } if Some(player.id) == s.self_player_id)),
+        ServerMessage::WorldUpdate { events, .. } => events
+            .iter()
+            .flat_map(|event| &event.messages)
+            .any(|message| match message {
+                ServerMessage::PlayerTeleported { player_id, .. } => {
+                    s.self_player_id == Some(*player_id)
+                }
+                ServerMessage::PlayerRespawned { player } => s.self_player_id == Some(player.id),
+                _ => false,
+            }),
         _ => false,
     };
 
@@ -1151,6 +1160,33 @@ fn spawn_llm_task(
 mod tests {
     use super::*;
     use onlinerpg_shared::CharacterAttributes;
+
+    #[tokio::test]
+    async fn a_world_snapshot_does_not_send_a_move_that_can_cancel_a_new_pose() {
+        let (mut s, mut rx) = crate::state::tests::test_state();
+        let player = crate::state::tests::test_player(0.0, 0.0);
+        let position = player.position;
+        s.self_player_id = Some(player.id);
+        s.self_player = Some(player);
+        let state = Arc::new(Mutex::new(s));
+        handle_incoming(
+            &state,
+            "Tobin",
+            ServerMessage::WorldUpdate {
+                world_epoch: "snapshot-test".into(),
+                generation: 1,
+                sequence: 1,
+                position,
+                floor_level: 0,
+                reset: true,
+                ready: true,
+                events: vec![],
+            },
+        )
+        .await;
+        assert!(state.lock().await.world_view.synchronized);
+        assert!(rx.try_recv().is_err());
+    }
 
     #[tokio::test]
     async fn terrain_http_does_not_lock_state_and_old_responses_cannot_apply() {

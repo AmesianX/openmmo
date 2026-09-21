@@ -440,13 +440,14 @@ impl SharedState {
         }
     }
 
-    /// Send a position sync to correct Y to terrain height.
-    /// Should be called after JoinSuccess or PlayerRespawned to snap to
-    /// ground. Background: the rx task fires it, not an agent action.
+    /// Snap to terrain after relocation without interrupting a furniture pose.
     pub async fn sync_height(&mut self) -> anyhow::Result<()> {
         let Some(ref p) = self.self_player else {
             return Ok(());
         };
+        if p.object_type.is_some() {
+            return Ok(());
+        }
         let pos = p.position;
         let rotation = p.rotation;
         self.send_background_command(ClientMessage::player_move(pos, rotation, 0))

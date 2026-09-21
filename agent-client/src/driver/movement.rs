@@ -449,9 +449,30 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn scheduled_fishing_hooks_reels_rests_and_stops_on_departure() {
+    async fn scheduled_fishing_hooks_reels_rests_and_sleeps_until_eight() {
         let schedule = npc_schedule(include_str!("../../data/npcs/tobin/schedule.json"));
         let entry = &schedule[0];
+        let bed = &schedule[1];
+        assert!(bed.is_sleeping());
+        for (hour, minute, expected) in [
+            (0, 0, 0),
+            (1, 59, 0),
+            (2, 0, 1),
+            (7, 59, 1),
+            (8, 0, 2),
+            (8, 29, 2),
+            (8, 30, 0),
+            (18, 59, 0),
+            (19, 0, 3),
+            (19, 29, 3),
+            (19, 30, 0),
+            (23, 59, 0),
+        ] {
+            assert_eq!(
+                resolve_active_schedule(&schedule, None, Some(hour), Some(minute), None),
+                (Some(expected), None)
+            );
+        }
         let (state, mut rx) = fishing_state(entry);
         let player_id = PlayerId::from(1);
 
@@ -535,12 +556,65 @@ mod tests {
             .lock()
             .await
             .push_event(ServerMessage::FishingBite { player_id });
-        stop_current_entry(&state, &schedule, Some(0), "Tobin").await;
+        state.lock().await.self_player.as_mut().unwrap().position = Position {
+            x: bed.pos[0],
+            y: bed.pos[1],
+            z: bed.pos[2],
+        };
+        let active =
+            check_schedule_transition(&state, &schedule, (Some(0), None), (Some(1), None), "Tobin")
+                .await;
         assert!(!state.lock().await.self_fishing);
         assert!(matches!(rx.try_recv(), Ok(ClientMessage::FishingStop)));
         assert!(matches!(rx.try_recv(), Ok(ClientMessage::StopInteraction)));
-        tokio::time::advance(std::time::Duration::from_secs(1)).await;
-        assert!(rx.try_recv().is_err(), "leaving cancels the pending hook");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientMessage::InteractObject { object_type, object_id: 111 })
+                if object_type == "rustic_bed"
+            )
+        );
+        state.lock().await.sync_height().await.unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "height sync must not wake a sleeping NPC"
+        );
+        tokio::time::advance(crate::state::FISHING_RECAST_DELAY).await;
+        assert!(rx.try_recv().is_err(), "sleeping cancels the pending hook");
+
+        let breakfast = &schedule[2];
+        assert!(breakfast.is_campfire_meal());
+        state.lock().await.self_player.as_mut().unwrap().position = Position {
+            x: breakfast.pos[0],
+            y: breakfast.pos[1],
+            z: breakfast.pos[2],
+        };
+        let active =
+            check_schedule_transition(&state, &schedule, active, (Some(2), None), "Tobin").await;
+        assert!(matches!(rx.try_recv(), Ok(ClientMessage::StopInteraction)));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+        assert!(rx.try_recv().is_err(), "breakfast must not cast the rod");
+
+        state.lock().await.self_player.as_mut().unwrap().position = Position {
+            x: entry.pos[0],
+            y: entry.pos[1],
+            z: entry.pos[2],
+        };
+        check_schedule_transition(&state, &schedule, active, (Some(0), None), "Tobin").await;
+        assert!(matches!(rx.try_recv(), Ok(ClientMessage::StopInteraction)));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::FishingCast { .. })
+        ));
     }
 
     #[tokio::test(start_paused = true)]

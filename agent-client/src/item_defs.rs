@@ -26,6 +26,8 @@ pub struct ItemDef {
     pub world_model: Option<String>,
     #[serde(default)]
     pub nutrition: Option<u32>,
+    #[serde(rename = "grillsInto", default)]
+    pub grills_into: Option<String>,
 }
 
 impl ItemDef {

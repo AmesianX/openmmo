@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Object type an NPC occupies while asleep.
 pub const BED_OBJECT_TYPE: &str = "bed";
 pub const FISHING_ACTION: &str = "fishing";
+pub const CAMPFIRE_MEAL_ACTION: &str = "campfire_meal";
 const MEAL_DURATION_HOURS: f64 = 0.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,11 +83,15 @@ pub struct ScheduleEntry {
 
 impl ScheduleEntry {
     pub fn is_sleeping(&self) -> bool {
-        self.action.as_deref() == Some(BED_OBJECT_TYPE)
+        matches!(self.action.as_deref(), Some(BED_OBJECT_TYPE | "rustic_bed"))
     }
 
     pub fn is_fishing(&self) -> bool {
         self.action.as_deref() == Some(FISHING_ACTION)
+    }
+
+    pub fn is_campfire_meal(&self) -> bool {
+        self.action.as_deref() == Some(CAMPFIRE_MEAL_ACTION)
     }
 
     pub fn fishing_target(&self) -> Option<crate::Position> {

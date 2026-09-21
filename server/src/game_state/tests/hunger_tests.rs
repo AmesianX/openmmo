@@ -773,9 +773,10 @@ async fn only_an_npc_lights_a_campfire_without_a_kit_and_only_one_of_them() {
     );
 }
 
-#[tokio::test]
-async fn npcs_are_exempt_from_hunger_but_can_still_eat() {
+#[tokio::test(start_paused = true)]
+async fn npcs_can_light_a_fire_grill_and_eat_without_hunger() {
     let game_state = make_test_game_state("npc_exempt");
+    let auth = make_test_auth("npc_breakfast");
     let id = pid("npc_rica");
     let mut npc = make_player("npc_rica", 100.0, 50.0);
     npc.is_official_npc = true;
@@ -784,7 +785,7 @@ async fn npcs_are_exempt_from_hunger_but_can_still_eat() {
         id,
         PlayerInventory {
             active_ammo: None,
-            bag: vec![bag_item(1, "bread", 1)],
+            bag: vec![bag_item(1, "raw_trout", 1)],
             equipped: std::collections::HashMap::new(),
         },
     );
@@ -795,7 +796,20 @@ async fn npcs_are_exempt_from_hunger_but_can_still_eat() {
     let mut rx = game_state.register_direct_channel(&id).await;
 
     assert_eq!(game_state.hunger_satiation(&id).await, None);
+    game_state
+        .send_chat_message(&id, "/light_campfire".into(), &auth)
+        .await;
+    assert_eq!(game_state.campfires.read().await.len(), 1);
     game_state.use_item(&id, 1).await;
+    assert!(drain(&mut rx)
+        .iter()
+        .any(|message| matches!(message, ServerMessage::GrillStarted)));
+    assert_eq!(bag_ids(&game_state, &id).await, vec!["raw_trout"]);
+    advance(Duration::from_millis(GRILL_CAST_MS + 1)).await;
+    game_state.tick_grills().await;
+    assert_eq!(bag_ids(&game_state, &id).await, vec!["grilled_trout"]);
+    let cooked_id = game_state.inventories.read().await[&id].bag[0].instance_id;
+    game_state.use_item(&id, cooked_id).await;
     assert!(bag_ids(&game_state, &id).await.is_empty(), "still consumed");
     assert!(
         last_hunger_update(&drain(&mut rx)).is_none(),

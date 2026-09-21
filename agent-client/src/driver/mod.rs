@@ -20,6 +20,7 @@ mod action;
 mod backoff;
 #[cfg(test)]
 mod backoff_tests;
+mod campfire_meal;
 mod combat;
 #[cfg(test)]
 mod combat_timing_tests;
@@ -477,6 +478,7 @@ pub async fn llm_driver(
     let mut pending_urgency = LlmPriority::Idle;
     let mut active_schedule: (Option<usize>, Option<u32>) = (None, None);
     let mut last_fishing_check = Instant::now();
+    let mut campfire_meal: Option<(usize, campfire_meal::CampfireMeal)> = None;
     let mut tales = crate::tales::SetTales::default();
     // Our song count when the pending prompt offered a tale, so the gap is
     // measured from the offer rather than from whenever the reply lands.
@@ -1042,14 +1044,16 @@ pub async fn llm_driver(
                 let transition_now = match (wrapup, due.0) {
                     _ if due.0 == active_schedule.0 => true,
                     (_, None) => true,
+                    (_, Some(i)) if schedule[i].is_campfire_meal() => true,
                     (Some((deadline, prompted)), _) => {
                         (prompted && llm_in_flight.is_none()) || Instant::now() >= deadline
                     }
                     (None, Some(i)) => {
-                        let sleeping_now =
-                            active_schedule.0.is_some_and(|j| schedule[j].is_sleeping());
+                        let automatic_departure = active_schedule.0.is_some_and(|j| {
+                            schedule[j].is_sleeping() || schedule[j].is_campfire_meal()
+                        });
                         let mut start_now = true;
-                        if !sleeping_now {
+                        if !automatic_departure {
                             let mut s = state.lock().await;
                             if always_active || s.has_nearby_human_players() {
                                 s.push_ambient_event(format!(
@@ -1080,6 +1084,21 @@ pub async fn llm_driver(
         let has_scheduled_action = active_schedule
             .0
             .is_some_and(|i| schedule[i].action.is_some());
+
+        let meal_entry = active_schedule
+            .0
+            .filter(|&i| schedule[i].is_campfire_meal());
+        if meal_entry != campfire_meal.as_ref().map(|(i, _)| *i) {
+            campfire_meal = meal_entry.map(|i| (i, campfire_meal::CampfireMeal::default()));
+        }
+        if attack_target.is_none() && visit_until.is_none() {
+            if let Some((i, meal)) = &mut campfire_meal {
+                let mut s = state.lock().await;
+                if let Err(error) = meal.tick(&mut s, &schedule[*i]).await {
+                    warn!("[{label}] Campfire meal failed: {error}");
+                }
+            }
+        }
 
         if attack_target.is_none()
             && visit_until.is_none()
