@@ -540,6 +540,21 @@ impl super::GameState {
         caster_id: &PlayerId,
         accept: bool,
     ) {
+        if !self
+            .try_respond_to_party_summon(member_id, caster_id, accept)
+            .await
+            && accept
+        {
+            self.cancel_teleport_effect(member_id).await;
+        }
+    }
+
+    async fn try_respond_to_party_summon(
+        &self,
+        member_id: &PlayerId,
+        caster_id: &PlayerId,
+        accept: bool,
+    ) -> bool {
         let key = (*caster_id, *member_id);
         let usable = {
             let mut parties = self.parties.write().await;
@@ -549,21 +564,20 @@ impl super::GameState {
         if !usable {
             self.send_system_message(member_id, "Summon: that summons has expired.")
                 .await;
-            return;
+            return false;
         }
         if !accept {
             let member_name = self.player_name_of(member_id).await;
             self.parties.write().await.summons.remove(&key);
             self.send_system_message(caster_id, format!("Summon: {member_name} declined."))
                 .await;
-            return;
+            return true;
         }
-        // Same clock as /escape: accepting must not double as a free
-        // disengage. The entry survives the refusal for a retry in the window.
+        // Keep refused calls available for a retry until they expire.
         let (member_name, refusal) = {
             let players = self.players.read().await;
             let Some(member) = players.get(member_id) else {
-                return;
+                return false;
             };
             let refusal = if member.health == 0 {
                 Some("not while defeated.")
@@ -577,11 +591,9 @@ impl super::GameState {
         if let Some(reason) = refusal {
             self.send_system_message(member_id, format!("Summon: {reason}"))
                 .await;
-            return;
+            return false;
         }
-        // The caster must still be online, share the member's party, and pass
-        // the read-time gate again: the 30s window must not hand out fights
-        // the 10s clock just refused. A refusal keeps the entry for a retry.
+        // Recheck the caster's party membership, health, and combat state.
         let destination = {
             let players = self.players.read().await;
             let parties = self.parties.read().await;
@@ -608,17 +620,16 @@ impl super::GameState {
             self.parties.write().await.summons.remove(&key);
             self.send_system_message(member_id, "Summon: that summons has faded.")
                 .await;
-            return;
+            return false;
         };
         if let Some(message) = caster_refusal {
             self.send_system_message(member_id, message).await;
-            return;
+            return false;
         }
-        // No explicit remove: the teleport's void_summons_aimed_at hook
-        // clears every summons aimed at the mover, this entry included.
+        // Teleporting clears every summons aimed at the mover.
         let arrival = self.arrival_beside(member_id, &center);
         info!(member = %member_name, caster = %caster_name, "party summon accepted");
-        self.teleport_player(member_id, arrival, rotation, floor)
+        self.teleport_player_with_effects(member_id, arrival, rotation, floor)
             .await;
         self.send_system_message(
             member_id,
@@ -627,6 +638,7 @@ impl super::GameState {
         .await;
         self.send_system_message(caster_id, format!("Summon: {member_name} is at your side."))
             .await;
+        true
     }
 
     /// Deliver a party-channel line to every online member, the sender's echo

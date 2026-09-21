@@ -951,8 +951,9 @@ impl super::GameState {
             UseEffect::Heal(dice) => self.use_healing_item(player_id, instance_id, &dice).await,
             UseEffect::Eat(eat) => self.use_eat_item(player_id, instance_id, &eat, None).await,
             UseEffect::PlaceCampfire => self.use_campfire_kit(player_id, instance_id).await,
-            UseEffect::TeleportTown => self.use_return_scroll(player_id, instance_id).await,
-            UseEffect::TeleportRandom => self.use_teleport_scroll(player_id, instance_id).await,
+            UseEffect::TeleportTown | UseEffect::TeleportRandom => {
+                self.use_teleport_scroll(player_id, instance_id).await
+            }
             UseEffect::EnchantWeapon => {
                 self.use_enchant_weapon_scroll(player_id, instance_id).await
             }
@@ -1403,18 +1404,19 @@ impl super::GameState {
         defeated
     }
 
-    /// Read a scroll of return: whisk the reader back to the town spawn
-    /// (surface floor). Refuses while defeated so the dead can't escape death.
-    async fn use_return_scroll(&self, player_id: &PlayerId, instance_id: u64) {
+    pub(super) async fn use_return_scroll(&self, player_id: &PlayerId, instance_id: u64) -> bool {
         if self
             .reject_if_defeated(player_id, "You can't read while defeated")
             .await
         {
-            return;
+            return false;
         }
 
         self.consume_one_and_sync(player_id, instance_id).await;
-        self.teleport_to_town(player_id).await;
+        let spawn = &crate::world_config::world_config().spawn_position;
+        self.teleport_player_with_effects(player_id, spawn.position(), spawn.rotation, 0)
+            .await;
+        true
     }
 
     /// Read a scroll of party summon: ask every other online party member to

@@ -760,37 +760,47 @@ class NetworkManager {
     const item = get(inventoryStore).bag.find(
       (entry) => entry.instance_id === instanceId
     )
-    if (item && getItemDef(item.item_def_id)?.category === 'teleport_scroll') {
-      const player = get(gameStore).currentPlayer
-      if (!player || player.health <= 0 || !this.isConnected()) return
-      const position = {
-        x: player.position.x,
-        y: player.position.y,
-        z: player.position.z,
-      }
-      const depth = get(currentDungeonDepth)
-      const floorLevel =
-        depth > 0 ? -depth : Math.max(0, get(playerVisualFloorLevel))
-      this.sendPlayerMove(position, player.rotation, floorLevel)
-      beginLocalTeleport({ playerId: player.id, position, floorLevel }, () => {
-        const current = get(gameStore).currentPlayer
-        if (
-          !current ||
-          current.id !== player.id ||
-          current.health <= 0 ||
-          Math.hypot(
-            current.position.x - position.x,
-            current.position.z - position.z
-          ) > 0.1
-        )
-          return false
-        return this.sendAndSerialize({
-          UseTeleportScroll: { instance_id: instanceId },
-        })
+    const category = item && getItemDef(item.item_def_id)?.category
+    if (
+      category === 'teleport_scroll' ||
+      category === 'return_scroll' ||
+      category === 'estate_return_scroll'
+    ) {
+      this.sendAfterTeleportDeparture({
+        UseTeleportScroll: { instance_id: instanceId },
       })
       return
     }
     this.sendMessage({ UseItem: { instance_id: instanceId } })
+  }
+
+  private sendAfterTeleportDeparture(message: ClientMessage) {
+    if (get(localTeleportActive)) return
+    const player = get(gameStore).currentPlayer
+    if (!player || player.health <= 0 || !this.isConnected()) return
+    const position = {
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+    }
+    const depth = get(currentDungeonDepth)
+    const floorLevel =
+      depth > 0 ? -depth : Math.max(0, get(playerVisualFloorLevel))
+    this.sendPlayerMove(position, player.rotation, floorLevel)
+    beginLocalTeleport({ playerId: player.id, position, floorLevel }, () => {
+      const current = get(gameStore).currentPlayer
+      if (
+        !current ||
+        current.id !== player.id ||
+        current.health <= 0 ||
+        Math.hypot(
+          current.position.x - position.x,
+          current.position.z - position.z
+        ) > 0.1
+      )
+        return false
+      return this.sendAndSerialize(message)
+    })
   }
 
   sendPlaceHouse(instanceId: number, origin: Position, quarterTurns: number) {
@@ -1060,7 +1070,9 @@ class NetworkManager {
 
   /** Answer a party summon (ServerMessage::PartySummonReceived). */
   sendPartySummonRespond(casterId: number, accept: boolean) {
-    this.sendMessage({ PartySummonRespond: { caster_id: casterId, accept } })
+    const message = { PartySummonRespond: { caster_id: casterId, accept } }
+    if (accept) this.sendAfterTeleportDeparture(message)
+    else this.sendMessage(message)
   }
 
   sendPartyLeave() {

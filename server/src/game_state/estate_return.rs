@@ -24,6 +24,17 @@ impl GameState {
         instance_id: u64,
         auth: &AuthService,
     ) {
+        if !self.try_estate_return(player_id, instance_id, auth).await {
+            self.cancel_teleport_effect(player_id).await;
+        }
+    }
+
+    async fn try_estate_return(
+        &self,
+        player_id: &PlayerId,
+        instance_id: u64,
+        auth: &AuthService,
+    ) -> bool {
         if self.authenticated_use_action(player_id, instance_id).await
             != Some(AuthenticatedUseAction::EstateReturn)
             || self
@@ -33,10 +44,10 @@ impl GameState {
                 .reject_if_defeated(player_id, "You can't read while defeated")
                 .await
         {
-            return;
+            return false;
         }
         let Some(character_id) = self.character_id_of(player_id).await else {
-            return;
+            return false;
         };
         let auth = auth.clone();
         let plots = match auth_db(move || auth.homestead_plots(character_id)).await {
@@ -45,13 +56,13 @@ impl GameState {
                 tracing::warn!(%error, "Failed to load estate return destination");
                 self.send_system_message(player_id, "Estate return is temporarily unavailable.")
                     .await;
-                return;
+                return false;
             }
         };
         if plots.is_empty() {
             self.send_system_message(player_id, "You don't own an estate to return to.")
                 .await;
-            return;
+            return false;
         }
         let Some(position) = self.estate_return_position(&plots).await else {
             self.send_system_message(
@@ -59,7 +70,7 @@ impl GameState {
                 "No safe outdoor arrival spot was found on your estate.",
             )
             .await;
-            return;
+            return false;
         };
         if self
             .reject_if_trade_reserved(player_id, instance_id, "use")
@@ -68,12 +79,12 @@ impl GameState {
                 .reject_if_defeated(player_id, "You can't read while defeated")
                 .await
         {
-            return;
+            return false;
         }
         let snapshot = {
             let mut inventories = self.inventories.write().await;
             let Some(inv) = inventories.get_mut(player_id) else {
-                return;
+                return false;
             };
             if !inv.bag.iter().any(|item| {
                 item.instance_id == instance_id
@@ -82,14 +93,16 @@ impl GameState {
                         def.authenticated_use_action == Some(AuthenticatedUseAction::EstateReturn)
                     })
             }) {
-                return;
+                return false;
             }
             consume_one(inv, instance_id);
             inv.clone()
         };
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
-        self.teleport_player(player_id, position, 0.0, 0).await;
+        self.teleport_player_with_effects(player_id, position, 0.0, 0)
+            .await;
+        true
     }
 
     async fn estate_return_position(&self, plots: &[(i32, i32, u8)]) -> Option<Position> {

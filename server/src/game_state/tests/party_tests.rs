@@ -928,6 +928,7 @@ async fn summon_accept_teleports_to_casters_side() {
     let game_state = make_test_game_state("summon_accept");
     let mut alice_rx = add(&game_state, "alice", 0.0).await;
     let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    let mut observer_rx = add(&game_state, "observer", 500.0).await;
     form_party(&game_state, "alice", "bob").await;
     give_summon_scroll(&game_state, "alice").await;
     // The caster waits on a dungeon floor: the arrival must match it.
@@ -940,6 +941,7 @@ async fn summon_accept_teleports_to_casters_side() {
         .floor_level = -2;
     drain(&mut alice_rx);
     drain(&mut bob_rx);
+    drain(&mut observer_rx);
 
     game_state.use_item(&pid("alice"), 9).await;
     let inv = game_state
@@ -972,6 +974,24 @@ async fn summon_accept_teleports_to_casters_side() {
     assert!(dist <= 2.0, "bob should arrive beside alice, {dist}m away");
     assert!(dist > 0.5, "arrivals should not stack on the caster");
     assert_eq!(bob.floor_level, -2);
+    let messages = super::drain(&mut bob_rx);
+    let effect = messages.iter().position(|msg| matches!(msg,
+        ServerMessage::PlayerTeleportEffect { player_id, position, floor_level: -2, phase: onlinerpg_shared::TeleportPhase::Arriving }
+        if *player_id == bob.id && *position == bob.position
+    )).unwrap();
+    let moved = messages
+        .iter()
+        .position(|msg| matches!(msg, ServerMessage::PlayerTeleported { .. }))
+        .unwrap();
+    assert!(effect < moved);
+    assert!(!messages.iter().any(|msg| matches!(
+        msg,
+        ServerMessage::PlayerTeleportEffect {
+            phase: onlinerpg_shared::TeleportPhase::Departing,
+            ..
+        }
+    )));
+    assert!(super::drain(&mut observer_rx).iter().any(|msg| matches!(msg, ServerMessage::PlayerTeleportEffect { player_id, floor_level: 0, phase: onlinerpg_shared::TeleportPhase::Departing, .. } if *player_id == bob.id)));
 }
 
 #[tokio::test]
@@ -1106,6 +1126,13 @@ async fn summon_accept_waits_out_combat() {
         }
         other => panic!("Expected combat refusal, got {:?}", other),
     }
+    assert!(super::drain(&mut bob_rx).iter().any(|msg| matches!(
+        msg,
+        ServerMessage::PlayerTeleportEffect {
+            phase: onlinerpg_shared::TeleportPhase::Cancelled,
+            ..
+        }
+    )));
     assert_eq!(player_x(&game_state, "bob").await, 500.0);
 
     // Out of combat again: the pending summon survived the refusal.
@@ -1210,9 +1237,15 @@ async fn summon_teleport_voids_calls_aimed_at_the_mover() {
         }
         other => panic!("Expected expired notice for carol's call, got {:?}", other),
     }
+    assert!(matches!(
+        bob_rx.try_recv(),
+        Ok(ServerMessage::PlayerTeleportEffect {
+            phase: onlinerpg_shared::TeleportPhase::Cancelled,
+            ..
+        })
+    ));
 
-    // And carol can call him again at once: her re-read reaches exactly bob
-    // (alice still holds carol's live entry, so she is excluded).
+    // Carol can call Bob again; Alice still holds Carol's live call.
     drain(&mut carol_rx);
     game_state.use_item(&pid("carol"), 9).await;
     assert_eq!(summon_scrolls_left(&game_state, "carol").await, 0);

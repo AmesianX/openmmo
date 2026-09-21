@@ -79,22 +79,41 @@ fn sample_destination(
 impl GameState {
     pub(crate) async fn use_teleport_scroll(&self, player_id: &PlayerId, instance_id: u64) {
         self.stop_bed_rest(player_id).await;
-        if !self
-            .use_teleport_scroll_with_rng(player_id, instance_id, &mut StdRng::from_entropy())
+        let effect = {
+            let inventories = self.inventories.read().await;
+            inventories
+                .get(player_id)
+                .and_then(|inv| {
+                    inv.bag
+                        .iter()
+                        .find(|item| item.instance_id == instance_id && item.quantity > 0)
+                })
+                .and_then(|item| self.item_defs.get(&item.item_def_id))
+                .and_then(|def| def.use_effect())
+        };
+        let used = if self
+            .reject_if_trade_reserved(player_id, instance_id, "use")
             .await
         {
-            if let Some((position, _, floor_level)) = self.get_player_position(player_id).await {
-                self.send_direct_message(
-                    player_id,
-                    ServerMessage::PlayerTeleportEffect {
-                        player_id: *player_id,
-                        position,
-                        floor_level,
-                        phase: TeleportPhase::Cancelled,
-                    },
-                )
-                .await;
+            false
+        } else {
+            match effect {
+                Some(UseEffect::TeleportTown) => {
+                    self.use_return_scroll(player_id, instance_id).await
+                }
+                Some(UseEffect::TeleportRandom) => {
+                    self.use_teleport_scroll_with_rng(
+                        player_id,
+                        instance_id,
+                        &mut StdRng::from_entropy(),
+                    )
+                    .await
+                }
+                _ => false,
             }
+        };
+        if !used {
+            self.cancel_teleport_effect(player_id).await;
         }
     }
 
@@ -110,8 +129,7 @@ impl GameState {
         {
             return false;
         }
-        let Some((origin, rotation, origin_floor)) = self.get_player_position(player_id).await
-        else {
+        let Some((origin, rotation, _)) = self.get_player_position(player_id).await else {
             return false;
         };
         let Some((destination, floor_level)) = self.random_teleport_destination(&origin, rng).await
@@ -156,11 +174,7 @@ impl GameState {
         };
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
-        self.publish_teleport_effect(player_id, origin, origin_floor, TeleportPhase::Departing)
-            .await;
-        self.publish_teleport_effect(player_id, destination, floor_level, TeleportPhase::Arriving)
-            .await;
-        self.teleport_player(player_id, destination, rotation, floor_level)
+        self.teleport_player_with_effects(player_id, destination, rotation, floor_level)
             .await;
         if self
             .players
@@ -176,6 +190,39 @@ impl GameState {
             self.set_mount(player_id, None).await;
         }
         true
+    }
+
+    pub(super) async fn cancel_teleport_effect(&self, player_id: &PlayerId) {
+        if let Some((position, _, floor_level)) = self.get_player_position(player_id).await {
+            self.send_direct_message(
+                player_id,
+                ServerMessage::PlayerTeleportEffect {
+                    player_id: *player_id,
+                    position,
+                    floor_level,
+                    phase: TeleportPhase::Cancelled,
+                },
+            )
+            .await;
+        }
+    }
+
+    pub(super) async fn teleport_player_with_effects(
+        &self,
+        player_id: &PlayerId,
+        destination: Position,
+        rotation: f32,
+        floor_level: i8,
+    ) {
+        let Some((origin, _, origin_floor)) = self.get_player_position(player_id).await else {
+            return;
+        };
+        self.publish_teleport_effect(player_id, origin, origin_floor, TeleportPhase::Departing)
+            .await;
+        self.publish_teleport_effect(player_id, destination, floor_level, TeleportPhase::Arriving)
+            .await;
+        self.teleport_player(player_id, destination, rotation, floor_level)
+            .await;
     }
 
     async fn publish_teleport_effect(

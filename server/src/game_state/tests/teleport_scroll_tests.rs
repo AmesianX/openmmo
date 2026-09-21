@@ -16,6 +16,15 @@ const NEAR_DUNGEONS: Position = Position {
 
 #[tokio::test]
 async fn teleport_scroll_request_over_websocket_returns_arrival_without_replaying_departure() {
+    scroll_request_over_websocket(SCROLL).await;
+}
+
+#[tokio::test]
+async fn return_scroll_request_over_websocket_returns_arrival_without_replaying_departure() {
+    scroll_request_over_websocket("scroll_of_return").await;
+}
+
+async fn scroll_request_over_websocket(item_def_id: &str) {
     use crate::connection::{handle_connection, AuthContext, ServerContext};
     use futures_util::{SinkExt, StreamExt};
     use onlinerpg_shared::ClientMessage;
@@ -37,7 +46,7 @@ async fn teleport_scroll_request_over_websocket_returns_arrival_without_replayin
         .expect("server message timed out")
     }
 
-    let label = "teleport_scroll_websocket";
+    let label = &format!("{item_def_id}_websocket");
     let game = Arc::new(make_flat_world_game_state(label));
     let auth = Arc::new(make_test_auth(label));
     let account = auth.login_npc("npc_teleport_reader").unwrap();
@@ -100,7 +109,7 @@ async fn teleport_scroll_request_over_websocket_returns_arrival_without_replayin
         .get_mut(&id)
         .unwrap()
         .bag
-        .push(bag_item(100, SCROLL, 1));
+        .push(bag_item(100, item_def_id, 1));
     socket
         .send(Message::Binary(
             onlinerpg_shared::serialize_client_msg(&ClientMessage::UseTeleportScroll {
@@ -118,7 +127,21 @@ async fn teleport_scroll_request_over_websocket_returns_arrival_without_replayin
             break;
         }
     }
-    assert_eq!(quantity(&game, &id).await, 0);
+    assert!(!game
+        .get_player_inventory(&id)
+        .await
+        .unwrap()
+        .bag
+        .iter()
+        .any(|item| item.instance_id == 100));
+    if item_def_id == "scroll_of_return" {
+        assert_eq!(
+            game.players.read().await[&id].position,
+            crate::world_config::world_config()
+                .spawn_position
+                .position()
+        );
+    }
     loop {
         let message = receive(&mut socket).await;
         let messages = match message {

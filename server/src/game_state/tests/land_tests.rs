@@ -51,9 +51,23 @@ async fn estate_return_scroll_returns_from_dungeon_and_spends_one() {
     );
     assert!((player.position.y - 5.0).abs() < 0.01);
     assert_eq!(estate_return_quantity(&game, "Settler").await, 1);
-    assert!(drain(&mut rx)
+    let messages = drain(&mut rx);
+    let effect = messages.iter().position(|msg| matches!(msg,
+        ServerMessage::PlayerTeleportEffect { player_id, position, floor_level: 0, phase: onlinerpg_shared::TeleportPhase::Arriving }
+        if *player_id == id && *position == player.position
+    )).unwrap();
+    let moved = messages
         .iter()
-        .any(|msg| matches!(msg, ServerMessage::PlayerTeleported { .. })));
+        .position(|msg| matches!(msg, ServerMessage::PlayerTeleported { .. }))
+        .unwrap();
+    assert!(effect < moved);
+    assert!(!messages.iter().any(|msg| matches!(
+        msg,
+        ServerMessage::PlayerTeleportEffect {
+            phase: onlinerpg_shared::TeleportPhase::Departing,
+            ..
+        }
+    )));
     game.use_estate_return_scroll(&id, 100, &auth).await;
     assert_eq!(estate_return_quantity(&game, "Settler").await, 0);
     let elsewhere = Position {
@@ -78,7 +92,15 @@ async fn estate_return_scroll_rejects_nonowners_defeat_and_reserved_items() {
     let id = pid("Settler");
     game.use_estate_return_scroll(&id, 100, &auth).await;
     assert_eq!(estate_return_quantity(&game, "Settler").await, 2);
-    assert!(drain(&mut rx).iter().any(|msg| matches!(msg, ServerMessage::SystemMessage { message } if message.contains("don't own an estate"))));
+    let messages = drain(&mut rx);
+    assert!(messages.iter().any(|msg| matches!(msg, ServerMessage::SystemMessage { message } if message.contains("don't own an estate"))));
+    assert!(messages.iter().any(|msg| matches!(
+        msg,
+        ServerMessage::PlayerTeleportEffect {
+            phase: onlinerpg_shared::TeleportPhase::Cancelled,
+            ..
+        }
+    )));
     claim_at(&game, &auth, "Settler", 1, 1.0, 1.0).await;
     game.use_estate_return_scroll(&pid("Sibling"), 100, &auth)
         .await;
@@ -122,7 +144,15 @@ async fn estate_return_scroll_keeps_scroll_when_estate_is_underwater() {
     game.use_estate_return_scroll(&id, 100, &auth).await;
     assert_eq!(game.players.read().await[&id].position, before);
     assert_eq!(estate_return_quantity(&game, "Settler").await, 2);
-    assert!(drain(&mut rx).iter().any(|msg| matches!(msg, ServerMessage::SystemMessage { message } if message.contains("No safe outdoor"))));
+    let messages = drain(&mut rx);
+    assert!(messages.iter().any(|msg| matches!(msg, ServerMessage::SystemMessage { message } if message.contains("No safe outdoor"))));
+    assert!(messages.iter().any(|msg| matches!(
+        msg,
+        ServerMessage::PlayerTeleportEffect {
+            phase: onlinerpg_shared::TeleportPhase::Cancelled,
+            ..
+        }
+    )));
 }
 
 #[tokio::test]
