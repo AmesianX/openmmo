@@ -3,10 +3,12 @@ import { get } from 'svelte/store'
 import {
   applyFightUpdate,
   fishingBobbers,
+  fishingReelStance,
   markBobberBite,
   myFishing,
   removeBobber,
   resetFishingStore,
+  setLocalFishingAction,
   updateBobberFight,
   upsertBobber,
   type FightStatus,
@@ -141,7 +143,7 @@ describe('fishingBobbers', () => {
       position: { x: 3, y: 0, z: 5 },
       landsInMs: 0,
       bite: false,
-      fight: { fishState: 'running', stamina: 70 },
+      fight: { fishState: 'running', stamina: 70, stance: 'hold' },
     })
   })
 
@@ -172,5 +174,37 @@ describe('fishingBobbers', () => {
 
     expect(get(myFishing)).toEqual({ phase: 'idle' })
     expect(get(fishingBobbers).size).toBe(0)
+  })
+
+  it('animates local input immediately without an older beat overriding it', () => {
+    myFishing.set({ phase: 'bite' })
+    setLocalFishingAction('reel')
+    expect(fishingReelStance()).toBeNull()
+    applyFightUpdate('running', 20, 100)
+    expect(fishingReelStance()).toBe('hold')
+    setLocalFishingAction('reel')
+    applyFightUpdate('running', 25, 90)
+    expect(fishingReelStance()).toBe('reel')
+    setLocalFishingAction('giveline')
+    expect(fishingReelStance()).toBe('giveline')
+    setLocalFishingAction('hold')
+    expect(fishingReelStance()).toBe('hold')
+    myFishing.set({ phase: 'idle' })
+    expect(fishingReelStance()).toBeNull()
+    myFishing.set({ phase: 'bite' })
+    applyFightUpdate('running', 20, 100)
+    expect(fishingReelStance()).toBe('hold')
+  })
+
+  it('follows remote stance changes and clears them with the bobber', () => {
+    upsertBobber(ID, { x: 1, y: 0, z: 2 })
+    for (const stance of ['reel', 'giveline', 'hold'] as const) {
+      updateBobberFight(ID, { x: 1, y: 0, z: 2 }, 'running', 70, stance)
+      expect(fishingReelStance(ID)).toBe(stance)
+    }
+    removeBobber(ID)
+    expect(fishingReelStance(ID)).toBeNull()
+    updateBobberFight(ID, { x: 1, y: 0, z: 2 }, 'running', 70, 'reel')
+    expect(fishingReelStance(ID)).toBeNull()
   })
 })

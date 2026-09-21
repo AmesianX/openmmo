@@ -1314,15 +1314,12 @@ pub enum ServerMessage {
     FishingBite {
         player_id: PlayerId,
     },
-    /// One 250 ms beat of the hooked fight: where the fish is (`bobber` — the
-    /// float tracks it), what it's doing, and the line's tension. Broadcast —
-    /// the state is public information by design (agent parity), bystanders
-    /// render the moving bobber and splash. `stamina_pct` drives the splash
-    /// intensity: a fresh fish thrashes, a spent one barely ripples.
+    /// Public 250 ms fight beat, including the angler's reel motion.
     FishingFight {
         player_id: PlayerId,
         bobber: Position,
         fish_state: fishing::FishState,
+        stance: fishing::FishingAction,
         tension_pct: u32,
         stamina_pct: u32,
         /// Rolled at the bite; trophy fish need sustained high tension.

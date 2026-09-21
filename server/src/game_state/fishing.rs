@@ -901,6 +901,7 @@ impl GameState {
                             player_id,
                             bobber: session.bobber,
                             fish_state: state.fish_state,
+                            stance: state.stance,
                             tension_pct: state.tension.round() as u32,
                             trophy: state.trophy,
                             stamina_pct: (state.stamina / stamina_max(rarity) * 100.0).round()
@@ -1014,6 +1015,7 @@ impl GameState {
                 player_id: *player_id,
                 bobber: announce,
                 fish_state: FishState::Running,
+                stance: FishingAction::Hold,
                 tension_pct: TENSION_INITIAL.round() as u32,
                 stamina_pct: 100,
                 trophy,

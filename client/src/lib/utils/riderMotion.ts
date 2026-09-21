@@ -11,6 +11,13 @@ type Limb = {
   rotation: THREE.Quaternion
 }
 
+export type HandTarget = {
+  position: THREE.Vector3
+  /** Target the palm with a straight wrist instead of targeting the wrist. */
+  gripOffset?: THREE.Vector3
+  pole?: THREE.Vector3
+}
+
 export class RiderMotion {
   private readonly torso: Limb | undefined
   private readonly arms: Limb[] = []
@@ -105,6 +112,37 @@ export class RiderMotion {
     }
   }
 
+  applyHandTargets(targets: readonly HandTarget[], weight: number) {
+    this.restore()
+    if (this.arms.length !== 2 || targets.length !== 2 || weight < 0.001) return
+    this.savePose()
+    for (let i = 0; i < this.arms.length; i++) {
+      const arm = this.arms[i]
+      const target = targets[i]
+      if (target.gripOffset) {
+        arm.end.localToWorld(arm.target.copy(target.gripOffset))
+        this.from
+          .copy(target.gripOffset)
+          .normalize()
+          .applyQuaternion(arm.end.quaternion)
+        this.to.copy(arm.end.position).normalize()
+        this.rotation
+          .setFromUnitVectors(this.from, this.to)
+          .multiply(arm.end.quaternion)
+        arm.end.quaternion.slerp(this.rotation, weight)
+        arm.end.updateWorldMatrix(true, true)
+      } else {
+        arm.end.getWorldPosition(arm.target)
+        arm.end.getWorldQuaternion(arm.rotation)
+      }
+      arm.target.lerp(target.position, weight)
+      if (target.pole) arm.pole.copy(target.pole)
+      else arm.pole.set(i === 0 ? 0.35 : -0.35, -1, -0.2)
+      arm.pole.transformDirection(this.root.matrixWorld)
+      this.solve(arm, target.gripOffset)
+    }
+  }
+
   apply(hipLift: number, handLift = 0, idleWeight = 0, facingYaw?: number) {
     this.restore()
     const { torso } = this
@@ -191,11 +229,12 @@ export class RiderMotion {
     limb.joint.getWorldPosition(limb.pole).sub(this.start)
   }
 
-  private solve(limb: Limb) {
+  private solve(limb: Limb, gripOffset?: THREE.Vector3) {
     const { base, joint, end, target, pole } = limb
     base.getWorldPosition(this.start)
     joint.getWorldPosition(this.middle)
-    end.getWorldPosition(this.to)
+    if (gripOffset) end.localToWorld(this.to.copy(gripOffset))
+    else end.getWorldPosition(this.to)
     const upperLength = this.start.distanceTo(this.middle)
     const lowerLength = this.middle.distanceTo(this.to)
     this.direction.subVectors(target, this.start)
@@ -217,8 +256,8 @@ export class RiderMotion {
       .addScaledVector(this.direction, along)
       .addScaledVector(this.bend, across)
     this.aim(base, joint, this.jointTarget)
-    this.aim(joint, end, target)
-    this.orient(end, limb.rotation)
+    this.aim(joint, end, target, gripOffset)
+    if (!gripOffset) this.orient(end, limb.rotation)
   }
 
   private orient(bone: THREE.Bone, rotation: THREE.Quaternion) {
@@ -227,9 +266,16 @@ export class RiderMotion {
     bone.updateWorldMatrix(true, true)
   }
 
-  private aim(joint: THREE.Bone, end: THREE.Bone, target: THREE.Vector3) {
+  private aim(
+    joint: THREE.Bone,
+    end: THREE.Bone,
+    target: THREE.Vector3,
+    gripOffset?: THREE.Vector3
+  ) {
     joint.getWorldPosition(this.from)
-    end.getWorldPosition(this.to).sub(this.from).normalize()
+    if (gripOffset) end.localToWorld(this.to.copy(gripOffset))
+    else end.getWorldPosition(this.to)
+    this.to.sub(this.from).normalize()
     this.from.subVectors(target, this.from).normalize()
     this.rotation.setFromUnitVectors(this.to, this.from)
     joint.getWorldQuaternion(this.parentRotation)

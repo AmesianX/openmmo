@@ -257,6 +257,15 @@ The fishing level is captured when casting and used for that session.
   in chat. Keyboard fishing controls are ignored while typing.
 - State in `stores/fishingStore.ts`; server messages handled in
   `network/messageHandlers.ts`.
+- While fighting, the left hand supports the raised rod and the right hand
+  follows the reel crank. `reel` winds forward, `giveline` reverses, and
+  `hold` stops the spool. Local input animates immediately; nearby players
+  and NPCs use the stance in the server's fight beats (protocol v92).
+  `utils/fishingReel.ts` blends the hand targets over the fishing idle pose,
+  including its seated variant, and restores the pose before each mixer
+  update. Casting, movement and equipment changes release the correction.
+  The crank hand and forearm solve as one straight segment, with the elbow
+  biased backward, so following the handle does not bend the wrist.
 
 Fishing events use the common world-event subscription system: delivery is
 within 32 m of the **angler**, in the same space, rather than centered on the
@@ -350,7 +359,7 @@ check also uses the base species. There is no second-fish roll or
 accumulated bonus chance.
 
 Every beat carries `FishingFight { player_id, bobber, fish_state,
-tension_pct, stamina_pct, trophy }`. The web HUD and agent reflex read
+tension_pct, stamina_pct, trophy, stance }`. The web HUD and agent reflex read
 these same fields; bystanders receive them through world-event subscriptions.
 Trophy catches are celebrated to everyone in delivery radius via the
 `FishingEnded` broadcast they already receive.

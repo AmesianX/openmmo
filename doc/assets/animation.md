@@ -99,6 +99,12 @@
   - 두 fishing 액션의 `RightHand` 키에는 로컬 Z +40° 오프셋이 bake되어 있다 (탑다운
     카메라에서 로드가 시선 축과 겹쳐 안 보이던 것을 화면에 보이게 트는 각도).
     Mixamo에서 재임포트하면 오프셋이 사라지므로 다시 적용할 것.
+  - 릴 조작 (2026-09-21): 자체 제작 `client/src/lib/utils/fishingReel.ts`가 기존 idle에
+    양팔 IK를 더한다. 왼손은 `rod_grip`, 오른손은 회전하는 `reel_handle`을 잡는다.
+    릴은 `reel_rotor`의 `reel_axis` 축으로 감기·풀기 방향에 맞춰 회전한다.
+    오른손은 전완과 일직선이 되도록 손바닥까지 함께 IK로 풀고, 팔꿈치는 뒤쪽으로 유도한다.
+    새 외부 애니메이션 소스·유료 생성 서비스 사용 없음. 자체 코드와 리깅에는
+    저장소 LICENSE(PolyForm Noncommercial 1.0.0)를 적용하며 기존 Mixamo 동작은 기존 라이선스를 따른다.
 
 - Guitar Playing https://www.mixamo.com/#/?page=1&query=Guitar+Playing&type=Motion%2CMotionPack (social pack, `guitar_playing`)
   - 체중 이동이 있어 Hips location bake가 필요한 첫 클립이다.

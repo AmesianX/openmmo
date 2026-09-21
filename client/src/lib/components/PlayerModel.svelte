@@ -51,6 +51,8 @@
   import { visibleMana } from '../stores/gameStore'
   import { playerHealthDisplay } from '../stores/playerHealthDisplay'
   import { RiderMotion } from '../utils/riderMotion'
+  import { FishingReel } from '../utils/fishingReel'
+  import { fishingReelStance } from '../stores/fishingStore'
   import {
     ENCHANT_WEAPON_ANIMATION,
     ENCHANT_LEFT_WEAPON_ANIMATION,
@@ -481,6 +483,7 @@
   let pickupGrabNotified = $state(false)
   let weaponObject: THREE.Object3D | null = null
   let weaponGrip: TwoHandedGrip | null = null
+  let fishingReel: FishingReel | null = null
   let enchantGrip: EnchantWeaponGrip | null = null
   let enchantClips = new Map<string, THREE.AnimationClip>()
   let enchantAction: THREE.AnimationAction | null = null
@@ -523,6 +526,9 @@
       )
     }
     handBone.add(weaponObject)
+    if (itemDefId === 'fishing_rod') {
+      fishingReel = new FishingReel(characterRoot, weaponObject)
+    }
     enchantGrip = new EnchantWeaponGrip(weaponObject)
     const gripReach = getWeaponAnimation(itemDefId)?.offHandGripReach
     weaponGrip = gripReach
@@ -551,6 +557,8 @@
   }
 
   function detachWeapon() {
+    fishingReel?.restore()
+    fishingReel = null
     enchantGrip?.update(0)
     enchantGrip = null
     weaponGrip = null
@@ -1506,11 +1514,9 @@
     }
   })
 
-  /** One frame for this model, called from the GameScene game loop. The cape
-   *  steps last so it reads the pose the mixer just set; `updatePose` returns
-   *  early in places, which is why the two are not simply written in sequence
-   *  at the call site. */
+  // Step the cape after the mixer and pose corrections.
   export function update(deltaTime: number, wind: WindState | null = null) {
+    fishingReel?.restore()
     enchantGrip?.update(0)
     riderMotion?.restore()
     rowingMotion?.restore()
@@ -1560,6 +1566,13 @@
     const enchantWeight = enchantAction?.getEffectiveWeight() ?? 0
     if (armorEnchantWeight > 0) enchantGrip?.update(armorEnchantWeight, true)
     else if (enchantWeight > 0) enchantGrip?.update(enchantWeight)
+    fishingReel?.update(
+      deltaTime,
+      fishingReelStance(isCurrentPlayer ? undefined : remotePlayerId),
+      playerState === 'interact' &&
+        interactionAnim === FishingAnimationName.IDLE &&
+        !riding
+    )
     updateCape(deltaTime, wind)
   }
 

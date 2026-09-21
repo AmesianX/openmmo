@@ -1,5 +1,12 @@
-import { writable } from 'svelte/store'
-import type { FishState, Position } from '../network/networkTypes'
+import { get, writable } from 'svelte/store'
+import type {
+  FishingAction,
+  FishState,
+  Position,
+} from '../network/networkTypes'
+
+export type FishingStance = Exclude<FishingAction, 'hook'>
+let localStance: FishingStance = 'hold'
 
 /** The local player's live fight readout, refreshed by each `FishingFight`
  *  beat (4 Hz). The simulation is server-authoritative. */
@@ -33,6 +40,7 @@ export function applyFightUpdate(
 ) {
   myFishing.update((f) => {
     if (f.phase === 'fight' || f.phase === 'bite') {
+      if (f.phase === 'bite') localStance = 'hold'
       return { phase: 'fight', fight: { fishState, tension, stamina, trophy } }
     }
     return f
@@ -44,6 +52,7 @@ export function applyFightUpdate(
 export type BobberFight = {
   fishState: FishState
   stamina: number
+  stance: FishingStance
 }
 
 export type BobberState = {
@@ -87,14 +96,26 @@ export function updateBobberFight(
   playerId: number,
   position: Position,
   fishState: FishState,
-  stamina: number
+  stamina: number,
+  stance: FishingStance = 'hold'
 ) {
   const existing = bobbers.get(playerId)
   if (existing) {
     existing.position = position
     existing.bite = false
-    existing.fight = { fishState, stamina }
+    existing.fight = { fishState, stamina, stance }
   }
+}
+
+export function setLocalFishingAction(action: FishingAction) {
+  if (action !== 'hook' && get(myFishing).phase === 'fight')
+    localStance = action
+}
+
+export function fishingReelStance(playerId?: number): FishingStance | null {
+  if (playerId !== undefined)
+    return bobbers.get(playerId)?.fight?.stance ?? null
+  return get(myFishing).phase === 'fight' ? localStance : null
 }
 
 export function removeBobber(playerId: number) {
@@ -105,6 +126,7 @@ export function removeBobber(playerId: number) {
 }
 
 export function resetFishingStore() {
+  localStance = 'hold'
   myFishing.set({ phase: 'idle' })
   bobbers = new Map()
   fishingBobbers.set(bobbers)

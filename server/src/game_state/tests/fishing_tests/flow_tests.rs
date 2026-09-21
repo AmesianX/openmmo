@@ -493,6 +493,34 @@ async fn duplicate_hook_during_the_fight_is_ignored() {
     assert!(matches!(outcome, FishingOutcome::Caught { .. }));
 }
 
+#[tokio::test(start_paused = true)]
+async fn fight_broadcasts_the_current_reel_stance() {
+    let game_state = make_test_game_state("fishing_reel_stance");
+    let (id, mut rx) = make_angler(&game_state, "angler_reel_stance").await;
+    game_state.start_fishing(&id, water_target()).await;
+    advance_until_bite(&game_state, &mut rx).await;
+    game_state.respond_fishing(&id, FishingAction::Hook).await;
+    assert!(drain(&mut rx).iter().any(|msg| matches!(
+        msg,
+        ServerMessage::FishingFight {
+            stance: FishingAction::Hold,
+            ..
+        }
+    )));
+    for expected in [
+        FishingAction::Reel,
+        FishingAction::GiveLine,
+        FishingAction::Hold,
+    ] {
+        game_state.respond_fishing(&id, expected).await;
+        advance(Duration::from_millis(250)).await;
+        game_state.tick_fishing(None).await;
+        assert!(drain(&mut rx).iter().any(|msg| matches!(msg,
+            ServerMessage::FishingFight { stance, .. } if *stance == expected
+        )));
+    }
+}
+
 // Species stacking is tested with deterministic awards in inventory_tests.
 #[tokio::test(start_paused = true)]
 async fn every_catch_lands_in_the_bag() {

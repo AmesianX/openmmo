@@ -240,6 +240,7 @@ async fn a_beat_during_the_reaction_is_missed() {
         player_id: PlayerId::from(1),
         bobber: p(0.0, 0.0, 0.0),
         fish_state: FishState::Resting,
+        stance: FishingAction::Hold,
         tension_pct,
         stamina_pct: 50,
         trophy: false,

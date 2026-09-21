@@ -2333,7 +2333,8 @@ export function handleServerMessage(
         data.player_id,
         data.bobber,
         data.fish_state,
-        data.stamina_pct
+        data.stamina_pct,
+        data.stance
       )
       if (isSelfPlayer(data.player_id)) {
         if (get(myFishing).phase === 'bite' && data.trophy) {

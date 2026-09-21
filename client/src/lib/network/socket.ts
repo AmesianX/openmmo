@@ -1,4 +1,5 @@
 import type { AbilityId } from '../data/abilities'
+import { setLocalFishingAction } from '../stores/fishingStore'
 import type {
   BagLineItem,
   FishingAction,
@@ -562,6 +563,7 @@ class NetworkManager {
   }
 
   sendFishingRespond(action: FishingAction) {
+    setLocalFishingAction(action)
     this.sendMessage({ FishingRespond: { action } })
   }
 
