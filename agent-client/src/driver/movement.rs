@@ -140,6 +140,9 @@ pub(super) async fn stop_current_entry(
 
 async fn send_interact_if_needed(s: &mut SharedState, entry: &ScheduleEntry) {
     if let Some(position) = entry.fishing_target() {
+        if !s.can_start_scheduled_fishing() {
+            return;
+        }
         if let Err(e) = s
             .send_command(ClientMessage::FishingCast { position })
             .await
@@ -166,7 +169,7 @@ pub(super) async fn maintain_scheduled_fishing(
 ) {
     let needs_cast = {
         let s = state.lock().await;
-        s.in_game && !s.self_fishing && s.self_player.as_ref().is_some_and(|p| p.health > 0)
+        s.can_start_scheduled_fishing()
     };
     if needs_cast {
         execute_schedule_move(state, entry).await;
@@ -404,6 +407,9 @@ pub(super) async fn fetch_furniture_around(
 mod tests {
     use super::*;
     use crate::state::tests::{test_player, test_state};
+    use onlinerpg_shared::fishing::{FishState, FishingAction, FishingOutcome};
+    use onlinerpg_shared::inventory::{EquipSlot, ItemInstance};
+    use onlinerpg_shared::{PlayerId, ServerMessage};
 
     fn npc_schedule(json: &str) -> Vec<ScheduleEntry> {
         #[derive(serde::Deserialize)]
@@ -415,16 +421,39 @@ mod tests {
         schedule
     }
 
-    #[tokio::test]
-    async fn scheduled_fishing_casts_after_placement_resumes_and_stops_on_departure() {
-        let schedule = npc_schedule(include_str!("../../data/npcs/tobin/schedule.json"));
-        let entry = &schedule[0];
+    fn fishing_state(
+        entry: &ScheduleEntry,
+    ) -> (
+        Arc<Mutex<SharedState>>,
+        tokio::sync::mpsc::Receiver<ClientMessage>,
+    ) {
         let (mut s, mut rx) = test_state();
         let me = test_player(entry.pos[0], entry.pos[2]);
         s.self_player_id = Some(me.id);
         s.self_player = Some(me);
         s.in_game = true;
-        let state = Arc::new(Mutex::new(s));
+        s.self_equipped.insert(
+            EquipSlot::MainHand,
+            ItemInstance {
+                instance_id: 1,
+                item_def_id: "fishing_rod".into(),
+                quantity: 1,
+                enchant: 0,
+                cape_color: None,
+                cape_texture: None,
+                locked: false,
+            },
+        );
+        assert!(rx.try_recv().is_err());
+        (Arc::new(Mutex::new(s)), rx)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn scheduled_fishing_hooks_reels_rests_and_stops_on_departure() {
+        let schedule = npc_schedule(include_str!("../../data/npcs/tobin/schedule.json"));
+        let entry = &schedule[0];
+        let (state, mut rx) = fishing_state(entry);
+        let player_id = PlayerId::from(1);
 
         maintain_scheduled_fishing(&state, entry).await;
         assert!(
@@ -439,15 +468,142 @@ mod tests {
             )
         );
 
-        state.lock().await.self_fishing = true;
+        state.lock().await.push_event(ServerMessage::FishingCasted {
+            player_id,
+            position: entry.fishing_target().unwrap(),
+            rotation: entry.rotation.to_radians(),
+        });
         maintain_scheduled_fishing(&state, entry).await;
         assert!(rx.try_recv().is_err());
+        state
+            .lock()
+            .await
+            .push_event(ServerMessage::FishingBite { player_id });
+        assert!(rx.try_recv().is_err());
+        assert!(matches!(
+            rx.recv().await,
+            Some(ClientMessage::FishingRespond {
+                action: FishingAction::Hook
+            })
+        ));
+        for (fish_state, tension_pct, expected) in [
+            (FishState::Resting, 20, FishingAction::Reel),
+            (FishState::Running, 90, FishingAction::GiveLine),
+        ] {
+            state.lock().await.push_event(ServerMessage::FishingFight {
+                player_id,
+                bobber: entry.fishing_target().unwrap(),
+                fish_state,
+                tension_pct,
+                stamina_pct: 50,
+                trophy: false,
+                stance: FishingAction::Hold,
+            });
+            assert!(matches!(rx.recv().await,
+                Some(ClientMessage::FishingRespond { action }) if action == expected
+            ));
+        }
+
+        state.lock().await.push_event(ServerMessage::FishingEnded {
+            player_id,
+            outcome: FishingOutcome::Caught {
+                item_def_id: "raw_minnow".into(),
+                size_cm: 10,
+                trophy: false,
+            },
+        });
+        assert!(!state.lock().await.self_fishing);
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(rx.try_recv().is_err());
+        tokio::time::advance(crate::state::FISHING_RECAST_DELAY).await;
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::FishingCast { .. })
+        ));
+
+        state.lock().await.push_event(ServerMessage::FishingCasted {
+            player_id,
+            position: entry.fishing_target().unwrap(),
+            rotation: entry.rotation.to_radians(),
+        });
+        state
+            .lock()
+            .await
+            .push_event(ServerMessage::FishingBite { player_id });
         stop_current_entry(&state, &schedule, Some(0), "Tobin").await;
+        assert!(!state.lock().await.self_fishing);
         assert!(matches!(rx.try_recv(), Ok(ClientMessage::FishingStop)));
         assert!(matches!(rx.try_recv(), Ok(ClientMessage::StopInteraction)));
-        assert!(rx.try_recv().is_err());
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        assert!(rx.try_recv().is_err(), "leaving cancels the pending hook");
+    }
 
-        state.lock().await.self_fishing = false;
+    #[tokio::test(start_paused = true)]
+    async fn scheduled_fishing_waits_for_a_usable_rod_and_backs_off_failed_casts() {
+        let schedule = npc_schedule(include_str!("../../data/npcs/tobin/schedule.json"));
+        let entry = &schedule[0];
+        let (state, mut rx) = fishing_state(entry);
+        let rod = state
+            .lock()
+            .await
+            .self_equipped
+            .remove(&EquipSlot::MainHand)
+            .unwrap();
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(rx.try_recv().is_err());
+        {
+            let mut s = state.lock().await;
+            s.self_equipped.insert(EquipSlot::MainHand, rod);
+            s.trade_busy = true;
+        }
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(rx.try_recv().is_err());
+        {
+            let mut s = state.lock().await;
+            s.trade_busy = false;
+            s.self_player.as_mut().unwrap().health = 0;
+        }
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(rx.try_recv().is_err());
+        state.lock().await.self_player.as_mut().unwrap().health = 10;
+
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::FishingCast { .. })
+        ));
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(rx.try_recv().is_err(), "wait for the cast acknowledgement");
+        tokio::time::advance(crate::state::FISHING_CAST_ACK_TIMEOUT).await;
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::FishingCast { .. })
+        ));
+
+        state.lock().await.push_event(ServerMessage::FishingError {
+            message: "Not water".into(),
+        });
+        tokio::time::advance(crate::state::FISHING_CAST_ACK_TIMEOUT).await;
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "a rejected cast needs a longer pause"
+        );
+        tokio::time::advance(crate::state::FISHING_ERROR_RETRY_DELAY).await;
         maintain_scheduled_fishing(&state, entry).await;
         assert!(matches!(
             rx.try_recv(),

@@ -1081,7 +1081,10 @@ pub async fn llm_driver(
             .0
             .is_some_and(|i| schedule[i].action.is_some());
 
-        if last_fishing_check.elapsed() >= Duration::from_secs(5) {
+        if attack_target.is_none()
+            && visit_until.is_none()
+            && last_fishing_check.elapsed() >= Duration::from_secs(5)
+        {
             last_fishing_check = Instant::now();
             if let Some(entry) = active_schedule
                 .0

@@ -65,6 +65,8 @@ impl SharedState {
             self.cancel_mount_recovery();
         }
         let player_attack = matches!(&msg, ClientMessage::PlayerAttack { .. });
+        let fishing_cast = matches!(&msg, ClientMessage::FishingCast { .. });
+        let fishing_stop = matches!(&msg, ClientMessage::FishingStop);
         if player_attack && !self.player_attack_wait().is_zero() {
             // The combat loop retries the latest target after the cooldown.
             return Ok(());
@@ -125,6 +127,12 @@ impl SharedState {
             .map_err(|e| anyhow::anyhow!("Command channel closed: {e}"))?;
         if player_attack {
             self.last_player_attack_at = Some(tokio::time::Instant::now());
+        }
+        if fishing_cast {
+            self.fishing_retry_at = Some(tokio::time::Instant::now() + FISHING_CAST_ACK_TIMEOUT);
+        } else if fishing_stop {
+            self.set_self_fishing(false);
+            self.fishing_retry_at = Some(tokio::time::Instant::now() + FISHING_RECAST_DELAY);
         }
         if from_action {
             self.action_commands_sent += 1;

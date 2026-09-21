@@ -75,9 +75,10 @@ broadcasts and answer with `FishingRespond`.
 
 - 위치 **world(-1499.9, 0.6, 4728.4)**, tile(-23, 74), cell(4, 24), 방향 **-89.0°**. 하루 종일 강가의 같은 자리에서 낚시한다.
 - NPC 레지스트리 `tobin` / `Tobin`, 한국어 별칭 `토빈`. 작업 장비로 `fishing_rod`를 지급·장착한다. [일정](../agent-client/data/npcs/tobin/schedule.json)과 [역할 설정](../agent-client/data/npcs/tobin/instance.txt).
-- 일정의 `action: "fishing"`은 지정 방향 4m 앞에 캐스팅한 뒤 낚시 대기 자세를 유지한다. 서버가 수심을 검증하고 찌를 실제 수면 높이에 맞춘다. 기존 낚시 브로드캐스트로 낚싯줄·찌·자세를 표시하므로 뒤늦게 접근한 플레이어도 볼 수 있다.
-- 공식 NPC가 낚시 일정의 지정 지점에 있을 때는 연출용 세션을 사용하며 물고기·아이템·경험치를 생성하지 않는다. 일정 종료·이동·장비 해제·사망 시 종료한다. 에이전트는 5초마다 끊긴 낚시를 확인하고 제자리에서 재개한다.
-- 현재는 배치와 낚시 연출을 연결했다. 토빈의 상점과 일반 낚시 영구 습득 기능은 추후 구현하며, 낚싯대가 필요한 방문객에게는 현재 판매처인 리카를 안내한다.
+- 일정의 `action: "fishing"`은 지정 방향 4m 앞에 캐스팅한다. 서버가 수심을 검증하고 찌를 실제 수면 높이에 맞춘다. 낚싯대 장착만으로는 찌·바깥 낚싯줄을 표시하지 않으며, 실제 세션의 브로드캐스트로 표시하고 종료 시 없앤다. 성공 시에는 기존 물고기 들어 올리기 연출을 보여준다. 뒤늦게 접근한 플레이어도 진행 중인 낚시를 볼 수 있다.
+- 공식 NPC도 플레이어와 같은 캐스팅·입질·힘겨루기·보상 흐름을 사용한다. 에이전트가 입질에 챔질하고 장력에 따라 감거나 풀며, 잡은 물고기는 실제 인벤토리로 지급된다. 일정 종료·이동·장비 해제·사망 시 중단한다.
+- 에이전트는 5초마다 낚시 일정을 확인하며, 한 번 끝나면 최소 5초 쉬어 성공 연출이 끝난 뒤 재개한다. 캐스팅 응답은 최대 10초 기다리고, 서버가 거부하면 30초 뒤 재시도한다. 거래·전투·병문안 중이거나 낚싯대를 장착하지 않았을 때는 자동 캐스팅하지 않는다.
+- 토빈의 상점과 일반 낚시 영구 습득 기능은 추후 구현하며, 낚싯대가 필요한 방문객에게는 현재 판매처인 리카를 안내한다.
 
 ## The loop
 
@@ -296,6 +297,11 @@ independent of facing. This fallback does not search for water or choose a
 rowboat stern target; the server still validates both. Outcomes come back
 to the model as `[Fishing]` events; in-flight messages are classified as
 noise so they cost no LLM calls.
+
+NPC schedules can also start this same loop through `action: "fishing"`.
+The routine casts in the scheduled direction, lets the reflex layer land
+real catches, and pauses between attempts. Equipping a rod alone starts
+neither a session nor its bobber/line effects.
 
 Answers wait 300–800 ms for a hook (`HOOK_REACTION_MS`) and 250–350 ms
 for a stance (`STANCE_REACTION_MS`), with one response pending at a time.

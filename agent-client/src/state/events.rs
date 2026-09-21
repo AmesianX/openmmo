@@ -243,11 +243,7 @@ impl SharedState {
         }
     }
 
-    /// Answer a fishing beat the way a person would: after a reaction delay,
-    /// and only one answer in flight. A beat that lands mid-reaction is
-    /// missed; the next beat corrects it. Returns whether it was taken.
-    /// Sends on `cmd_tx` rather than `send_command` — a spawned task cannot
-    /// hold `&mut self`, and `FishingRespond` needs no send-time rewriting.
+    /// Schedule one delayed reflex; skip beats while an answer is pending.
     fn react_fishing(&mut self, action: FishingAction, delay_ms: RangeInclusive<u64>) -> bool {
         if self
             .fishing_reaction
@@ -265,14 +261,32 @@ impl SharedState {
         true
     }
 
-    /// Start or end our own session: any in-flight answer is dropped, since a
-    /// stale one landing in the next cast scares the fish off.
-    fn set_self_fishing(&mut self, fishing: bool) {
+    /// Cancel reactions that could arrive in the next session.
+    pub(super) fn set_self_fishing(&mut self, fishing: bool) {
         self.self_fishing = fishing;
         self.fishing_stance = None;
         if let Some(h) = self.fishing_reaction.take() {
             h.abort();
         }
+    }
+
+    pub fn can_start_scheduled_fishing(&self) -> bool {
+        self.in_game
+            && !self.self_fishing
+            && !self.trade_busy
+            && self
+                .fishing_retry_at
+                .is_none_or(|at| tokio::time::Instant::now() >= at)
+            && self.self_floor_level == 0
+            && self
+                .self_player
+                .as_ref()
+                .is_some_and(|p| p.health > 0 && p.object_type.is_none())
+            && self
+                .self_equipped
+                .get(&onlinerpg_shared::inventory::EquipSlot::MainHand)
+                .and_then(|item| crate::item_defs::get(&item.item_def_id))
+                .is_some_and(|item| item.category.as_deref() == Some("fishing_rod"))
     }
 
     /// Push an event and update tracked state. Returns the urgency of the event.
@@ -453,7 +467,8 @@ impl SharedState {
                 self.self_player_id = Some(player.id);
                 self.self_player = Some(player.clone());
                 self.self_mana = None;
-                self.self_fishing = false;
+                self.set_self_fishing(false);
+                self.fishing_retry_at = None;
                 // A character saved underground rejoins there (the server
                 // rehydrates it), so adopt the floor instead of assuming 0.
                 self.adopt_floor_level(player.floor_level);
@@ -1152,18 +1167,22 @@ impl SharedState {
                     *is_open,
                 );
             }
-            // Fishing reflexes: answer bites/beats mechanically; the LLM only
-            // decides whether to fish. Answers carry a human reaction delay
-            // so the agent has no edge over a player at the same rod.
+            // Fishing reflexes use the same reaction delays as human players.
             ServerMessage::FishingCasted { player_id, .. }
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {
                 self.set_self_fishing(true);
+                self.fishing_retry_at = None;
             }
             ServerMessage::FishingEnded { player_id, .. }
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {
                 self.set_self_fishing(false);
+                self.fishing_retry_at = Some(tokio::time::Instant::now() + FISHING_RECAST_DELAY);
+            }
+            ServerMessage::FishingError { .. } if !self.self_fishing => {
+                self.fishing_retry_at =
+                    Some(tokio::time::Instant::now() + FISHING_ERROR_RETRY_DELAY);
             }
             ServerMessage::FishingBite { player_id }
                 if self.self_player_id.as_ref() == Some(player_id) =>

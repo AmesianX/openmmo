@@ -22,35 +22,56 @@ async fn scheduled_angler(game: &GameState) -> (PlayerId, DirectRx, ScheduleEntr
 }
 
 #[tokio::test(start_paused = true)]
-async fn scheduled_fishing_keeps_its_heading_and_line_without_rewards() {
-    let game = make_test_game_state("scheduled_fishing_idle");
+async fn a_scheduled_angler_only_has_a_line_after_casting_and_can_land_real_fish() {
+    let game = make_test_game_state("scheduled_fishing_catch");
     let (id, mut rx, entry) = scheduled_angler(&game).await;
+    advance(Duration::from_secs(60)).await;
+    game.tick_fishing(None).await;
+    assert!(game.fishing_sessions.read().await.is_empty());
+    assert!(drain(&mut rx).is_empty());
+
     game.start_fishing(&id, entry.fishing_target().unwrap())
         .await;
     let messages = drain(&mut rx);
     assert!(messages.iter().any(|message| matches!(message,
         ServerMessage::FishingCasted { rotation, .. }
-            if *rotation == entry.rotation.to_radians()
+            if (*rotation - entry.rotation.to_radians()).abs() < 0.001
     )));
-
-    for action in [
-        FishingAction::Hook,
-        FishingAction::Reel,
-        FishingAction::GiveLine,
-    ] {
-        game.respond_fishing(&id, action).await;
+    advance_until_bite(&game, &mut rx).await;
+    {
+        let mut sessions = game.fishing_sessions.write().await;
+        let fish = sessions.get_mut(&id).unwrap().rolled_fish.as_mut().unwrap();
+        fish.item_def_id = "raw_minnow".into();
+        fish.rarity = 1;
+        fish.size_cm = 10;
+        fish.trophy = false;
     }
-    advance(Duration::from_secs(24 * 60 * 60)).await;
-    game.tick_fishing(None).await;
+    game.respond_fishing(&id, FishingAction::Hook).await;
+    let (outcome, messages) = flow_tests::fight_to_the_end(&game, &id, &mut rx, auto_stance).await;
     assert!(matches!(
-        game.fishing_sessions.read().await[&id].phase,
-        FishingPhase::Scheduled
+        outcome,
+        FishingOutcome::Caught { ref item_def_id, .. } if item_def_id == "raw_minnow"
     ));
-    assert!(drain(&mut rx).is_empty());
-    assert!(game.inventories.read().await[&id].bag.is_empty());
+    assert!(game.inventories.read().await[&id]
+        .bag
+        .iter()
+        .any(|item| item.item_def_id == "raw_minnow"));
+    assert!(messages
+        .iter()
+        .any(|message| matches!(message, ServerMessage::InventoryUpdated { .. })));
+    assert!(!game.fishing_sessions.read().await.contains_key(&id));
 
-    game.set_npc_schedule("Tobin", vec![]);
+    advance(Duration::from_secs(60)).await;
     game.tick_fishing(None).await;
+    assert!(drain(&mut rx).is_empty());
+
+    game.start_fishing(&id, entry.fishing_target().unwrap())
+        .await;
+    assert!(drain(&mut rx)
+        .iter()
+        .any(|message| matches!(message, ServerMessage::FishingCasted { .. })));
+    game.stop_fishing(&id).await;
+
     assert!(!game.fishing_sessions.read().await.contains_key(&id));
     assert!(drain(&mut rx).iter().any(|message| matches!(
         message,
@@ -62,7 +83,7 @@ async fn scheduled_fishing_keeps_its_heading_and_line_without_rewards() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn scheduled_fishing_requires_an_official_npc_at_the_scheduled_spot() {
+async fn fishing_progresses_without_an_official_identity_or_matching_schedule() {
     for official_at_spot in [false, true] {
         let game = make_test_game_state("scheduled_fishing_guards");
         let (id, mut rx, mut entry) = scheduled_angler(&game).await;

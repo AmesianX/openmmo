@@ -5,6 +5,9 @@ pub const MEETING_TURNS: u32 = 5;
 
 impl Drop for SharedState {
     fn drop(&mut self) {
+        if let Some(reaction) = self.fishing_reaction.take() {
+            reaction.abort();
+        }
         if let Some(id) = self.self_player_id {
             if let Ok(mut world) = self.world_cache.write() {
                 world.remove_fence_view(id);
@@ -64,6 +67,10 @@ pub(crate) use onlinerpg_shared::messages::MUSIC_EMOTE;
 
 pub(crate) const DEFAULT_ATTACK_COOLDOWN: std::time::Duration =
     std::time::Duration::from_millis(1500);
+pub(crate) const FISHING_RECAST_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+pub(crate) const FISHING_CAST_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub(crate) const FISHING_ERROR_RETRY_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(30);
 
 const MAX_EVENTS: usize = 200;
 /// Separate caps for previous context and newly heard conversation.
@@ -252,6 +259,8 @@ pub struct SharedState {
     /// movement (like `trade_busy`) and adds a stay-put prompt line;
     /// `stop_fishing` stays the deliberate exit.
     pub self_fishing: bool,
+    /// Pending cast acknowledgement or a pause between attempts.
+    fishing_retry_at: Option<tokio::time::Instant>,
     /// A recital began this turn; the driver takes it to move tonight's
     /// tale along.
     pub recited_this_turn: bool,
@@ -458,6 +467,7 @@ impl SharedState {
             trade_busy: false,
             trade_declined_until: HashMap::new(),
             self_fishing: false,
+            fishing_retry_at: None,
             recited_this_turn: false,
             fishing_stance: None,
             fishing_reaction: None,
