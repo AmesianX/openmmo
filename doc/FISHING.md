@@ -1,6 +1,6 @@
 # Fishing
 
-**Planned progression change (2026-09-14):** fishing will use learned abilities or licenses with a small number of tiers, such as Basic and Advanced Fishing, without mana costs or use-based XP. Tier requirements, effects, and migration of existing characters remain to be designed. See [the skills design](MANA_SKILLS_MAGIC.md). The sections below describe the current XP/level implementation.
+**Planned progression change (2026-09-21):** Basic and Advanced Fishing will be permanently learned from anglers, without licenses, mana costs, or use-based XP. The agreed design below is not implemented. Sections from **The loop** onward describe the current XP/level implementation. See also [the skills design](MANA_SKILLS_MAGIC.md).
 
 Cast a rod at water, wait for the bite, hook in time, land the fish. The first
 gathering profession, and the first consumer of the trained-skill system
@@ -8,7 +8,81 @@ gathering profession, and the first consumer of the trained-skill system
 and outcome lives in `server/src/game_state/fishing.rs`; clients render
 broadcasts and answer with `FishingRespond`.
 
+## 일반·고급 낚시 전환 설계
+
+2026-09-21 합의. 낚시는 **일반 낚시 → 고급 낚시의 두 단계**로 구성한다.
+각 스킬은 NPC에게 한 번 배우면 영구 습득하며, 낚싯대를 주 손에 장착해 사용한다.
+낚시 경험치·레벨과 반복 사용에 따른 자동 승급을 없애고, MP는 소모하지 않는다.
+라이선스 구입이나 허가증 대신 세계 속 낚시꾼에게 방법을 배우는 흐름으로 만든다.
+
+### 습득과 역할
+
+| 구분 | 일반 낚시 (Basic Fishing) | 고급 낚시 (Advanced Fishing) |
+| --- | --- | --- |
+| 스승 | 강가의 낚시꾼 토빈 (Tobin) | 항구 등에서 만나는 숙련된 낚시꾼 |
+| 습득 | 낚싯대와 낚시 용품을 파는 NPC에게 간단한 기초 설명을 들으면 습득 | 일반 낚시 습득 후 숙련된 낚시꾼에게 새로운 기법을 배워 습득 |
+| 활동 | 강·호수·해안 및 현재 노 젓는 보트에서 낚시 | 향후 큰 배에서 하는 선상 낚시, 특수 미끼를 사용하는 낚시 |
+| 어종 | 현재 잡을 수 있는 모든 어종과 모든 대물 | 참치처럼 현재 없는 신규 어종을 향후 추가 |
+
+토빈은 낚싯대를 판매하며 채비, 찌 연결, 미끼 달기, 입질 대응을
+간단히 설명한다. 이 대화가 스킬 습득과 기본 조작 안내를 겸한다.
+일반 낚시에서 별도 미끼 아이템을 소비해야 하는지는 아직 정하지 않는다.
+외형·A포즈 원화·리깅된 게임 모델은 [토빈 에셋 기록](assets/characters.md#tobin--토빈--강가의-낚시꾼-2026-09-21)에 정리한다.
+
+고급 낚시는 동네 낚시꾼이 다른 스승을 소개해 주는 흐름으로 연결한다.
+예를 들어 향후 큰 배에서 낚시하려는 플레이어에게 항구의 낚시꾼을 찾아가도록 안내한다.
+새로운 지역과 인물을 찾아 배우는 과정이 성장의 계기가 되며,
+반복 포획 횟수나 낚시 경험치를 채워 승급하는 조건은 두지 않는다.
+
+### 현재 잡을 수 있는 어종
+
+2026-09-21 [아이템 원본 데이터](../data-src/items.csv)와 [게임용 데이터](../data/items.json) 기준,
+현재 낚이는 어종은 5종이며 각 어종에 대물 아이템이 하나씩 있다.
+아래 일반 물고기 5종과 대물 5종 모두 일반 낚시의 대상이다.
+
+| 어종 (게임 내 이름) | 일반 물고기 아이템 ID | 대물 아이템 ID |
+| --- | --- | --- |
+| Raw Minnow | `raw_minnow` | `trophy_raw_minnow` |
+| Raw Perch | `raw_perch` | `trophy_raw_perch` |
+| Raw Trout | `raw_trout` | `trophy_raw_trout` |
+| River Salmon | `river_salmon` | `trophy_river_salmon` |
+| Golden Sturgeon | `golden_sturgeon` | `trophy_golden_sturgeon` |
+
+### 단계 구분과 낚시의 재미
+
+- 해안과 현재 노 젓는 보트(Rowboat)에서의 낚시는 일반 낚시로 가능하다.
+  바다 전체를 고급 낚시로 제한하지 않는다. 고급 단계의 선상 낚시는 향후 큰 배가
+  도입될 때의 활동으로 남겨 두며, 특수한 채비로 물고기를 노리는 기법도 포함한다.
+- 현재 잡을 수 있는 모든 어종은 희귀 어종과 모든 대물 변형까지 일반 낚시에 포함한다.
+  기존 `minFishingLevel` 제한은 제거하며, 일반 낚시를 배우면 기존 어종 전부에 도전할 수 있다.
+  기존 어종이나 대물을 고급 단계로 옮기지 않는다.
+- 고급 낚시는 참치처럼 현재 없는 신규 어종과 낚시 기법을 향후 추가하는 확장으로 둔다.
+  참치는 예시이며 구체적인 신규 어종 목록과 조건은 추후 정한다.
+- 입질 대응, 장력 조절, 대물 도전과 칭호가 지속적인 재미와 목표를 제공한다.
+  고급 습득만으로 대기 시간·성공률·보상을 일괄 상향하는 구조는 두지 않는다.
+- 스킬 표시는 습득 여부, 사용 조건, 설명을 중심으로 구성하며 경험치·레벨 표시는 없앤다.
+
+### 구현 전 남은 결정
+
+- 토빈의 판매 품목·가격, 고급 낚시 스승의 이름·위치, 교육 비용 유무와 구체적인 대화 흐름.
+- 고급 낚시에 추가할 신규 어종, 특수 미끼의 종류·획득·소비 규칙, 필요한 수역·채비 조건.
+- 향후 큰 배 도입 시 고급 선상 낚시의 구체적인 방식과 조건.
+- 현재 레벨에 연결된 입질 대기 시간, 희귀도 가중치, 장력·릴 속도 보정의 전환.
+  모두를 기존 0레벨로 고정하지 말고 공통 기본 수치와 어종별 난이도·보상을 다시 조정한다.
+- 기존 캐릭터의 일반·고급 스킬 부여 기준과 낚시 경험치 기록의 보존 방식.
+
+### 토빈 배치 (2026-09-21 구현)
+
+- 위치 **world(-1499.9, 0.6, 4728.4)**, tile(-23, 74), cell(4, 24), 방향 **-89.0°**. 하루 종일 강가의 같은 자리에서 낚시한다.
+- NPC 레지스트리 `tobin` / `Tobin`, 한국어 별칭 `토빈`. 작업 장비로 `fishing_rod`를 지급·장착한다. [일정](../agent-client/data/npcs/tobin/schedule.json)과 [역할 설정](../agent-client/data/npcs/tobin/instance.txt).
+- 일정의 `action: "fishing"`은 지정 방향 4m 앞에 캐스팅한 뒤 낚시 대기 자세를 유지한다. 서버가 수심을 검증하고 찌를 실제 수면 높이에 맞춘다. 기존 낚시 브로드캐스트로 낚싯줄·찌·자세를 표시하므로 뒤늦게 접근한 플레이어도 볼 수 있다.
+- 공식 NPC가 낚시 일정의 지정 지점에 있을 때는 연출용 세션을 사용하며 물고기·아이템·경험치를 생성하지 않는다. 일정 종료·이동·장비 해제·사망 시 종료한다. 에이전트는 5초마다 끊긴 낚시를 확인하고 제자리에서 재개한다.
+- 현재는 배치와 낚시 연출을 연결했다. 토빈의 상점과 일반 낚시 영구 습득 기능은 추후 구현하며, 낚싯대가 필요한 방문객에게는 현재 판매처인 리카를 안내한다.
+
 ## The loop
+
+Implementation reviewed on 2026-09-21 against the server, web client,
+agent-client, and item data. The learned-skill design above is still pending.
 
 ```
 FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
@@ -24,24 +98,21 @@ FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
                            Caught               Escaped
 ```
 
-**Getting a rod:** buy a Fishing Rod from a general merchant (Rica stocks it
-for 3 silver — a starter tool between a torch and a potion) and equip it in
-the main hand.
-Rods are excluded from dungeon treasure chests — they are bought tools, not
-endgame combat loot (`server/src/item_defs.rs::equipment_ids_with_min_price`).
+**Getting a rod:** Rica stocks the Fishing Rod at a base price of 3 silver;
+a haggled deal can change the purchase price. Equip it in the main hand.
+No lesson or learned ability is currently required to cast. Rods are excluded
+from dungeon treasure: `ItemDefs::load` rejects a rod with `chestTier` set
+(`server/src/item_defs.rs`).
 
 - **Cast** (`FishingCast { position }`): needs a fishing rod in the main hand
-  (`category == "fishing_rod"`), the overworld floor, a target within 8 m, and
-  **water**. Water is `waterSurfaceY − terrainBed > 0.1 m` at the target,
+  (`category == "fishing_rod"`), a living player on floor 0, and a water
+  target within 8 m in XZ. Water is `waterSurfaceY − terrainBed > 0.1 m`,
   sampled server-side from the baked **unified water field** (WFD1, sea +
   rivers) via `terrain::WaterSampler` alongside the terrain `HeightSampler`.
-  This is true over the **ocean** (surface at sea level, bed below) AND over
-  **rivers** (the carved channel surface sits above its bed even high in the
-  hills — a river bed bottoms out at sea level and climbs, so the older
-  "terrain height < 0" test wrongly rejected every inland river). On land the
-  water surface collapses below the terrain, so `depth ≤ 0` and the cast is
-  refused with a direct `FishingError`. Sea-only tiles have no baked water
-  file; they sample as flat sea level, matching the client's synthesis.
+  This covers oceans and inland rivers. Depth at or below 0.1 m, or a
+  sampling error, produces a direct `FishingError`. Missing water-field
+  tiles sample as sea level (0 m); terrain depth still determines whether
+  the target is fishable.
   On a rowboat, the target must also lie within 45° of the stern; casting
   preserves the boat's heading and the seated angler's stern-facing pose.
 - **Wait**: uniform 4–12 s, shortened 2% per fishing level (floored at half
@@ -49,12 +120,12 @@ endgame combat loot (`server/src/item_defs.rs::equipment_ids_with_min_price`).
   not at resolution. Trophy status is revealed at the hook; species and
   exact size are revealed on landing.
 - **Bite** (`FishingBite` broadcast): the bobber dips. `Hook` must arrive
-  within 2.5 s plus 0.5 s latency grace — judged against the server's own
-  clock, so a laggy-but-in-time click is never punished and a hacked client
-  can't stretch the window. Hooking *early* (before the bite) scares the fish
-  off. The reaper tick allows one extra grace period before declaring an
-  unanswered bite escaped, so a response racing the deadline is judged by the
-  handler, not the tick.
+  within 2.5 s plus 0.5 s latency grace, measured by server arrival time.
+  An unanswered bite is reaped at 3.5 s or the next tick; the extra delay
+  does not extend the 3 s response deadline. Hooking *early* (before the
+  bite) scares the fish off. Reeling or giving line before setting the hook
+  also loses the catch. `Hold` outside a fight and duplicate `Hook` inputs
+  during a fight are ignored.
 - **End** (`FishingEnded { outcome }` broadcast): `Caught { item_def_id,
   size_cm, trophy }`, `Escaped`, or `Aborted`. A caught fish arrives through
   the normal `InventoryUpdated` (fish stack by species and trophy variant — exact size is
@@ -63,11 +134,13 @@ endgame combat loot (`server/src/item_defs.rs::equipment_ids_with_min_price`).
   disconnecting, dying, stowing the rod (unequipping it, or swapping a
   weapon into the main hand), or `FishingStop` aborts the session; gear
   changes that leave the rod in hand — a hat, an off-hand torch — don't
-  break concentration.
+  break concentration. Position or floor changes, including teleports,
+  cancel fishing; turning in place does not.
 
-Timers advance on a 250 ms server tick (`run_ticks` in `main.rs`) using
-`tokio::time::Instant`, so the whole state machine is tested with paused time
-(`server/src/game_state/tests.rs`, `fishing_tests`).
+Timers advance on a 250 ms server tick (`run_ticks` in `server/src/main.rs`)
+using `tokio::time::Instant`. Paused-time session tests live in
+`server/src/game_state/tests/fishing_tests/`; pure fight and weighting tests
+live in `server/src/game_state/fishing.rs`.
 
 ## The catch table
 
@@ -83,9 +156,10 @@ The catch columns:
 | `sizeDice` | rolled length in cm (e.g. `6d8`) |
 | `trophyCm` | fish only — length at or above this is a trophy |
 
-Species pick: weighted draw over two pools. A fish's weight grows
-`RARITY_SKILL_BONUS_PCT` (3%) per level per rarity tier — multiplicative, so
-skill closes the gap on rare fish but can never invert the table's order.
+Species pick: weighted draw over two pools. Before pool normalization, each
+unlocked entry has weight `catchWeight × (100 + 3 × level × rarityTier)`.
+The bonus grows linearly with level and multiplies the base weight. With
+the current table and level cap, rarer species retain lower weights.
 Flotsam holds a flat `FLOTSAM_SHARE_PCT` (20%) of the draw at every level,
 so junk never thins out as the fish pool grows. `minFishingLevel` locks a
 species until the angler earns it: salmon at 10, golden sturgeon at 20.
@@ -101,27 +175,34 @@ Fish are sellable (`basePrice`, ordinary merchant flow) and edible —
 trophy variant. Exact size is deliberately **not stored on the item**;
 it lives only in the catch announcement.
 
-Prices are anchored to the game's *income* economy, not just the catalog:
-monster kills drop unsellable worn weapons by design, so the repeatable gold
-faucets are coin piles (1–10c) and gated dungeon chests — and an NPC's
-salary is 50s/day. Fish: minnow 10c, perch 25c, trout 60c, salmon 2s,
-golden sturgeon 15s (the jackpot, a goblin-sword's worth — 1.7% of draws even
-at the level-30 cap). With the flotsam rows in the table, the expected *sell*
-value of one catch runs ~8c at level 0 to ~24c at the level-30 cap — a couple of coin
-piles, so an hour of active fishing earns roughly half a guard's daily salary.
-Steady pocket money, not a money printer. Final tuning is explicitly the
-maintainer's call. That band is a **contract test**
-(`item_defs::tests::expected_catch_value_stays_in_the_coin_pile_economy_at_every_level`):
-it sweeps every fishing level, and fails if the per-catch EV leaves 5–25c, if
-skill ever makes an angler poorer, or if the cap earns more than 4x level 0 —
-mastery should pay a better wage, not open a different economy.
+Ordinary fish `basePrice` values are minnow 10c, perch 25c, trout 60c,
+salmon 2s, and golden sturgeon 15s. These are catalog prices: Rica pays
+40% before haggling, so ordinary catches sell for 4c, 10c, 24c, 80c, and
+600c respectively. Trophy variants have three times the base price and
+unmodified payout. Other merchants and haggled deals can pay differently
+(`server/src/game_state/trading.rs`, `deals.rs`, `data/merchants.json`).
+Golden sturgeon accounts for about 1.7% of all draws at level 30.
+
+The existing economy test
+(`item_defs::tests::expected_catch_value_stays_in_the_coin_pile_economy_at_every_level`)
+checks **ordinary item values only**, plus the expected coin-pouch payout,
+at Rica's unmodified 40% rate. Its average is about 7.89c at level 0 and
+24.23c at level 30. It checks the 5–25c band, nondecreasing value with level,
+and a cap no greater than four times the level-0 value.
+
+That test does not include trophy rolls, trophy prices, fight failures, or
+time spent fishing. Including the current trophy roll and size thresholds
+raises the expected value to about 10.84c at level 0 and 33.73c at level 30,
+**assuming every draw is landed**, items are sold to Rica without haggling,
+and coin pouches are opened. These are catch-table calculations, not
+measured income per hour or a guarantee for successful catches alone.
 
 ## Flotsam (junk & coin catches)
 
 Not everything that bites is a fish. Four flotsam rows share the catch
 table (a flat 20% of draws at every level): an **Old Boot** and a **Clump of Kelp**
 (worthless bag junk — the classic fishing gag), a **Message in a Bottle**
-(sells for a token 15c), and a **Sunken Coin Pouch**
+(base price 15c; Rica pays 6c before haggling), and a **Sunken Coin Pouch**
 (`category: "coin_catch"` — it lands in the bag sealed like any other
 catch; opening it via `use_item` (double-click in the bag) rolls its
 `dice` column, `3d8`, pays the copper to the wallet through the same
@@ -129,96 +210,111 @@ path as ground coin piles, and the combat log reports the amount). All are `rari
 `10·rarity²` formula grants nothing naturally), no trophy, and in the
 fight they pull and tire like a common fish (`rarity.max(1)` clamps pull and
 stamina). An *escaped* junk catch
-still pays the flat 2 XP consolation — the species is never revealed on
-an escape, and a varying consolation would leak the hidden roll. Junk
-keeps the bite/struggle stakes honest without inflating income — the EV
-guardrail above counts flotsam in its average.
+still pays the flat 2 XP consolation when the bite expires, a response
+arrives late, or the fight is lost. Early pulls and voluntary aborts award
+no XP. The species is never revealed on an escape. The economy test above
+includes flotsam in its average.
 
 ## Skill
 
 Catches grant fishing XP: `10 × rarity²` (10 for a minnow, 250 for a golden
-sturgeon); a hooked fish that escapes consoles with 2. Fishing grants **no
-character XP** — combat balance is untouched. Level effects today: shorter
+sturgeon). A missed or late bite and a lost fight grant 2 XP; premature
+pulls and aborted sessions grant none. Levels run from 0 to 30; advancing
+from level `L − 1` to `L` costs `100 × L²` XP (`shared/src/skills.rs`).
+Fishing grants **no character XP**. Level effects today: shorter
 waits, better rare weights, and drag control in the fight (`1%` less pull
 tension and `1%` faster reeling per level, pull relief capped at 30%).
+The fishing level is captured when casting and used for that session.
 
 ## Client
 
-- Click water with a rod equipped → `cast_fishing` intent
+- Click water within 8 m with a rod equipped on floor 0 → `cast_fishing` intent
   (`managers/inputHandler.ts`; water = the baked `WaterFieldManager.surfaceAt`
   sits >0.1 m above the clicked terrain, so both ocean and rivers cast while
-  dry ground still walks) → stop, face the water, send (`PlayerControl.svelte`).
+  dry ground or distant water still requests movement) → stop, face the
+  water, send (`PlayerControl.svelte`).
   The server re-validates, so the client check only decides cast-vs-walk.
   Rowboat casts keep the heading and reject clicks outside the stern cone
   before changing the player's state. The direction check is shared via WASM.
-- `components/FishingBobber.svelte`: every nearby angler's bobber (broadcasts
-  are radius-gated), gentle idle bob, hard dip on bite. The float stays
-  hidden through the cast swing + flight and splashes down on the same
-  schedule as the splash sound. A sagging white line connects the angler's
-  rod tip to the float. During the fight it chases the fish's broadcast
+- `components/FishingBobber.svelte`: every nearby angler's bobber, gentle
+  idle bob, hard dip on bite. It first renders 2.6 s after `FishingCasted`
+  is received: the 1.6 s swing delay from `data/player_anim_timing.json`
+  plus the 1 s `CAST_MS`, matching the local splash sound. This visual delay
+  is separate from the server's 1 s casting phase. A sagging white line
+  connects the angler's rod tip to the float. During the fight it chases the fish's broadcast
   position (client-side smoothing — the 4 Hz beats are never snapped to) and
-  wears a splash of droplets whose intensity follows the fish's remaining
-  stamina — bystanders read the whole fight from the water.
-- `components/FishingPrompt.svelte`: SPACE, any click, or a wheel flick to
-  hook (clicks are captured before the canvas, so a hasty click can't walk
-  the angler and abort the session), then the fight HUD — fish-state line,
+  shows droplets while the fish is Running, with intensity following its
+  remaining stamina. Resting and Exhausted fish show no droplets.
+- `components/FishingPrompt.svelte`: SPACE, a canvas click, the HOOK button,
+  or a wheel flick sets the hook during a bite. Canvas clicks are captured
+  before movement handling; unrelated UI
+  clicks pass through. The fight HUD shows a fish-state line,
   tension gauge, and two hold-to-act stance buttons. REEL: hold the button,
   hold SPACE, or wheel down (winding toward you); GIVE LINE: hold the
-  button, hold S, or wheel up (wheel inputs are short bursts). ESC reels in.
-  Combat-log lines narrate cast/bite/outcome.
+  button, hold S, or wheel up (350 ms bursts). Releasing the controlling
+  input returns to `Hold`. ESC sends `FishingStop` and aborts without a catch.
+  Combat-log lines narrate cast/bite/outcome; catches and escapes also appear
+  in chat. Keyboard fishing controls are ignored while typing.
 - State in `stores/fishingStore.ts`; server messages handled in
   `network/messageHandlers.ts`.
 
+Fishing events use the common world-event subscription system: delivery is
+within 32 m of the **angler**, in the same space, rather than centered on the
+bobber (`server/src/game_state/interest.rs::publish_fishing`). A joining
+subscriber receives the cast snapshot plus the latest bite/fight state;
+leaving the subscription clears the fishing effect with `FishingEnded`.
+
 ## Agent parity
 
-Agents speak the same protocol: `FishingBite` carries everything needed to
-respond, and the windows (2.5 s + grace) are sized for an agent-client's
-network round trip as much as for human reflexes — no mechanic requiring
-reactions only software can deliver, none too fast for software either.
+Agents use the same protocol and server deadlines. `FishingBite` identifies
+the angler; the reaction window comes from the shared constants.
 
-The agent-client implements this as a reflex layer (`src/state/events.rs`):
+The agent-client implements this as a reflex layer (`agent-client/src/state/events.rs`):
 it auto-hooks its own bites and plays each `FishingFight` beat through the
 shared `auto_stance` policy (answering only on change) — mechanically, like
 its A* movement layer, while the LLM makes the decisions via two actions:
-`{"type": "fish", "x": …, "z": …}` (coordinates optional — omitted means
-"just ahead") and `{"type": "stop_fishing"}`. Outcomes come back to the
-model as `[Fishing]` events; in-flight messages are classified as noise so
-they cost no LLM calls.
+`{"type": "fish", "x": …, "z": …}` and `{"type": "stop_fishing"}`.
+When both coordinates are supplied, they are used as the cast target.
+Otherwise the target is 4 m south (`x = player.x`, `z = player.z + 4`),
+independent of facing. This fallback does not search for water or choose a
+rowboat stern target; the server still validates both. Outcomes come back
+to the model as `[Fishing]` events; in-flight messages are classified as
+noise so they cost no LLM calls.
 
-Answers wait out a human reaction delay (`HOOK_REACTION_MS`,
-`STANCE_REACTION_MS`) with one answer in flight, so a beat arriving
-mid-reaction is missed exactly as a person misses it. Both ceilings are
-load-bearing: the hook must still fit `BITE_WINDOW_MS`, the stance what the
-fight absorbs (`the_stance_policy_survives_a_human_reaction_delay`).
-Shortening a window means re-checking the pair.
+Answers wait 300–800 ms for a hook (`HOOK_REACTION_MS`) and 250–350 ms
+for a stance (`STANCE_REACTION_MS`), with one response pending at a time.
+Beats received during that delay are skipped; ending the session cancels
+the pending response. The simulation tests
+`the_stance_policy_survives_a_human_reaction_delay` and
+`trophy_policy_survives_human_reaction_delay` exercise these delays with
+additional network latency. Changes to timing should recheck both policies.
 
 ## The fight
 
 Hooking is only the start: the fight is a continuous tug-of-war simulated on
 the server's 250 ms tick (constants in `shared/src/fishing.rs`, pure step in
 `server/src/game_state/fishing.rs::step_fight`). The fish alternates
-**Running** bursts (2–3.5 s, longer for rarer fish) and shorter **Resting**
-breathers (0.8–2 s) — most of the fight is spent under pressure;
-the angler holds one of three stances, changed any time via
+**Running** bursts (2 s to `3.5 + 0.15 × rarity` s) and shorter **Resting**
+breathers (0.8–2 s). Junk uses rarity 1 for these fight calculations.
+The angler holds one of three stances, changed any time via
 `FishingRespond`: **reel**, **give line**, or **hold**.
 
 - **Tension** (the gauge; snaps at 100, `Escaped`): a Running fish pulls
   `(20 + 2·rarity)/s`, scaled up to 1.3× by how much line is out and down by
-  skill; reeling adds 14/s (more than the 8/s rest decay — the reel can
-  never simply be held); giving line sheds 44/s (always more than the
-  strongest pull). The hook-set itself opens the fight at 30 — deliberately
-  hot: an unanswered run leaves the safe range in about a second and snaps
-  the line in a few.
+  skill. Reeling adds 14/s while the fish is active; Resting and Exhausted
+  fish shed 8/s naturally. Giving line subtracts another 44/s, exceeding
+  the strongest fish pull. The hook-set opens the fight at 30 tension.
+  Trophy rates are scaled as described below.
 - **Distance** (shown, not numbered: the bobber *is* the fish): runs take
   ~1.1–1.5 m/s of line, reeling takes it back (1.6 m/s vs a Resting fish,
   0.6 against a run, 2.5 when Exhausted). The fish wanders but stays within
-  6 m of the cast point, and can never be reeled past the session's **line
-  floor**: the cast handler walks the player→cast ray (0.5 m steps, the same
-  tiles the cast validation touched — the tick stays IO-free) to find where
-  fishable water starts, and the fight clamps to that plus 0.4 m, at least
-  the rod's 2 m reach. The exhausted reel-in also steers the fish back onto
-  the cast ray, so it comes home along the line whose waterline was actually
-  measured — the float stays on the water instead of climbing the shore.
+  6 m of the cast point. The distance integration uses a **line floor**:
+  the cast handler samples the player→cast ray in 0.5 m steps to find the
+  first fishable point, adds 0.4 m, caps it at the cast distance, then floors
+  it at 2 m. Exhausted fish steer back toward the cast ray. The fight keeps
+  the cast point's water-surface Y and does not resample terrain or water at
+  the wandered positions; the radius limit alone does not check shorelines.
+  Giving line to a Running fish also adds 0.6 m/s to its outward speed.
 - **Stamina** (shown on the HUD and in the splash): only drag
   burns it — Running under ≥20 tension costs `2 + 12·(tension/100)²` per
   second; the square means timid mid-band play barely tires the fish and
@@ -227,10 +323,10 @@ the angler holds one of three stances, changed any time via
 - **Endgame**: at 0 stamina the fish goes **Exhausted** — reel it down to
   the line floor (within 0.3 m) and it lands (`Caught`). A lively fish
   dragged within 1 m of the floor panics into a fresh run instead, so only
-  a spent fish can ever be landed. A fight
-  that reaches 60 s (40 s for trophies) throws the hook (`Escaped`): slack-line stalling is not
-  a strategy, and neither is walking away (unmanaged tension snaps within
-  seconds).
+  a spent fish can ever be landed. A fight that reaches 60 s (40 s for
+  trophies) throws the hook (`Escaped`). These
+  deadlines use accumulated simulation time: each tick integrates elapsed
+  time capped at 1 s, so a long server stall is not fully counted.
 
 Trophy status is rolled at the bite, using `TROPHY_ROLL_CHANCE_PCT` or
 the species-size threshold. It is announced on the first fight beat and stays
@@ -249,24 +345,29 @@ same trophy flag and reacts with its usual delay.
 Successful trophies award exactly one `trophy_*` fish: a separate stack
 with the same species icon, twice its ordinary weight, and three times its
 base price. It remains edible and grills into the ordinary cooked fish.
-Catch XP and species titles are granted once as before. Ordinary catches
-are unchanged. There is no second-fish roll or accumulated bonus chance.
+Catch XP uses the base species' rarity and is granted once. The title
+check also uses the base species. There is no second-fish roll or
+accumulated bonus chance.
 
-Every beat is broadcast as `FishingFight { bobber, fish_state, tension_pct,
-stamina_pct, trophy }` — public information by design, which is what keeps humans
-(reading gauge and splash) and agent-clients (running the shared
-`auto_stance` policy on a human reaction delay, below) on equal footing.
+Every beat carries `FishingFight { player_id, bobber, fish_state,
+tension_pct, stamina_pct, trophy }`. The web HUD and agent reflex read
+these same fields; bystanders receive them through world-event subscriptions.
 Trophy catches are celebrated to everyone in delivery radius via the
 `FishingEnded` broadcast they already receive.
 
 ## Deliberate limits
 
-- No bait, no rod tiers, no designated fishing spots (any water — ocean or
-  river — works).
+- The current implementation has no bait, rod tiers, or designated fishing
+  spots (any water — ocean or river — works). Special bait and learned-skill
+  requirements belong to the planned progression change above.
 - Animations are in: a Mixamo cast plays once on `FishingCasted`, then a
   fishing idle loops until the line comes in (`fishing.glb` pack, local
-  player only — remote anglers still read through the bobber). SFX are in:
-  the line whirs out on the swing, the splash lands with the bobber a second
-  later, plop on bite, reel click when the reel stance engages, line snap on escape,
-  jingle on catch (CC0 packs except the contributor-original cast whir —
-  see `assets/sfx.md`; self-only, matching the combat sound precedent).
+  and remote players). Local animation is driven by
+  `game-scene/GameScenePlayersLayer.svelte`; remote casts and the transition
+  to idle are handled by `messageHandlers.ts` and `remotePlayerManager.ts`.
+  Rowboat anglers use the seated fishing pose.
+- Fishing SFX are local-player-only: cast whir at 1.6 s, splash at 2.6 s
+  after `FishingCasted`, plop on bite, reel click when `Reel` is selected,
+  snap on any `Escaped` result, and a jingle on catch. Pending delayed
+  sounds are cancelled when fishing ends. Sources are recorded in
+  [the sound asset documentation](assets/sfx.md).

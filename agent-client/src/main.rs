@@ -701,6 +701,8 @@ always_sprint = true
             "cocoly",
             "steward",
             "estate_architect",
+            "grida",
+            "tobin",
         ] {
             let config = parse(&format!(
                 "server = \"ws://127.0.0.1:10006\"\n\n[[npcs]]\nid = \"{id}\"\n"

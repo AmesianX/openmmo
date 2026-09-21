@@ -622,9 +622,15 @@ impl GameState {
         Ok(())
     }
 
-    /// Whether the NPC's active schedule entry keeps it in bed right now,
-    /// resolved from the server's clock and schedule copy.
     pub fn is_npc_asleep(&self, npc_name: &str) -> bool {
+        self.active_npc_schedule_matches(npc_name, ScheduleEntry::is_sleeping)
+    }
+
+    fn active_npc_schedule_matches(
+        &self,
+        npc_name: &str,
+        predicate: impl FnOnce(&ScheduleEntry) -> bool,
+    ) -> bool {
         let datetime = self.current_game_datetime();
         let schedules = self
             .npc_schedules
@@ -642,7 +648,7 @@ impl GameState {
                 onlinerpg_shared::moon::game_day_index(&datetime),
             )),
         );
-        active.is_some_and(|i| schedule[i].is_sleeping())
+        active.is_some_and(|i| predicate(&schedule[i]))
     }
 
     #[allow(clippy::too_many_arguments)]

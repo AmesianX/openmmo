@@ -33,6 +33,8 @@ use crate::types::{PlayerId, ServerMessage};
 pub(crate) const OVERWORLD_FLOOR: i8 = 0;
 
 pub(crate) enum FishingPhase {
+    /// An NPC's scheduled fishing pose, without catches or XP.
+    Scheduled,
     /// Rod is swinging; the bobber lands when this elapses.
     Casting { until: Instant },
     /// Bobber is floating; the fish bites at `bite_at`.
@@ -413,12 +415,19 @@ impl GameState {
             return;
         }
 
-        let (player_pos, player_rotation, player_floor, alive, mount) = {
+        let (player_pos, player_rotation, player_floor, alive, mount, scheduled) = {
             let players = self.players.read().await;
             let Some(p) = players.get(player_id) else {
                 return;
             };
-            (p.position, p.rotation, p.floor_level, p.health > 0, p.mount)
+            (
+                p.position,
+                p.rotation,
+                p.floor_level,
+                p.health > 0,
+                p.mount,
+                self.is_at_scheduled_fishing_spot(p),
+            )
         };
         if !alive {
             self.send_fishing_error(player_id, "You cannot fish while defeated.")
@@ -501,8 +510,12 @@ impl GameState {
                     bobber,
                     cast_point: bobber,
                     reel_floor_m,
-                    phase: FishingPhase::Casting {
-                        until: Instant::now() + Duration::from_millis(u64::from(CAST_MS)),
+                    phase: if scheduled {
+                        FishingPhase::Scheduled
+                    } else {
+                        FishingPhase::Casting {
+                            until: Instant::now() + Duration::from_millis(u64::from(CAST_MS)),
+                        }
                     },
                     rolled_fish: None,
                     skill_level,
@@ -514,7 +527,7 @@ impl GameState {
         }
         self.fishing_active
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let rotation = if boating {
+        let rotation = if boating || scheduled {
             player_rotation
         } else {
             player_pos.bearing_xz_to(&bobber).unwrap_or(player_rotation)
@@ -542,6 +555,7 @@ impl GameState {
                 return;
             };
             match &mut session.phase {
+                FishingPhase::Scheduled => return,
                 FishingPhase::Fight { state, .. } => {
                     // A duplicated Hook racing the fight open is swallowed;
                     // anything else is the angler's new stance, applied by
@@ -692,8 +706,20 @@ impl GameState {
         }
     }
 
-    /// The 250 ms fishing tick: advances casts to waits, waits to bites, and
-    /// expires bites the angler slept through.
+    fn is_at_scheduled_fishing_spot(&self, player: &onlinerpg_shared::Player) -> bool {
+        player.is_official_npc
+            && self.active_npc_schedule_matches(&player.name, |entry| {
+                entry.is_fishing()
+                    && player.floor_level == entry.floor_level as i8
+                    && player.position.dist_xz_sq(&Position {
+                        x: entry.pos[0],
+                        y: entry.pos[1],
+                        z: entry.pos[2],
+                    }) <= 0.25
+            })
+    }
+
+    /// Advance fishing sessions on the 250 ms tick.
     pub async fn tick_fishing(&self, auth: Option<&crate::auth::AuthService>) {
         if self.no_fishing_anywhere() {
             return;
@@ -706,7 +732,7 @@ impl GameState {
             BobberLanded(PlayerId, u64, u32),
             Bite(PlayerId, u64, u32),
             Expired(PlayerId, u64),
-            PlayerGone(PlayerId),
+            Aborted(PlayerId),
         }
         let mut due = Vec::new();
         let mut fights: Vec<(PlayerId, u64, Position)> = Vec::new();
@@ -718,11 +744,14 @@ impl GameState {
             let players = self.players.read().await;
             for (player_id, session) in sessions.iter() {
                 let Some(player) = players.get(player_id).filter(|p| p.health > 0) else {
-                    due.push(Due::PlayerGone(*player_id));
+                    due.push(Due::Aborted(*player_id));
                     continue;
                 };
                 let sid = session.session_id;
                 match &session.phase {
+                    FishingPhase::Scheduled if !self.is_at_scheduled_fishing_spot(player) => {
+                        due.push(Due::Aborted(*player_id));
+                    }
                     FishingPhase::Casting { until } if now >= *until => {
                         due.push(Due::BobberLanded(*player_id, sid, session.skill_level));
                     }
@@ -751,7 +780,7 @@ impl GameState {
 
         for entry in due {
             match entry {
-                Due::PlayerGone(player_id) => {
+                Due::Aborted(player_id) => {
                     self.end_fishing(&player_id, FishingOutcome::Aborted, 0)
                         .await;
                 }

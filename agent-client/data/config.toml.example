@@ -212,3 +212,9 @@ id = "grida"
 account = "npc_grida"
 gender = "female"
 llm = "codex"
+
+[[npcs]]
+id = "tobin"
+account = "npc_tobin"
+gender = "male"
+llm = "codex"

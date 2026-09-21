@@ -50,7 +50,8 @@ use backoff::PromptBackoff;
 use combat::{load_attack_cooldown, tick_combat};
 use execute::{append_memory, handle_response};
 use movement::{
-    check_schedule_transition, coverage_positions, fetch_furniture_around, resolve_due_schedule,
+    check_schedule_transition, coverage_positions, fetch_furniture_around,
+    maintain_scheduled_fishing, resolve_due_schedule,
 };
 use prompt::build_prompt;
 
@@ -475,6 +476,7 @@ pub async fn llm_driver(
     // Track the highest urgency since the last prompt
     let mut pending_urgency = LlmPriority::Idle;
     let mut active_schedule: (Option<usize>, Option<u32>) = (None, None);
+    let mut last_fishing_check = Instant::now();
     let mut tales = crate::tales::SetTales::default();
     // Our song count when the pending prompt offered a tale, so the gap is
     // measured from the offer rather than from whenever the reply lands.
@@ -1078,6 +1080,17 @@ pub async fn llm_driver(
         let has_scheduled_action = active_schedule
             .0
             .is_some_and(|i| schedule[i].action.is_some());
+
+        if last_fishing_check.elapsed() >= Duration::from_secs(5) {
+            last_fishing_check = Instant::now();
+            if let Some(entry) = active_schedule
+                .0
+                .map(|i| &schedule[i])
+                .filter(|entry| entry.is_fishing())
+            {
+                maintain_scheduled_fishing(&state, entry).await;
+            }
+        }
 
         // === Check if LLM response arrived ===
         if llm_in_flight.as_ref().is_some_and(|h| h.is_finished()) {

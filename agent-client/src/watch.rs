@@ -465,6 +465,7 @@ async fn state_snapshot(State(app): State<Arc<AppState>>, Query(q): Query<NpcQue
             "sight": onlinerpg_shared::EVENT_DELIVERY_RADIUS,
             "connected": connected && s.in_game,
             "self": s.self_player,
+            "fishing": s.self_fishing,
             "gold": s.self_gold,
             "floor": s.self_floor_level,
             "dungeon": dungeon,

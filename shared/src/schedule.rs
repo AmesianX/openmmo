@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Object type an NPC occupies while asleep.
 pub const BED_OBJECT_TYPE: &str = "bed";
+pub const FISHING_ACTION: &str = "fishing";
 const MEAL_DURATION_HOURS: f64 = 0.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +57,7 @@ pub struct ScheduleEntry {
     /// Human-readable label for LLM prompt context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Object type to interact with after arriving (e.g. "bed").
+    /// Activity or object type to use after arriving.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
     /// Object placement ID to interact with.
@@ -82,6 +83,21 @@ pub struct ScheduleEntry {
 impl ScheduleEntry {
     pub fn is_sleeping(&self) -> bool {
         self.action.as_deref() == Some(BED_OBJECT_TYPE)
+    }
+
+    pub fn is_fishing(&self) -> bool {
+        self.action.as_deref() == Some(FISHING_ACTION)
+    }
+
+    pub fn fishing_target(&self) -> Option<crate::Position> {
+        self.is_fishing().then(|| {
+            let rotation = self.rotation.to_radians();
+            crate::Position {
+                x: crate::wrap_world_x(self.pos[0] + rotation.sin() * 4.0),
+                y: self.pos[1],
+                z: self.pos[2] + rotation.cos() * 4.0,
+            }
+        })
     }
 
     pub fn display_label(&self) -> &str {

@@ -1089,6 +1089,14 @@ mod tests {
         interest.publish_fishing(cast);
         assert_eq!(events(&mut rx)[0].change, InterestChange::Enter);
         assert!(far_rx.try_recv().is_err());
+        let mut late_rx = watch(&mut interest, &make_player("late_angler_viewer", 2.0, 0.0));
+        assert!(events(&mut late_rx)
+            .iter()
+            .flat_map(|event| &event.messages)
+            .any(|message| matches!(message,
+                ServerMessage::FishingCasted { player_id, position, .. }
+                    if *player_id == angler.id && *position == distant.position
+            )));
         interest.publish_fishing(ServerMessage::FishingEnded {
             player_id: angler.id,
             outcome: onlinerpg_shared::fishing::FishingOutcome::Aborted,

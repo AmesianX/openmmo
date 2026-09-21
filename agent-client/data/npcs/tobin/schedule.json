@@ -1,0 +1,13 @@
+{
+  "schedule": [
+    {
+      "at": "00:00",
+      "pos": [-1499.9, 0.6, 4728.4],
+      "rotation": -89.0,
+      "floor_level": 0,
+      "label": "fishing at the riverbank and answering nearby visitors",
+      "action": "fishing",
+      "waypoints": []
+    }
+  ]
+}

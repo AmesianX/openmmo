@@ -121,6 +121,11 @@ pub(super) async fn stop_current_entry(
     label: &str,
 ) {
     let mut s = state.lock().await;
+    if current.is_some_and(|i| schedule[i].is_fishing()) {
+        if let Err(e) = s.send_command(ClientMessage::FishingStop).await {
+            error!("[{label}] Failed to stop scheduled fishing: {e}");
+        }
+    }
     if current.is_some_and(|i| schedule[i].action.is_some())
         || s.self_player
             .as_ref()
@@ -133,8 +138,16 @@ pub(super) async fn stop_current_entry(
     s.pack_up_placeables(label).await;
 }
 
-/// Send InteractObject if the schedule entry has an action and object_id.
 async fn send_interact_if_needed(s: &mut SharedState, entry: &ScheduleEntry) {
+    if let Some(position) = entry.fishing_target() {
+        if let Err(e) = s
+            .send_command(ClientMessage::FishingCast { position })
+            .await
+        {
+            error!("Failed to start scheduled fishing: {e}");
+        }
+        return;
+    }
     if let (Some(ref object_type), Some(object_id)) = (&entry.action, entry.object_id) {
         debug!("Sending InteractObject: {object_type} (id={object_id})");
         let cmd = ClientMessage::InteractObject {
@@ -144,6 +157,19 @@ async fn send_interact_if_needed(s: &mut SharedState, entry: &ScheduleEntry) {
         if let Err(e) = s.send_command(cmd).await {
             error!("Failed to send InteractObject: {e}");
         }
+    }
+}
+
+pub(super) async fn maintain_scheduled_fishing(
+    state: &Arc<Mutex<SharedState>>,
+    entry: &ScheduleEntry,
+) {
+    let needs_cast = {
+        let s = state.lock().await;
+        s.in_game && !s.self_fishing && s.self_player.as_ref().is_some_and(|p| p.health > 0)
+    };
+    if needs_cast {
+        execute_schedule_move(state, entry).await;
     }
 }
 
@@ -387,6 +413,50 @@ mod tests {
         let mut schedule = serde_json::from_str::<File>(json).unwrap().schedule;
         assert!(onlinerpg_shared::schedule::parse_conditions(&mut schedule).is_empty());
         schedule
+    }
+
+    #[tokio::test]
+    async fn scheduled_fishing_casts_after_placement_resumes_and_stops_on_departure() {
+        let schedule = npc_schedule(include_str!("../../data/npcs/tobin/schedule.json"));
+        let entry = &schedule[0];
+        let (mut s, mut rx) = test_state();
+        let me = test_player(entry.pos[0], entry.pos[2]);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+        let state = Arc::new(Mutex::new(s));
+
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientMessage::PlayerMove { position, rotation, .. })
+                if position.x == entry.pos[0] && position.y == entry.pos[1]
+                    && position.z == entry.pos[2] && rotation == entry.rotation.to_radians()
+            )
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientMessage::FishingCast { position })
+                if (position.x + 1503.8994).abs() < 0.001 && (position.z - 4728.47).abs() < 0.001
+            )
+        );
+
+        state.lock().await.self_fishing = true;
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(rx.try_recv().is_err());
+        stop_current_entry(&state, &schedule, Some(0), "Tobin").await;
+        assert!(matches!(rx.try_recv(), Ok(ClientMessage::FishingStop)));
+        assert!(matches!(rx.try_recv(), Ok(ClientMessage::StopInteraction)));
+        assert!(rx.try_recv().is_err());
+
+        state.lock().await.self_fishing = false;
+        maintain_scheduled_fishing(&state, entry).await;
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::PlayerMove { .. })
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::FishingCast { .. })
+        ));
     }
 
     #[tokio::test]

@@ -13,6 +13,7 @@ mod economy_tests;
 mod flow_tests;
 mod interruption_tests;
 mod inventory_tests;
+mod scheduled_tests;
 mod session_tests;
 mod trophy_fight_tests;
 

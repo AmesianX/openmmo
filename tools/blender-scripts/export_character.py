@@ -168,6 +168,7 @@ def transplant_material(mesh, mat, name, double_sided):
         img.name = f"{name}_{suffix[key]}"
         if key != "base_color" and img.size[0] > SMALL_MAP_SIZE:
             img.scale(SMALL_MAP_SIZE, SMALL_MAP_SIZE)
+        img.pack()
         images.append((img.name, list(img.size)))
     return images
 
