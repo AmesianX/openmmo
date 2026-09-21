@@ -69,7 +69,6 @@ async fn watching_tobin_unlocks_fishing_once_and_survives_reload() {
     let (_, rows) = game.take_player_skills(&student).await.unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].skill_id, "fishing");
-    assert_eq!(rows[0].xp, 0);
     game.register_player_skills(&student, crate::game_state::skills::skills_from_rows(&rows))
         .await;
     assert!(game.has_skill(&student, SkillId::Fishing).await);
@@ -186,8 +185,6 @@ async fn existing_anglers_keep_access_and_learned_status_after_watching() {
     let (angler, mut rx) = make_angler(&game, "experienced_angler").await;
     let skills = crate::game_state::skills::skills_from_rows(&[crate::auth::SkillRow {
         skill_id: "fishing".into(),
-        level: 2,
-        xp: 600,
     }]);
     game.register_player_skills(&angler, skills.clone()).await;
 

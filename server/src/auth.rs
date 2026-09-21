@@ -126,12 +126,10 @@ pub struct ItemRow {
     pub cape_texture: Option<String>,
 }
 
-/// A learned skill; level and XP are retained only for legacy records.
+/// A permanently learned skill.
 #[derive(Debug, Clone)]
 pub struct SkillRow {
     pub skill_id: String,
-    pub level: u32,
-    pub xp: u64,
 }
 
 /// A ban in force on an account. `until_unix` is `None` for a permanent ban.
@@ -626,25 +624,20 @@ impl AuthService {
         Ok(())
     }
 
-    /// Add learned skills while preserving legacy XP and unknown skill rows.
+    /// Add learned skills without deleting unknown skill IDs.
     fn upsert_skills<'a>(
         conn: &Connection,
         skills: impl IntoIterator<Item = (i64, &'a [SkillRow])>,
     ) -> Result<(), rusqlite::Error> {
         let mut upsert = conn.prepare(
-            "INSERT INTO character_skills (character_id, skill_id, level, xp) \
-             VALUES (?1, ?2, ?3, ?4) \
+            "INSERT INTO character_skills (character_id, skill_id) \
+             VALUES (?1, ?2) \
              ON CONFLICT(character_id, skill_id) DO NOTHING",
         )?;
 
         for (character_id, rows) in skills {
             for row in rows {
-                upsert.execute(params![
-                    character_id,
-                    row.skill_id,
-                    row.level,
-                    row.xp as i64
-                ])?;
+                upsert.execute(params![character_id, row.skill_id])?;
             }
         }
         Ok(())
@@ -1131,17 +1124,26 @@ impl AuthService {
     }
 
     fn ensure_character_skills_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
-        conn.execute(
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "CREATE TABLE IF NOT EXISTS character_skills (
                 character_id INTEGER NOT NULL,
                 skill_id TEXT NOT NULL,
-                level INTEGER NOT NULL DEFAULT 0,
-                xp INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (character_id, skill_id),
                 FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
             )",
             [],
         )?;
+        let columns = Self::table_columns(&tx, "character_skills")?;
+        for column in ["level", "xp"] {
+            if columns.contains(column) {
+                tx.execute(
+                    &format!("ALTER TABLE character_skills DROP COLUMN {column}"),
+                    [],
+                )?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -2187,17 +2189,15 @@ impl AuthService {
         Ok(rows)
     }
 
-    /// Load all trained skills for a character. Missing rows mean level 0.
+    /// Load learned skills; an absent row means the skill is not learned.
     pub fn load_skills(&self, character_id: i64) -> Result<Vec<SkillRow>, AuthError> {
         let conn = self.open_connection()?;
-        let mut stmt = conn
-            .prepare("SELECT skill_id, level, xp FROM character_skills WHERE character_id = ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT skill_id FROM character_skills WHERE character_id = ?1")?;
         let rows = stmt
             .query_map(params![character_id], |row| {
                 Ok(SkillRow {
                     skill_id: row.get(0)?,
-                    level: row.get(1)?,
-                    xp: row.get::<_, i64>(2)? as u64,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -2855,10 +2855,8 @@ mod tests {
             )
             .unwrap();
 
-        // Fresh character: no rows.
         assert!(auth.load_skills(record.id).unwrap().is_empty());
 
-        // A row a "newer server" wrote must survive our saves (upsert, no delete).
         auth.save_batch(
             &[],
             &[],
@@ -2866,8 +2864,6 @@ mod tests {
                 record.id,
                 vec![SkillRow {
                     skill_id: "underwater_basketweaving".to_string(),
-                    level: 7,
-                    xp: 999,
                 }],
             )],
             &[],
@@ -2875,57 +2871,26 @@ mod tests {
         )
         .unwrap();
 
-        auth.save_batch(
-            &[],
-            &[],
-            &[(
-                record.id,
-                vec![SkillRow {
-                    skill_id: "fishing".to_string(),
-                    level: 2,
-                    xp: 500,
-                }],
-            )],
-            &[],
-            None,
-        )
-        .unwrap();
-
-        let mut rows = auth.load_skills(record.id).unwrap();
-        rows.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].skill_id, "fishing");
-        assert_eq!(rows[0].level, 2);
-        assert_eq!(rows[0].xp, 500);
-        assert_eq!(rows[1].skill_id, "underwater_basketweaving");
-        assert_eq!(rows[1].xp, 999);
-
-        // Saving learned status preserves legacy progress and unknown rows.
-        auth.save_batch(
-            &[],
-            &[],
-            &[(
-                record.id,
-                vec![SkillRow {
-                    skill_id: "fishing".to_string(),
-                    level: 0,
-                    xp: 0,
-                }],
-            )],
-            &[],
-            None,
-        )
-        .unwrap();
-        let rows = auth.load_skills(record.id).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(
-            rows.iter().find(|r| r.skill_id == "fishing").unwrap().xp,
-            500
-        );
-        assert_eq!(
-            rows.iter().find(|r| r.skill_id == "fishing").unwrap().level,
-            2
-        );
+        for _ in 0..2 {
+            auth.save_batch(
+                &[],
+                &[],
+                &[(
+                    record.id,
+                    vec![SkillRow {
+                        skill_id: "fishing".to_string(),
+                    }],
+                )],
+                &[],
+                None,
+            )
+            .unwrap();
+            let mut rows = auth.load_skills(record.id).unwrap();
+            rows.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].skill_id, "fishing");
+            assert_eq!(rows[1].skill_id, "underwater_basketweaving");
+        }
         let beginner = auth
             .create_character(
                 &account,
@@ -2943,8 +2908,6 @@ mod tests {
                 beginner.id,
                 vec![SkillRow {
                     skill_id: "fishing".into(),
-                    level: 0,
-                    xp: 0,
                 }],
             )],
             &[],
@@ -2954,7 +2917,81 @@ mod tests {
         let rows = auth.load_skills(beginner.id).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].skill_id, "fishing");
-        assert_eq!((rows[0].level, rows[0].xp), (0, 0));
+        let conn = auth.open_connection().unwrap();
+        assert_eq!(
+            AuthService::table_columns(&conn, "character_skills").unwrap(),
+            HashSet::from(["character_id".into(), "skill_id".into()])
+        );
+    }
+
+    #[test]
+    fn startup_removes_skill_progress_and_preserves_learned_skills() {
+        let db_path = crate::test_util::unique_temp_dir("skill_progress_migration").join("game.db");
+        drop(AuthService::new(db_path.clone()).unwrap());
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             ALTER TABLE character_skills ADD COLUMN level INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE character_skills ADD COLUMN xp INTEGER NOT NULL DEFAULT 0;
+             INSERT INTO accounts (player_name) VALUES ('skill_migration');
+             INSERT INTO characters (id, account_name, character_name, level, xp) VALUES
+                (1, 'skill_migration', 'Novice', 1, 0),
+                (2, 'skill_migration', 'Angler', 10, 1234),
+                (3, 'skill_migration', 'Master', 30, 50000);
+             INSERT INTO character_skills (character_id, skill_id, level, xp) VALUES
+                (1, 'fishing', 0, 0),
+                (2, 'fishing', 0, 10),
+                (3, 'fishing', 30, 945500),
+                (2, 'unknown_skill', 5, 999);",
+        )
+        .unwrap();
+
+        for _ in 0..2 {
+            let auth = AuthService::new(db_path.clone()).unwrap();
+            assert_eq!(
+                AuthService::table_columns(&conn, "character_skills").unwrap(),
+                HashSet::from(["character_id".into(), "skill_id".into()])
+            );
+            for character_id in 1..=3 {
+                let rows = auth.load_skills(character_id).unwrap();
+                assert!(crate::game_state::skills_from_rows(&rows)
+                    .has(onlinerpg_shared::skills::SkillId::Fishing));
+                assert_eq!(rows.len(), if character_id == 2 { 2 } else { 1 });
+            }
+            assert!(auth
+                .load_skills(2)
+                .unwrap()
+                .iter()
+                .any(|row| row.skill_id == "unknown_skill"));
+            assert_eq!(
+                conn.query_row("SELECT level, xp FROM characters WHERE id = 2", [], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+                })
+                .unwrap(),
+                (10, 1234)
+            );
+        }
+
+        assert!(conn
+            .execute(
+                "INSERT INTO character_skills (character_id, skill_id) VALUES (1, 'fishing')",
+                []
+            )
+            .is_err());
+        assert!(conn
+            .execute(
+                "INSERT INTO character_skills (character_id, skill_id) VALUES (99, 'fishing')",
+                []
+            )
+            .is_err());
+        conn.execute("DELETE FROM characters WHERE id = 2", [])
+            .unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM character_skills", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(remaining, 2);
     }
 
     /// EnterGame refuses the session when this load errs, so a missing table

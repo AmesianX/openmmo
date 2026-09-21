@@ -7,7 +7,7 @@ use super::GameState;
 use crate::auth::SkillRow;
 use crate::types::{PlayerId, ServerMessage};
 
-/// Load learned skills; unknown IDs and legacy XP stay untouched on disk.
+/// Load known skills; unknown IDs stay untouched on disk.
 pub(crate) fn skills_from_rows(rows: &[SkillRow]) -> Skills {
     let mut skills = Skills::default();
     for row in rows {
@@ -30,8 +30,6 @@ fn skills_to_rows(skills: &Skills) -> Vec<SkillRow> {
         .iter()
         .map(|id| SkillRow {
             skill_id: id.as_str().to_string(),
-            level: 0,
-            xp: 0,
         })
         .collect();
     rows.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));

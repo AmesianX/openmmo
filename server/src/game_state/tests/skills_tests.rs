@@ -26,8 +26,6 @@ async fn learning_notifies_once_and_saves_without_xp() {
     assert_eq!(dirty[0].0, 42);
     assert_eq!(dirty[0].1.len(), 1);
     assert_eq!(dirty[0].1[0].skill_id, "fishing");
-    assert_eq!(dirty[0].1[0].level, 0);
-    assert_eq!(dirty[0].1[0].xp, 0);
     assert!(game.collect_dirty_skill_states().await.1.is_empty());
     game.restore_dirty_skills(dirty_ids).await;
     assert_eq!(game.collect_dirty_skill_states().await.1.len(), 1);
@@ -48,32 +46,24 @@ async fn take_player_skills_snapshots_and_detaches() {
     assert_eq!(character_id, 7);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].skill_id, "fishing");
-    assert_eq!(rows[0].xp, 0);
-    assert_eq!(rows[0].level, 0);
     assert!(crate::game_state::skills::skills_from_rows(&rows).has(SkillId::Fishing));
     assert!(game.take_player_skills(&player).await.is_none());
     assert!(game.collect_dirty_skill_states().await.1.is_empty());
 }
 
 #[test]
-fn existing_fishing_records_count_as_learned_regardless_of_level() {
-    for (level, xp) in [(0, 0), (0, 10), (30, 945500)] {
-        let skills = crate::game_state::skills::skills_from_rows(&[
-            crate::auth::SkillRow {
-                skill_id: "fishing".into(),
-                level,
-                xp,
-            },
-            crate::auth::SkillRow {
-                skill_id: "unknown_skill".into(),
-                level: 5,
-                xp: 10,
-            },
-        ]);
-        assert!(skills.has(SkillId::Fishing));
-        assert_eq!(
-            serde_json::to_value(skills).unwrap(),
-            serde_json::json!({ "learned": ["fishing"] })
-        );
-    }
+fn stored_skill_ids_load_as_learned_and_ignore_unknown_ids() {
+    let skills = crate::game_state::skills::skills_from_rows(&[
+        crate::auth::SkillRow {
+            skill_id: "fishing".into(),
+        },
+        crate::auth::SkillRow {
+            skill_id: "unknown_skill".into(),
+        },
+    ]);
+    assert!(skills.has(SkillId::Fishing));
+    assert_eq!(
+        serde_json::to_value(skills).unwrap(),
+        serde_json::json!({ "learned": ["fishing"] })
+    );
 }

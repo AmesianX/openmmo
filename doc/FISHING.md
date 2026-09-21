@@ -78,7 +78,7 @@ broadcasts and answer with `FishingRespond`.
 - 에이전트는 5초마다 낚시 일정을 확인하며, 한 번 끝나면 최소 5초 쉬어 성공 연출이 끝난 뒤 재개한다. 캐스팅 응답은 최대 10초 기다리고, 서버가 거부하면 30초 뒤 재시도한다. 거래·전투·병문안 중이거나 낚싯대를 장착하지 않았을 때는 자동 캐스팅하지 않는다.
 - 토빈의 상점은 추후 구현하며, 낚싯대가 필요한 방문객에게는 현재 판매처인 리카를 안내한다.
 - 공식 NPC 토빈이 캐스팅할 때부터 포획을 마칠 때까지 **6m 이내**, 같은 층, 높이 차 3m 이내에서 살아 있는 상태로 관찰하면 **Fishing을 영구 습득**한다. 관찰에는 낚싯대나 비용이 필요 없다. 중간에 접근했거나 범위를 벗어나면 다음 캐스팅부터 다시 관찰한다. 취소·놓침에는 습득하지 않으며, 다른 NPC와 토빈을 사칭한 일반 플레이어는 가르칠 수 없다.
-- 습득 즉시 알림과 캐릭터 스킬 목록을 갱신하고 기존 스킬 저장 경로로 영구 보존한다. 반복 관찰로 보상을 주지 않는다. 신규 플레이어는 습득 후 캐스팅할 수 있고, 기존 Fishing 기록이 있는 캐릭터와 공식 NPC는 계속 낚시할 수 있다. 낚시 XP·레벨·어종별 레벨 제한을 제거했다. 기존 DB의 XP·레벨 값은 이력으로 보존하며 게임 판정과 UI에는 사용하지 않는다. 고급 낚시는 후속 작업이다.
+- 습득 즉시 알림과 캐릭터 스킬 목록을 갱신하고 기존 스킬 저장 경로로 영구 보존한다. 반복 관찰로 보상을 주지 않는다. 신규 플레이어는 습득 후 캐스팅할 수 있고, 기존 Fishing 기록이 있는 캐릭터와 공식 NPC는 계속 낚시할 수 있다. 낚시 XP·레벨·어종별 레벨 제한을 제거했다. 서버 시작 시 기존 DB의 스킬 XP·레벨 열도 제거하고 캐릭터 ID·스킬 ID만 보존한다. 캐릭터 자체의 XP·레벨은 유지한다. 고급 낚시는 후속 작업이다.
 
 ## The loop
 
@@ -218,10 +218,12 @@ Wait and fight tuning use the former level-10 baseline: 3.2–9.6 s waits,
 10% less pull than the former novice, and 10% faster reeling. Species weights
 use the same baseline with all five species and their trophies unlocked.
 
-Existing `character_skills` rows count as learned even at zero XP. Legacy
-level/XP columns and unknown skill rows remain unchanged in the database;
-new lessons insert a row with zero values. Runtime and protocol state carry
-only the learned skill IDs. Protocol v93 requires updated clients.
+The `character_skills` table stores only `character_id` and `skill_id`;
+a row means the skill is learned. Startup atomically removes the legacy
+`level` and `xp` columns while preserving every learned skill, including
+zero-XP records and unknown skill IDs. Character level and XP are unchanged.
+Repeated startup leaves the migrated schema intact. Runtime and protocol
+state carry only the learned skill IDs. Protocol v93 requires updated clients.
 
 ## Client
 
