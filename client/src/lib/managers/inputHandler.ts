@@ -181,6 +181,7 @@ export interface RaycastContext {
   /** Rod in the main hand and standing on castable ground (surface, not a
    *  dungeon or upper house floor) — water clicks become casts. */
   canCastFishing?: boolean
+  fishingTargeting?: boolean
   /** Baked water surface height at a world XZ (sea level where none). Lets a
    *  cast fire over rivers, whose beds sit above sea level, not just ocean. */
   waterSurfaceAt?: (x: number, z: number) => number
@@ -399,7 +400,7 @@ class InputHandler {
       -((event.clientY - rect.top) / rect.height) * 2 + 1
     )
     raycaster.setFromCamera(centerNDC, context.camera)
-    if (context.groundOnly)
+    if (context.groundOnly || context.fishingTargeting)
       return this.processGroundClick(event, context, raycaster)
 
     // Check intersection with monsters
@@ -711,6 +712,8 @@ class InputHandler {
           },
         }
       }
+      if (context.fishingTargeting && !context.groundOnly)
+        return { type: 'none' }
       return {
         type: 'move_to_ground',
         sprinting: sprintRequested(event.shiftKey),
@@ -722,6 +725,7 @@ class InputHandler {
       }
     }
 
+    if (context.fishingTargeting && !context.groundOnly) return { type: 'none' }
     this._fallbackGroundPlane.set(
       this._fallbackGroundNormal,
       -context.playerPosition.y

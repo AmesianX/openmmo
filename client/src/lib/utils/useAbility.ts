@@ -2,6 +2,7 @@ import { get } from 'svelte/store'
 import {
   AUSCULTATION,
   DOUBLE_SLASH,
+  FISHING,
   abilityEquipmentAllowed,
   abilityEquipmentNotMet,
   getAbility,
@@ -20,25 +21,50 @@ import {
 import { cancelInspection, queueInspection } from '../stores/inspectionStore'
 import { inventoryStore } from '../stores/inventoryStore'
 import { manaState } from '../stores/manaStore'
+import { skillsStore } from '../stores/skillsStore'
+import { currentDungeonDepth } from '../stores/dungeonStore'
+import { playerVisualFloorLevel } from '../stores/housingStore'
+import {
+  cancelFishingTargeting,
+  myFishing,
+  queueFishingTarget,
+} from '../stores/fishingStore'
 import { isMounted } from './mounts'
 
 export function useAbility(id: string) {
   const ability = getAbility(id)
   const player = get(gameStore).currentPlayer
-  if (!ability || !player || !isAbilityAvailable(id, player.characterClass))
+  if (
+    !ability ||
+    !player ||
+    !isAbilityAvailable(id, player.characterClass, get(skillsStore).learned)
+  )
     return
   if (id !== AUSCULTATION.id) cancelInspection()
+  if (id !== FISHING.id) cancelFishingTargeting()
   if (player.health <= 0) {
     reportSkillFailure('You cannot use skills while dead.')
     return
   }
-  if (isMounted(player)) {
+  if (isMounted(player) && !(id === FISHING.id && player.mount === 'rowboat')) {
     reportSkillFailure('You cannot use skills while mounted.')
     return
   }
   const { equipped } = get(inventoryStore)
   if (!abilityEquipmentAllowed(ability.id, equipped)) {
     reportSkillFailure(abilityEquipmentNotMet(id))
+    return
+  }
+  if (ability.id === FISHING.id) {
+    if (get(currentDungeonDepth) > 0 || get(playerVisualFloorLevel) !== 0) {
+      reportSkillFailure('You can only fish outdoors.')
+      return
+    }
+    if (get(myFishing).phase !== 'idle') {
+      reportSkillFailure('You are already fishing.')
+      return
+    }
+    queueFishingTarget()
     return
   }
   if (ability.manaCost > (get(manaState)?.mana ?? 0)) {

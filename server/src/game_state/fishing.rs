@@ -6,15 +6,15 @@
 
 use onlinerpg_shared::fishing::{
     fish_pull_ps, reel_speed_mps, stamina_drain_ps, stamina_max, FishState, FishingAction,
-    FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_SLACK_M, CATCH_XP_PER_RARITY_SQ, ESCAPE_XP,
-    EXHAUSTED_STEER_PER_TICK, FIGHT_TIMEOUT_MS, FISH_WANDER_RADIUS_M, FLOTSAM_SHARE_PCT,
-    GIVE_LINE_EXTRA_MPS, LATENCY_GRACE_MS, MAX_CAST_DISTANCE_METERS, MIN_FISHABLE_DEPTH_M,
-    MIN_FISH_DISTANCE_M, PANIC_BAND_M, RARITY_SKILL_BONUS_PCT, REST_MAX_MS, REST_MIN_MS,
-    RUN_MAX_MS, RUN_MAX_PER_RARITY_MS, RUN_MIN_MS, RUN_SPEED_BASE_MPS, RUN_SPEED_PER_RARITY_MPS,
-    SHORE_SAMPLE_STEP_M, STAMINA_DRAIN_MIN_TENSION, STAMINA_RECOVER_PS, TENSION_GIVE_RELIEF_PS,
-    TENSION_INITIAL, TENSION_MAX, TENSION_REEL_PS, TENSION_REST_DECAY_PS, TROPHY_FIGHT_TIMEOUT_MS,
-    TROPHY_HOOK_CHECK_MS, TROPHY_HOOK_SLIP_CHANCE, TROPHY_MIN_TENSION, TROPHY_ROLL_CHANCE_PCT,
-    TROPHY_TENSION_RATE, WAIT_MAX_MS, WAIT_MIN_MS, WATERLINE_MARGIN_M,
+    FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_SLACK_M, EXHAUSTED_STEER_PER_TICK,
+    FIGHT_TIMEOUT_MS, FISH_WANDER_RADIUS_M, FLOTSAM_SHARE_PCT, GIVE_LINE_EXTRA_MPS,
+    LATENCY_GRACE_MS, MAX_CAST_DISTANCE_METERS, MIN_FISHABLE_DEPTH_M, MIN_FISH_DISTANCE_M,
+    PANIC_BAND_M, REST_MAX_MS, REST_MIN_MS, RUN_MAX_MS, RUN_MAX_PER_RARITY_MS, RUN_MIN_MS,
+    RUN_SPEED_BASE_MPS, RUN_SPEED_PER_RARITY_MPS, SHORE_SAMPLE_STEP_M, STAMINA_DRAIN_MIN_TENSION,
+    STAMINA_RECOVER_PS, TENSION_GIVE_RELIEF_PS, TENSION_INITIAL, TENSION_MAX, TENSION_REEL_PS,
+    TENSION_REST_DECAY_PS, TROPHY_FIGHT_TIMEOUT_MS, TROPHY_HOOK_CHECK_MS, TROPHY_HOOK_SLIP_CHANCE,
+    TROPHY_MIN_TENSION, TROPHY_ROLL_CHANCE_PCT, TROPHY_TENSION_RATE, WAIT_MAX_MS, WAIT_MIN_MS,
+    WATERLINE_MARGIN_M,
 };
 use onlinerpg_shared::inventory::EquipSlot;
 use onlinerpg_shared::mount::MountKind;
@@ -26,7 +26,17 @@ use tokio::time::Instant;
 use tracing::warn;
 
 use super::GameState;
-use crate::types::{PlayerId, ServerMessage};
+use crate::types::{Player, PlayerId, ServerMessage};
+
+const OBSERVATION_RADIUS_M: f32 = 6.0;
+
+fn can_watch_fishing(observer: &Player, angler: &Player) -> bool {
+    !observer.is_official_npc
+        && observer.health > 0
+        && observer.floor_level == angler.floor_level
+        && (observer.position.y - angler.position.y).abs() <= 3.0
+        && observer.position.dist_xz_sq(&angler.position) <= OBSERVATION_RADIUS_M.powi(2)
+}
 
 /// Casts are only valid on the overworld floor — no fishing in dungeons or
 /// on house upper floors, whose "water" would be a terrain-height fiction.
@@ -103,7 +113,6 @@ pub(crate) fn step_fight(
     f: &mut FightState,
     dt: f32,
     rarity: u32,
-    skill_level: u32,
     roll: &mut impl FnMut() -> FightRolls,
 ) -> Option<FightOutcome> {
     f.elapsed_ms += dt * 1000.0;
@@ -145,7 +154,7 @@ pub(crate) fn step_fight(
 
     // Tension: the fish's pull vs the angler's stance.
     let mut tension_ps = match f.fish_state {
-        FishState::Running => fish_pull_ps(rarity, f.distance, skill_level),
+        FishState::Running => fish_pull_ps(rarity, f.distance),
         FishState::Resting | FishState::Exhausted => -TENSION_REST_DECAY_PS,
     };
     match f.stance {
@@ -185,7 +194,7 @@ pub(crate) fn step_fight(
         }
     }
     if f.stance == FishingAction::Reel {
-        speed -= reel_speed_mps(f.fish_state, skill_level);
+        speed -= reel_speed_mps(f.fish_state);
     }
     f.distance = (f.distance + speed * dt).max(f.min_distance);
 
@@ -305,6 +314,7 @@ pub(crate) struct RolledFish {
 }
 
 pub(crate) struct FishingSession {
+    pub observers: Vec<PlayerId>,
     /// Where the float currently sits — the cast point until the hook sets,
     /// then the fighting fish's live position.
     pub bobber: Position,
@@ -317,7 +327,6 @@ pub(crate) struct FishingSession {
     pub reel_floor_m: f32,
     pub phase: FishingPhase,
     pub rolled_fish: Option<RolledFish>,
-    pub skill_level: u32,
     /// Unique per cast. Tick-queued work re-verifies it, so a session that
     /// was cancelled and re-cast between scan and handler is never touched
     /// by the old session's due entries.
@@ -331,33 +340,18 @@ pub(crate) struct CatchCandidate {
     pub item_def_id: String,
     pub rarity: u32,
     pub catch_weight: u32,
-    pub min_fishing_level: u32,
 }
 
-/// Catch weights for a fishing level. Two rules, both table-wide:
-///
-/// * a fish's weight grows `RARITY_SKILL_BONUS_PCT` per level per rarity
-///   tier — multiplicative, so a legend can never overtake a common;
-/// * flotsam (rarity 0) holds exactly `FLOTSAM_SHARE_PCT` of the table at
-///   every level, instead of thinning out as the fish pool inflates.
-///
-/// Locked species (`min_fishing_level` above the angler's) weigh nothing;
-/// the fish pool's fixed share redistributes across whatever is unlocked.
-pub(crate) fn effective_weights(candidates: &[CatchCandidate], skill_level: u32) -> Vec<u64> {
-    let raw: Vec<u64> = candidates
+/// Keep flotsam's fixed share while preserving species catch weights.
+pub(crate) fn effective_weights(candidates: &[CatchCandidate]) -> Vec<u64> {
+    let mut weights: Vec<u64> = candidates
         .iter()
-        .map(|c| {
-            if skill_level < c.min_fishing_level {
-                return 0;
-            }
-            let growth =
-                100 + RARITY_SKILL_BONUS_PCT * u64::from(skill_level) * u64::from(c.rarity);
-            u64::from(c.catch_weight) * growth
-        })
+        .map(|c| u64::from(c.catch_weight))
         .collect();
 
     let pool = |fish: bool| -> u64 {
-        raw.iter()
+        weights
+            .iter()
             .zip(candidates)
             .filter(|(_, c)| (c.rarity >= 1) == fish)
             .map(|(w, _)| *w)
@@ -366,21 +360,18 @@ pub(crate) fn effective_weights(candidates: &[CatchCandidate], skill_level: u32)
     let (fish_total, flotsam_total) = (pool(true), pool(false));
     // A table of only fish or only flotsam has no split to hold; draw it raw.
     if fish_total == 0 || flotsam_total == 0 {
-        return raw;
+        return weights;
     }
 
-    // Cross-multiply so the two pools land at exactly (100 - S) : S. Scaling
-    // each side by the other's total keeps the share exact in integers.
-    raw.iter()
-        .zip(candidates)
-        .map(|(w, c)| {
-            if c.rarity >= 1 {
-                w * flotsam_total * (100 - FLOTSAM_SHARE_PCT)
-            } else {
-                w * fish_total * FLOTSAM_SHARE_PCT
-            }
-        })
-        .collect()
+    // Cross-multiply pool totals to preserve exact integer shares.
+    for (weight, candidate) in weights.iter_mut().zip(candidates) {
+        *weight *= if candidate.rarity >= 1 {
+            flotsam_total * (100 - FLOTSAM_SHARE_PCT)
+        } else {
+            fish_total * FLOTSAM_SHARE_PCT
+        };
+    }
+    weights
 }
 
 /// Weighted pick over the catch table. `roll` is a uniform draw in
@@ -395,12 +386,8 @@ pub(crate) fn pick_catch(weights: &[u64], mut roll: u64) -> Option<usize> {
     None
 }
 
-/// Bite wait for a given skill level: uniform in the shared range, shortened
-/// 2% per level, floored at half the range minimum.
-pub(crate) fn roll_wait_ms(skill_level: u32, rng: &mut impl Rng) -> u64 {
-    let base = rng.gen_range(u64::from(WAIT_MIN_MS)..=u64::from(WAIT_MAX_MS));
-    let shortened = base * u64::from(100u32.saturating_sub(skill_level * 2)) / 100;
-    shortened.max(u64::from(WAIT_MIN_MS) / 2)
+pub(crate) fn roll_wait_ms(rng: &mut impl Rng) -> u64 {
+    rng.gen_range(u64::from(WAIT_MIN_MS)..=u64::from(WAIT_MAX_MS))
 }
 
 impl GameState {
@@ -413,12 +400,19 @@ impl GameState {
             return;
         }
 
-        let (player_pos, player_rotation, player_floor, alive, mount) = {
+        let (player_pos, player_rotation, player_floor, alive, mount, official_npc) = {
             let players = self.players.read().await;
             let Some(p) = players.get(player_id) else {
                 return;
             };
-            (p.position, p.rotation, p.floor_level, p.health > 0, p.mount)
+            (
+                p.position,
+                p.rotation,
+                p.floor_level,
+                p.health > 0,
+                p.mount,
+                p.is_official_npc,
+            )
         };
         if !alive {
             self.send_fishing_error(player_id, "You cannot fish while defeated.")
@@ -434,6 +428,15 @@ impl GameState {
         if !self.main_hand_is_rod(player_id).await {
             self.send_fishing_error(player_id, "You need a fishing rod in your main hand.")
                 .await;
+            return;
+        }
+
+        if !official_npc && !self.has_skill(player_id, SkillId::Fishing).await {
+            self.send_fishing_error(
+                player_id,
+                "Watch Tobin fish from casting to catching nearby to learn Fishing first.",
+            )
+            .await;
             return;
         }
 
@@ -485,7 +488,6 @@ impl GameState {
         // handler — the tick stays IO-free.
         let reel_floor_m = self.measure_reel_floor(&player_pos, wx, target.z).await;
 
-        let skill_level = self.skill_level(player_id, SkillId::Fishing).await;
         // The bobber floats on the actual water surface — sea level over the
         // ocean, but the carved channel height over a river.
         let bobber = Position {
@@ -493,11 +495,23 @@ impl GameState {
             y: water_surface,
             z: target.z,
         };
+        let observers = {
+            let players = self.players.read().await;
+            match players.get(player_id) {
+                Some(angler) if angler.is_official_npc && angler.name == "Tobin" => players
+                    .iter()
+                    .filter(|(_, observer)| can_watch_fishing(observer, angler))
+                    .map(|(id, _)| *id)
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
         {
             let mut sessions = self.fishing_sessions.write().await;
             sessions.insert(
                 *player_id,
                 FishingSession {
+                    observers,
                     bobber,
                     cast_point: bobber,
                     reel_floor_m,
@@ -505,7 +519,6 @@ impl GameState {
                         until: Instant::now() + Duration::from_millis(u64::from(CAST_MS)),
                     },
                     rolled_fish: None,
-                    skill_level,
                     session_id: self
                         .next_fishing_session
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -556,22 +569,20 @@ impl GameState {
                 // consequences below.
                 _ if action == FishingAction::Hold => return,
                 // Yanking the rod before the bite scares the fish off.
-                FishingPhase::Casting { .. } | FishingPhase::Waiting { .. } => {
-                    Verdict::Escaped { xp: 0 }
-                }
+                FishingPhase::Casting { .. } | FishingPhase::Waiting { .. } => Verdict::Escaped,
                 FishingPhase::Bite { since } => {
                     let deadline = *since
                         + Duration::from_millis(u64::from(BITE_WINDOW_MS + LATENCY_GRACE_MS));
                     if Instant::now() > deadline {
                         // Too late — the tick will call it escaped; treat the
                         // stale response the same way rather than racing it.
-                        Verdict::Escaped { xp: ESCAPE_XP }
+                        Verdict::Escaped
                     } else if action == FishingAction::Hook {
                         Verdict::Hooked
                     } else {
                         // Reeling or giving line before the hook is set:
                         // the fish spits the bait.
-                        Verdict::Escaped { xp: 0 }
+                        Verdict::Escaped
                     }
                 }
             }
@@ -579,17 +590,15 @@ impl GameState {
 
         match verdict {
             Verdict::Hooked => self.begin_fight(player_id).await,
-            Verdict::Escaped { xp } => {
-                self.end_fishing(player_id, FishingOutcome::Escaped, xp)
-                    .await;
+            Verdict::Escaped => {
+                self.end_fishing(player_id, FishingOutcome::Escaped).await;
             }
         }
     }
 
     /// Deliberate reel-in (`ClientMessage::FishingStop`).
     pub async fn stop_fishing(&self, player_id: &PlayerId) {
-        self.end_fishing(player_id, FishingOutcome::Aborted, 0)
-            .await;
+        self.end_fishing(player_id, FishingOutcome::Aborted).await;
     }
 
     /// Anything that breaks concentration — movement, combat, disconnect —
@@ -600,8 +609,7 @@ impl GameState {
             return;
         }
         if self.fishing_sessions.read().await.contains_key(player_id) {
-            self.end_fishing(player_id, FishingOutcome::Aborted, 0)
-                .await;
+            self.end_fishing(player_id, FishingOutcome::Aborted).await;
         }
     }
 
@@ -702,31 +710,36 @@ impl GameState {
         // beats fire every tick for every fight, so they batch separately
         // under a single lock acquisition; the rest are rare transitions.
         enum Due {
-            BobberLanded(PlayerId, u64, u32),
-            Bite(PlayerId, u64, u32),
+            BobberLanded(PlayerId, u64),
+            Bite(PlayerId, u64),
             Expired(PlayerId, u64),
             Aborted(PlayerId),
         }
         let mut due = Vec::new();
         let mut fights: Vec<(PlayerId, u64, Position)> = Vec::new();
         {
-            let sessions = self.fishing_sessions.read().await;
+            let mut sessions = self.fishing_sessions.write().await;
             if sessions.is_empty() {
                 return;
             }
             let players = self.players.read().await;
-            for (player_id, session) in sessions.iter() {
+            for (player_id, session) in sessions.iter_mut() {
                 let Some(player) = players.get(player_id).filter(|p| p.health > 0) else {
                     due.push(Due::Aborted(*player_id));
                     continue;
                 };
                 let sid = session.session_id;
+                session.observers.retain(|id| {
+                    players
+                        .get(id)
+                        .is_some_and(|observer| can_watch_fishing(observer, player))
+                });
                 match &session.phase {
                     FishingPhase::Casting { until } if now >= *until => {
-                        due.push(Due::BobberLanded(*player_id, sid, session.skill_level));
+                        due.push(Due::BobberLanded(*player_id, sid));
                     }
                     FishingPhase::Waiting { bite_at } if now >= *bite_at => {
-                        due.push(Due::Bite(*player_id, sid, session.skill_level));
+                        due.push(Due::Bite(*player_id, sid));
                     }
                     FishingPhase::Bite { since }
                         if now
@@ -751,13 +764,12 @@ impl GameState {
         for entry in due {
             match entry {
                 Due::Aborted(player_id) => {
-                    self.end_fishing(&player_id, FishingOutcome::Aborted, 0)
-                        .await;
+                    self.end_fishing(&player_id, FishingOutcome::Aborted).await;
                 }
-                Due::BobberLanded(player_id, sid, skill_level) => {
+                Due::BobberLanded(player_id, sid) => {
                     // rand's thread_rng is !Send: keep it inside an
                     // await-free block.
-                    let wait_ms = roll_wait_ms(skill_level, &mut rand::thread_rng());
+                    let wait_ms = roll_wait_ms(&mut rand::thread_rng());
                     let mut sessions = self.fishing_sessions.write().await;
                     if let Some(session) =
                         sessions.get_mut(&player_id).filter(|s| s.session_id == sid)
@@ -767,8 +779,8 @@ impl GameState {
                         };
                     }
                 }
-                Due::Bite(player_id, sid, skill_level) => {
-                    let rolled = self.roll_fish(skill_level);
+                Due::Bite(player_id, sid) => {
+                    let rolled = self.roll_fish();
                     let bobber = {
                         let mut sessions = self.fishing_sessions.write().await;
                         let Some(session) =
@@ -796,13 +808,13 @@ impl GameState {
                             .await;
                         }
                         None => {
-                            self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped, 0)
+                            self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped)
                                 .await;
                         }
                     }
                 }
                 Due::Expired(player_id, sid) => {
-                    self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped, ESCAPE_XP)
+                    self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped)
                         .await;
                 }
             }
@@ -831,7 +843,6 @@ impl GameState {
                     continue;
                 };
                 let rarity = rarity_of(&session.rolled_fish);
-                let skill = session.skill_level;
                 let cast = session.cast_point;
                 let FishingPhase::Fight { state, last_tick } = &mut session.phase else {
                     continue;
@@ -843,19 +854,17 @@ impl GameState {
                     .as_secs_f32()
                     .min(1.0);
                 *last_tick = now;
-                let outcome = step_fight(state, dt, rarity, skill, &mut || {
-                    roll_fight(rarity, &mut rng)
-                })
-                .or_else(|| {
-                    step_hook_slip(state, dt, &mut || {
-                        #[cfg(test)]
-                        {
-                            *self.fishing_hook_roll.lock().unwrap()
-                        }
-                        #[cfg(not(test))]
-                        rng.gen::<f32>()
-                    })
-                });
+                let outcome = step_fight(state, dt, rarity, &mut || roll_fight(rarity, &mut rng))
+                    .or_else(|| {
+                        step_hook_slip(state, dt, &mut || {
+                            #[cfg(test)]
+                            {
+                                *self.fishing_hook_roll.lock().unwrap()
+                            }
+                            #[cfg(not(test))]
+                            rng.gen::<f32>()
+                        })
+                    });
                 // The exhausted reel-in steers home along the cast ray,
                 // whose waterline the session measured.
                 let steer = if state.fish_state == FishState::Exhausted {
@@ -889,7 +898,7 @@ impl GameState {
                 After::Beat(bobber, msg) => self.broadcast_fishing(&bobber, *msg).await,
                 After::Landed => self.finish_fishing_caught(&player_id, sid, auth).await,
                 After::Escaped => {
-                    self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped, ESCAPE_XP)
+                    self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped)
                         .await;
                 }
             }
@@ -898,12 +907,12 @@ impl GameState {
 
     /// Roll species + size + trophy for a bite, from the item-def catch
     /// table (`category == "fish"`, weighted by `catchWeight`).
-    fn roll_fish(&self, skill_level: u32) -> Option<RolledFish> {
+    fn roll_fish(&self) -> Option<RolledFish> {
         let candidates = self.item_defs.catch_table();
         if candidates.is_empty() {
             return None;
         }
-        let weights = effective_weights(candidates, skill_level);
+        let weights = effective_weights(candidates);
         let total: u64 = weights.iter().sum();
         // All-zero weights (data-driven) would panic the gen_range below.
         if total == 0 {
@@ -1013,10 +1022,7 @@ impl GameState {
             return;
         };
 
-        // Every catch — fish, junk, and coin pouches alike — lands in the
-        // bag; a pouch is a sealed prize the player opens from the bag
-        // (`use_item`) for its copper. Junk is rarityTier 0, so the XP
-        // formula below grants nothing for it naturally.
+        // Fish, junk, and sealed coin pouches all go into the bag.
         let caught_id = if fish.trophy {
             format!("trophy_{}", fish.item_def_id)
         } else {
@@ -1025,8 +1031,6 @@ impl GameState {
         self.award_item(player_id, &caught_id).await;
         self.grant_fishing_catch_title(player_id, &fish.item_def_id, auth)
             .await;
-        let xp = CATCH_XP_PER_RARITY_SQ * u64::from(fish.rarity) * u64::from(fish.rarity);
-        self.add_skill_xp(player_id, SkillId::Fishing, xp).await;
         self.end_fishing(
             player_id,
             FishingOutcome::Caught {
@@ -1034,17 +1038,12 @@ impl GameState {
                 size_cm: fish.size_cm,
                 trophy: fish.trophy,
             },
-            0,
         )
         .await;
     }
 
-    /// Remove the session (if any) and broadcast how it ended. `escape_xp`
-    /// covers the hooked-but-lost consolation; catches grant theirs before
-    /// calling in.
-    async fn end_fishing(&self, player_id: &PlayerId, outcome: FishingOutcome, escape_xp: u64) {
-        self.end_fishing_if(player_id, None, outcome, escape_xp)
-            .await
+    async fn end_fishing(&self, player_id: &PlayerId, outcome: FishingOutcome) {
+        self.end_fishing_if(player_id, None, outcome).await
     }
 
     /// `expected_session` guards tick-driven endings: a session cancelled and
@@ -1054,7 +1053,6 @@ impl GameState {
         player_id: &PlayerId,
         expected_session: Option<u64>,
         outcome: FishingOutcome,
-        escape_xp: u64,
     ) {
         let session = {
             let mut sessions = self.fishing_sessions.write().await;
@@ -1072,9 +1070,32 @@ impl GameState {
         };
         self.fishing_active
             .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        if escape_xp > 0 {
-            self.add_skill_xp(player_id, SkillId::Fishing, escape_xp)
-                .await;
+        if matches!(outcome, FishingOutcome::Caught { .. }) {
+            let observers = {
+                let players = self.players.read().await;
+                session
+                    .observers
+                    .into_iter()
+                    .filter(|id| {
+                        players.get(player_id).is_some_and(|angler| {
+                            angler.is_official_npc
+                                && angler.name == "Tobin"
+                                && angler.health > 0
+                                && players
+                                    .get(id)
+                                    .is_some_and(|observer| can_watch_fishing(observer, angler))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+            for observer in observers {
+                if self.learn_skill(&observer, SkillId::Fishing).await {
+                    self.send_system_message(
+                        &observer,
+                        "You learned Fishing by watching Tobin! Equip a fishing rod and cast into water.",
+                    ).await;
+                }
+            }
         }
         self.broadcast_fishing(
             &session.bobber,
@@ -1103,7 +1124,7 @@ impl GameState {
 
 enum Verdict {
     Hooked,
-    Escaped { xp: u64 },
+    Escaped,
 }
 
 fn rarity_of(rolled: &Option<RolledFish>) -> u32 {
@@ -1114,7 +1135,6 @@ fn rarity_of(rolled: &Option<RolledFish>) -> u32 {
 mod tests {
     use super::*;
     use onlinerpg_shared::fishing::auto_stance;
-    use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
 
     /// Fixed rolls make the pure fight step fully deterministic.
     const ROLLS: FightRolls = FightRolls {
@@ -1145,12 +1165,11 @@ mod tests {
     fn run_fight(
         f: &mut FightState,
         rarity: u32,
-        skill: u32,
         stance_for: impl Fn(&FightState) -> FishingAction,
     ) -> (FightOutcome, u32) {
         for tick in 0..1_000 {
             f.stance = stance_for(f);
-            if let Some(outcome) = step_fight(f, 0.25, rarity, skill, &mut || ROLLS) {
+            if let Some(outcome) = step_fight(f, 0.25, rarity, &mut || ROLLS) {
                 return (outcome, tick);
             }
         }
@@ -1160,7 +1179,7 @@ mod tests {
     #[test]
     fn reel_only_play_snaps_the_line() {
         let mut f = fresh_fight(1);
-        let (outcome, ticks) = run_fight(&mut f, 1, 0, |_| FishingAction::Reel);
+        let (outcome, ticks) = run_fight(&mut f, 1, |_| FishingAction::Reel);
         assert_eq!(outcome, FightOutcome::Snapped);
         assert!(ticks < 60, "cranking against a running fish snaps fast");
     }
@@ -1168,7 +1187,7 @@ mod tests {
     #[test]
     fn slack_line_stalling_never_tires_the_fish_and_times_out() {
         let mut f = fresh_fight(1);
-        let (outcome, _) = run_fight(&mut f, 1, 0, |_| FishingAction::GiveLine);
+        let (outcome, _) = run_fight(&mut f, 1, |_| FishingAction::GiveLine);
         assert_eq!(outcome, FightOutcome::ThrewHook);
         assert!(
             f.stamina > stamina_max(1) * 0.8,
@@ -1180,7 +1199,7 @@ mod tests {
     #[test]
     fn ignoring_the_rod_escapes_one_way_or_another() {
         let mut f = fresh_fight(3);
-        let (outcome, _) = run_fight(&mut f, 3, 0, |_| FishingAction::Hold);
+        let (outcome, _) = run_fight(&mut f, 3, |_| FishingAction::Hold);
         assert!(
             matches!(outcome, FightOutcome::Snapped | FightOutcome::ThrewHook),
             "hands-off play must never land a fish, got {outcome:?}"
@@ -1190,7 +1209,7 @@ mod tests {
     #[test]
     fn managed_tension_exhausts_and_lands_even_a_legend() {
         let mut f = fresh_fight(5);
-        let (outcome, ticks) = run_fight(&mut f, 5, 0, |f| {
+        let (outcome, ticks) = run_fight(&mut f, 5, |f| {
             auto_stance(f.fish_state, f.tension.round() as u32, f.trophy)
         });
         assert_eq!(outcome, FightOutcome::Landed);
@@ -1200,7 +1219,7 @@ mod tests {
         );
         // And the same policy handles a common fish faster.
         let mut c = fresh_fight(1);
-        let (outcome, common_ticks) = run_fight(&mut c, 1, 0, |f| {
+        let (outcome, common_ticks) = run_fight(&mut c, 1, |f| {
             auto_stance(f.fish_state, f.tension.round() as u32, f.trophy)
         });
         assert_eq!(outcome, FightOutcome::Landed);
@@ -1218,7 +1237,7 @@ mod tests {
         for rarity in [1u32, 3, 5] {
             for rtt_ms in [0u64, 50, 120] {
                 let landed = (0..FIGHTS)
-                    .filter(|i| lagged_fight_lands(rarity, rtt_ms, u64::from(*i), false, 0))
+                    .filter(|i| lagged_fight_lands(rarity, rtt_ms, u64::from(*i), false))
                     .count() as u32;
                 let floor = if rarity == 5 { FIGHTS * 9 / 10 } else { FIGHTS };
                 assert!(
@@ -1232,7 +1251,7 @@ mod tests {
     /// One fight played by `auto_stance` reacting `STANCE_REACTION_MS + rtt`
     /// late, one answer in flight at a time. Seeded per fight so the whole
     /// sweep is deterministic.
-    fn lagged_fight_lands(rarity: u32, rtt_ms: u64, seed: u64, trophy: bool, skill: u32) -> bool {
+    fn lagged_fight_lands(rarity: u32, rtt_ms: u64, seed: u64, trophy: bool) -> bool {
         use onlinerpg_shared::fishing::STANCE_REACTION_MS;
         use rand::SeedableRng;
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
@@ -1255,9 +1274,8 @@ mod tests {
                     }
                 }
             }
-            if let Some(o) = step_fight(&mut f, 0.25, rarity, skill, &mut || {
-                roll_fight(rarity, &mut rng)
-            }) {
+            if let Some(o) = step_fight(&mut f, 0.25, rarity, &mut || roll_fight(rarity, &mut rng))
+            {
                 if trophy {
                     assert_ne!(o, FightOutcome::Snapped, "the policy must control tension");
                 }
@@ -1323,15 +1341,15 @@ mod tests {
         f.trophy = true;
         f.tension = 60.0;
         let full = f.stamina;
-        step_fight(&mut f, 0.25, 3, 0, &mut || ROLLS);
+        step_fight(&mut f, 0.25, 3, &mut || ROLLS);
         assert_eq!(f.stamina, full);
         f.tension = TROPHY_MIN_TENSION;
-        step_fight(&mut f, 0.25, 3, 0, &mut || ROLLS);
+        step_fight(&mut f, 0.25, 3, &mut || ROLLS);
         assert!(f.stamina < full);
         f.fish_state = FishState::Resting;
         f.state_ms_left = 1_000.0;
         let remaining = f.stamina;
-        step_fight(&mut f, 0.25, 3, 0, &mut || ROLLS);
+        step_fight(&mut f, 0.25, 3, &mut || ROLLS);
         assert_eq!(f.stamina, remaining);
     }
 
@@ -1342,9 +1360,9 @@ mod tests {
             f.trophy = trophy;
             f.elapsed_ms = deadline - 500.0;
             f.stance = FishingAction::GiveLine;
-            assert_eq!(step_fight(&mut f, 0.25, 3, 0, &mut || ROLLS), None);
+            assert_eq!(step_fight(&mut f, 0.25, 3, &mut || ROLLS), None);
             assert_eq!(
-                step_fight(&mut f, 0.25, 3, 0, &mut || ROLLS),
+                step_fight(&mut f, 0.25, 3, &mut || ROLLS),
                 Some(FightOutcome::ThrewHook)
             );
         }
@@ -1352,17 +1370,15 @@ mod tests {
 
     #[test]
     fn trophy_policy_survives_human_reaction_delay() {
-        for skill in [0, SKILL_LEVEL_CAP] {
-            for rarity in 1..=5 {
-                for rtt in [0, 50, 120] {
-                    let landed = (0..200)
-                        .filter(|seed| lagged_fight_lands(rarity, rtt, *seed, true, skill))
-                        .count();
-                    assert!(
-                        landed >= 150,
-                        "skill {skill}, trophy rarity {rarity}, rtt {rtt}: {landed}/200 landed"
-                    );
-                }
+        for rarity in 1..=5 {
+            for rtt in [0, 50, 120] {
+                let landed = (0..200)
+                    .filter(|seed| lagged_fight_lands(rarity, rtt, *seed, true))
+                    .count();
+                assert!(
+                    landed >= 150,
+                    "trophy rarity {rarity}, rtt {rtt}: {landed}/200 landed"
+                );
             }
         }
     }
@@ -1373,7 +1389,7 @@ mod tests {
         f.fish_state = FishState::Resting;
         f.distance = 1.0;
         f.stance = FishingAction::Reel;
-        let outcome = step_fight(&mut f, 0.25, 2, 0, &mut || ROLLS);
+        let outcome = step_fight(&mut f, 0.25, 2, &mut || ROLLS);
         assert_eq!(outcome, None, "a fish with stamina left is never landed");
         assert_eq!(f.fish_state, FishState::Running, "it panics into a run");
     }
@@ -1411,7 +1427,7 @@ mod tests {
         // reeled past it, and landing happens right at that floor.
         let mut f = fresh_fight(1);
         f.min_distance = 4.0;
-        let (outcome, _) = run_fight(&mut f, 1, 0, |f| {
+        let (outcome, _) = run_fight(&mut f, 1, |f| {
             auto_stance(f.fish_state, f.tension.round() as u32, f.trophy)
         });
         assert_eq!(outcome, FightOutcome::Landed);
@@ -1450,69 +1466,29 @@ mod tests {
         );
     }
 
-    fn candidate(
-        id: &str,
-        rarity: u32,
-        catch_weight: u32,
-        min_fishing_level: u32,
-    ) -> CatchCandidate {
+    fn candidate(id: &str, rarity: u32, catch_weight: u32) -> CatchCandidate {
         CatchCandidate {
             item_def_id: id.into(),
             rarity,
             catch_weight,
-            min_fishing_level,
-        }
-    }
-
-    /// Fish-only pair, so the flotsam split stays out of the way.
-    fn table() -> Vec<CatchCandidate> {
-        vec![
-            candidate("raw_minnow", 1, 50, 0),
-            candidate("golden_sturgeon", 5, 1, 0),
-        ]
-    }
-
-    #[test]
-    fn weighting_scales_rarity_with_skill() {
-        let t = table();
-        assert_eq!(effective_weights(&t, 0), vec![5000, 100]);
-        // At the cap the legend grows 5x faster than the common (+450% vs
-        // +90%) but starts 50x behind, so it can never overtake it.
-        // minnow 50x190%, sturgeon 1x550%.
-        assert_eq!(effective_weights(&t, 30), vec![9500, 550]);
-    }
-
-    #[test]
-    fn rare_fish_are_locked_until_their_level() {
-        let t = vec![
-            candidate("raw_minnow", 1, 50, 0),
-            candidate("river_salmon", 4, 5, 5),
-        ];
-        assert_eq!(effective_weights(&t, 4)[1], 0, "locked below its level");
-        assert!(effective_weights(&t, 5)[1] > 0, "available at its level");
-    }
-
-    #[test]
-    fn flotsam_holds_a_fixed_share_at_every_level() {
-        let t = vec![
-            candidate("raw_minnow", 1, 50, 0),
-            candidate("old_boot", 0, 6, 0),
-        ];
-        for level in 0..=SKILL_LEVEL_CAP {
-            let w = effective_weights(&t, level);
-            let total: u64 = w.iter().sum();
-            assert_eq!(
-                w[1] * 100,
-                total * FLOTSAM_SHARE_PCT,
-                "flotsam share drifted at level {level}"
-            );
         }
     }
 
     #[test]
-    fn a_table_without_flotsam_still_draws() {
-        let w = effective_weights(&table(), 10);
-        assert!(w.iter().sum::<u64>() > 0);
+    fn species_keep_their_relative_weights() {
+        let table = vec![
+            candidate("raw_minnow", 1, 130),
+            candidate("golden_sturgeon", 5, 5),
+        ];
+        assert_eq!(effective_weights(&table), vec![130, 5]);
+    }
+
+    #[test]
+    fn flotsam_holds_a_fixed_share() {
+        let table = vec![candidate("raw_minnow", 1, 130), candidate("old_boot", 0, 6)];
+        let weights = effective_weights(&table);
+        let total: u64 = weights.iter().sum();
+        assert_eq!(weights[1] * 100, total * FLOTSAM_SHARE_PCT);
     }
 
     #[test]
@@ -1526,15 +1502,11 @@ mod tests {
     }
 
     #[test]
-    fn wait_shortens_with_skill_but_keeps_a_floor() {
+    fn wait_stays_in_the_shared_range() {
         let mut rng = rand::thread_rng();
         for _ in 0..200 {
-            let novice = roll_wait_ms(0, &mut rng);
-            assert!((u64::from(WAIT_MIN_MS)..=u64::from(WAIT_MAX_MS)).contains(&novice));
-            let master = roll_wait_ms(20, &mut rng);
-            // 40% shorter, never below the floor.
-            assert!(master >= u64::from(WAIT_MIN_MS) / 2);
-            assert!(master <= u64::from(WAIT_MAX_MS) * 60 / 100);
+            let wait = roll_wait_ms(&mut rng);
+            assert!((u64::from(WAIT_MIN_MS)..=u64::from(WAIT_MAX_MS)).contains(&wait));
         }
     }
 }

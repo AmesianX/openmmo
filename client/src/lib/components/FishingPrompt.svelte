@@ -1,16 +1,59 @@
 <script lang="ts">
-  // Local player's fishing HUD. Bite: SPACE, a canvas click, or a wheel
-  // flick hooks. Fight: hold a stance — REEL (SPACE, wheel down, hold
-  // button) vs GIVE LINE (S, wheel up, hold button) — and read the tension
-  // gauge; the server simulates the fish and judges everything. ESC reels
-  // in/gives up. (Camera wheel-zoom is disabled by GameScene's OrbitControls
-  // gating during bite/fight, so the wheel is ours here.)
-  import { myFishing } from '../stores/fishingStore'
+  import {
+    myFishing,
+    fishingTargeting,
+    cancelFishingTargeting,
+  } from '../stores/fishingStore'
+  import { FISHING, abilityEquipmentAllowed } from '../data/abilities'
+  import { gameStore } from '../stores/gameStore'
+  import { inventoryStore } from '../stores/inventoryStore'
+  import { skillsStore } from '../stores/skillsStore'
+  import { currentDungeonDepth } from '../stores/dungeonStore'
+  import { playerVisualFloorLevel } from '../stores/housingStore'
+  import {
+    teleportLoading,
+    mapEditorMode,
+    housingEditorMode,
+  } from '../stores/debugStore'
+  import { landscapingMode } from '../stores/landscapingStore'
+  import { estateFurnitureEditorActive } from '../stores/estateFurniturePlacementStore'
+  import { mountOverlay } from '../stores/overlayStack'
+  import SkillTargetHint from './SkillTargetHint.svelte'
   import type { FishingAction } from '../network/networkTypes'
   import { networkManager } from '../network/socket'
   import { playFishingSound } from '../managers/sfxManager'
   import { isTypingTarget } from '../utils/dom'
-  import { fishing_trophy_min_tension } from '../wasm/onlinerpg_shared'
+  import {
+    fishing_trophy_min_tension,
+    max_cast_distance_m,
+  } from '../wasm/onlinerpg_shared'
+
+  $effect(() => {
+    if (!$fishingTargeting) return
+    const player = $gameStore.currentPlayer
+    if (
+      !player ||
+      !$gameStore.isConnected ||
+      player.health <= 0 ||
+      (player.mount != null && player.mount !== 'rowboat') ||
+      !$skillsStore.learned.includes(FISHING.id) ||
+      !abilityEquipmentAllowed(FISHING.id, $inventoryStore.equipped) ||
+      $myFishing.phase !== 'idle' ||
+      $currentDungeonDepth > 0 ||
+      $playerVisualFloorLevel !== 0 ||
+      $teleportLoading ||
+      $mapEditorMode ||
+      $housingEditorMode ||
+      $landscapingMode ||
+      $estateFurnitureEditorActive
+    )
+      cancelFishingTargeting()
+  })
+
+  $effect(() => {
+    if ($fishingTargeting)
+      return mountOverlay('fishingTarget', cancelFishingTargeting)
+  })
 
   type FightStance = Exclude<FishingAction, 'hook'>
 
@@ -132,6 +175,14 @@
 </script>
 
 <svelte:window onkeydown={onKeydown} onkeyup={onKeyup} />
+
+{#if $fishingTargeting}
+  <SkillTargetHint
+    icon={FISHING.icon}
+    message={`Left-click water within ${max_cast_distance_m()} m. Esc to cancel.`}
+    onCancel={cancelFishingTargeting}
+  />
+{/if}
 
 {#if $myFishing.phase === 'bite'}
   <button

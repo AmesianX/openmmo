@@ -181,7 +181,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v90: movement samples and acknowledged authoritative movement resync.
 /// v91: targeted Auscultation and private inspection results.
 /// v92: FishingFight carries the angler's stance for reel animation.
-pub const PROTOCOL_VERSION: u32 = 92;
+/// v93: permanent learned skills replace skill XP and levels.
+pub const PROTOCOL_VERSION: u32 = 93;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

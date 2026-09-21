@@ -1,9 +1,9 @@
 # Fishing
 
-**Planned progression change (2026-09-21):** Basic and Advanced Fishing will be permanently learned from anglers, without licenses, mana costs, or use-based XP. The agreed design below is not implemented. Sections from **The loop** onward describe the current XP/level implementation. See also [the skills design](MANA_SKILLS_MAGIC.md).
+**Learned fishing (2026-09-21):** Watching one complete catch beside Tobin permanently unlocks Fishing. There is no fishing XP or skill level. Existing anglers keep access; all current fish and trophies are available immediately. Advanced Fishing remains planned. See also [the skills design](MANA_SKILLS_MAGIC.md).
 
 Cast a rod at water, wait for the bite, hook in time, land the fish. The first
-gathering profession, and the first consumer of the trained-skill system
+gathering profession, and the first consumer of the learned-skill system
 (`shared/src/skills.rs`). Server-authoritative end to end: every timer, roll
 and outcome lives in `server/src/game_state/fishing.rs`; clients render
 broadcasts and answer with `FishingRespond`.
@@ -20,12 +20,12 @@ broadcasts and answer with `FishingRespond`.
 | 구분 | 일반 낚시 (Basic Fishing) | 고급 낚시 (Advanced Fishing) |
 | --- | --- | --- |
 | 스승 | 강가의 낚시꾼 토빈 (Tobin) | 항구 등에서 만나는 숙련된 낚시꾼 |
-| 습득 | 낚싯대와 낚시 용품을 파는 NPC에게 간단한 기초 설명을 들으면 습득 | 일반 낚시 습득 후 숙련된 낚시꾼에게 새로운 기법을 배워 습득 |
+| 습득 | 토빈 곁에서 캐스팅부터 포획까지 한 차례 관찰하면 영구 습득 | 일반 낚시 습득 후 숙련된 낚시꾼에게 새로운 기법을 배워 습득 |
 | 활동 | 강·호수·해안 및 현재 노 젓는 보트에서 낚시 | 향후 큰 배에서 하는 선상 낚시, 특수 미끼를 사용하는 낚시 |
 | 어종 | 현재 잡을 수 있는 모든 어종과 모든 대물 | 참치처럼 현재 없는 신규 어종을 향후 추가 |
 
 토빈은 낚싯대를 판매하며 채비, 찌 연결, 미끼 달기, 입질 대응을
-간단히 설명한다. 이 대화가 스킬 습득과 기본 조작 안내를 겸한다.
+간단히 설명한다. 스킬은 대화가 아니라 실제 낚시 관찰로 습득하며, 대화는 기본 조작을 안내한다.
 일반 낚시에서 별도 미끼 아이템을 소비해야 하는지는 아직 정하지 않는다.
 외형·A포즈 원화·리깅된 게임 모델은 [토빈 에셋 기록](assets/characters.md#tobin--토빈--강가의-낚시꾼-2026-09-21)에 정리한다.
 
@@ -67,9 +67,7 @@ broadcasts and answer with `FishingRespond`.
 - 토빈의 판매 품목·가격, 고급 낚시 스승의 이름·위치, 교육 비용 유무와 구체적인 대화 흐름.
 - 고급 낚시에 추가할 신규 어종, 특수 미끼의 종류·획득·소비 규칙, 필요한 수역·채비 조건.
 - 향후 큰 배 도입 시 고급 선상 낚시의 구체적인 방식과 조건.
-- 현재 레벨에 연결된 입질 대기 시간, 희귀도 가중치, 장력·릴 속도 보정의 전환.
-  모두를 기존 0레벨로 고정하지 말고 공통 기본 수치와 어종별 난이도·보상을 다시 조정한다.
-- 기존 캐릭터의 일반·고급 스킬 부여 기준과 낚시 경험치 기록의 보존 방식.
+- 고급 스킬 부여 기준.
 
 ### 토빈 배치 (2026-09-21 구현)
 
@@ -78,15 +76,17 @@ broadcasts and answer with `FishingRespond`.
 - 일정의 `action: "fishing"`은 지정 방향 4m 앞에 캐스팅한다. 서버가 수심을 검증하고 찌를 실제 수면 높이에 맞춘다. 낚싯대 장착만으로는 찌·바깥 낚싯줄을 표시하지 않으며, 실제 세션의 브로드캐스트로 표시하고 종료 시 없앤다. 성공 시에는 기존 물고기 들어 올리기 연출을 보여준다. 뒤늦게 접근한 플레이어도 진행 중인 낚시를 볼 수 있다.
 - 공식 NPC도 플레이어와 같은 캐스팅·입질·힘겨루기·보상 흐름을 사용한다. 에이전트가 입질에 챔질하고 장력에 따라 감거나 풀며, 잡은 물고기는 실제 인벤토리로 지급된다. 일정 종료·이동·장비 해제·사망 시 중단한다.
 - 에이전트는 5초마다 낚시 일정을 확인하며, 한 번 끝나면 최소 5초 쉬어 성공 연출이 끝난 뒤 재개한다. 캐스팅 응답은 최대 10초 기다리고, 서버가 거부하면 30초 뒤 재시도한다. 거래·전투·병문안 중이거나 낚싯대를 장착하지 않았을 때는 자동 캐스팅하지 않는다.
-- 토빈의 상점과 일반 낚시 영구 습득 기능은 추후 구현하며, 낚싯대가 필요한 방문객에게는 현재 판매처인 리카를 안내한다.
+- 토빈의 상점은 추후 구현하며, 낚싯대가 필요한 방문객에게는 현재 판매처인 리카를 안내한다.
+- 공식 NPC 토빈이 캐스팅할 때부터 포획을 마칠 때까지 **6m 이내**, 같은 층, 높이 차 3m 이내에서 살아 있는 상태로 관찰하면 **Fishing을 영구 습득**한다. 관찰에는 낚싯대나 비용이 필요 없다. 중간에 접근했거나 범위를 벗어나면 다음 캐스팅부터 다시 관찰한다. 취소·놓침에는 습득하지 않으며, 다른 NPC와 토빈을 사칭한 일반 플레이어는 가르칠 수 없다.
+- 습득 즉시 알림과 캐릭터 스킬 목록을 갱신하고 기존 스킬 저장 경로로 영구 보존한다. 반복 관찰로 보상을 주지 않는다. 신규 플레이어는 습득 후 캐스팅할 수 있고, 기존 Fishing 기록이 있는 캐릭터와 공식 NPC는 계속 낚시할 수 있다. 낚시 XP·레벨·어종별 레벨 제한을 제거했다. 기존 DB의 XP·레벨 값은 이력으로 보존하며 게임 판정과 UI에는 사용하지 않는다. 고급 낚시는 후속 작업이다.
 
 ## The loop
 
 Implementation reviewed on 2026-09-21 against the server, web client,
-agent-client, and item data. The learned-skill design above is still pending.
+agent-client, and item data. Observation-based acquisition and removal of XP/levels are implemented; Advanced Fishing is pending.
 
 ```
-FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
+FishingCast ─► Casting (1 s) ─► Waiting (3.2–9.6 s)
                                     │ bite rolls the fish (species/size/trophy)
                                     ▼
                               Bite (2.5 s + 0.5 s latency grace)
@@ -101,7 +101,8 @@ FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
 
 **Getting a rod:** Rica stocks the Fishing Rod at a base price of 3 silver;
 a haggled deal can change the purchase price. Equip it in the main hand.
-No lesson or learned ability is currently required to cast. Rods are excluded
+New anglers must first watch one complete catch beside Tobin to learn Fishing.
+Existing Fishing skill records retain access. Rods are excluded
 from dungeon treasure: `ItemDefs::load` rejects a rod with `chestTier` set
 (`server/src/item_defs.rs`).
 
@@ -116,8 +117,8 @@ from dungeon treasure: `ItemDefs::load` rejects a rod with `chestTier` set
   the target is fishable.
   On a rowboat, the target must also lie within 45° of the stern; casting
   preserves the boat's heading and the seated angler's stern-facing pose.
-- **Wait**: uniform 4–12 s, shortened 2% per fishing level (floored at half
-  the minimum). The fish — species, size, trophy — is rolled *at the bite*,
+- **Wait**: uniform 3.2–9.6 s for every angler.
+  The fish — species, size, trophy — is rolled *at the bite*,
   not at resolution. Trophy status is revealed at the hook; species and
   exact size are revealed on landing.
 - **Bite** (`FishingBite` broadcast): the bobber dips. `Hook` must arrive
@@ -151,19 +152,16 @@ The catch columns:
 
 | column | meaning |
 |---|---|
-| `rarityTier` | fish: 1 (common) … 5 (legendary); junk/coins: 0 — drives XP and skill weighting |
-| `catchWeight` | relative weight in the catch table at fishing level 0 |
-| `minFishingLevel` | fishing level a species is locked behind (blank = 0) |
+| `rarityTier` | fish: 1 (common) … 5 (legendary); junk/coins: 0 — determines fight difficulty |
+| `catchWeight` | relative species weight within its fish/flotsam pool |
 | `sizeDice` | rolled length in cm (e.g. `6d8`) |
 | `trophyCm` | fish only — length at or above this is a trophy |
 
-Species pick: weighted draw over two pools. Before pool normalization, each
-unlocked entry has weight `catchWeight × (100 + 3 × level × rarityTier)`.
-The bonus grows linearly with level and multiplies the base weight. With
-the current table and level cap, rarer species retain lower weights.
-Flotsam holds a flat `FLOTSAM_SHARE_PCT` (20%) of the draw at every level,
-so junk never thins out as the fish pool grows. `minFishingLevel` locks a
-species until the angler earns it: salmon at 10, golden sturgeon at 20.
+Species pick uses fixed `catchWeight` values. All five species are available
+as soon as Fishing is learned; the `minFishingLevel` column was removed.
+Fish weights are minnow **130**, perch **96**, trout **53**, salmon **22**,
+and golden sturgeon **5**. These approximate the former level-10 rarity
+balance with every species unlocked. Flotsam holds a fixed **20%** of draws.
 Size uses `sizeDice`. Each fish has a 20% trophy roll, which doubles its
 size and guarantees trophy status. A failed roll can still produce a trophy
 if the ordinary size meets `trophyCm`. Junk never becomes a trophy.
@@ -182,53 +180,61 @@ salmon 2s, and golden sturgeon 15s. These are catalog prices: Rica pays
 600c respectively. Trophy variants have three times the base price and
 unmodified payout. Other merchants and haggled deals can pay differently
 (`server/src/game_state/trading.rs`, `deals.rs`, `data/merchants.json`).
-Golden sturgeon accounts for about 1.7% of all draws at level 30.
+Golden sturgeon accounts for about 1.3% of all draws.
 
-The existing economy test
-(`item_defs::tests::expected_catch_value_stays_in_the_coin_pile_economy_at_every_level`)
-checks **ordinary item values only**, plus the expected coin-pouch payout,
-at Rica's unmodified 40% rate. Its average is about 7.89c at level 0 and
-24.23c at level 30. It checks the 5–25c band, nondecreasing value with level,
-and a cap no greater than four times the level-0 value.
-
-That test does not include trophy rolls, trophy prices, fight failures, or
-time spent fishing. Including the current trophy roll and size thresholds
-raises the expected value to about 10.84c at level 0 and 33.73c at level 30,
-**assuming every draw is landed**, items are sold to Rica without haggling,
-and coin pouches are opened. These are catch-table calculations, not
-measured income per hour or a guarantee for successful catches alone.
+The economy test
+(`item_defs::tests::expected_catch_value_stays_in_the_coin_pile_economy`)
+checks ordinary item values plus the expected coin-pouch payout at Rica's
+unmodified 40% rate against the existing **5–25c** band. It excludes trophies,
+fight failures, and time spent fishing, so it is not an income-per-hour estimate.
 
 ## Flotsam (junk & coin catches)
 
 Not everything that bites is a fish. Four flotsam rows share the catch
-table (a flat 20% of draws at every level): an **Old Boot** and a **Clump of Kelp**
+table (a flat 20% of draws): an **Old Boot** and a **Clump of Kelp**
 (worthless bag junk — the classic fishing gag), a **Message in a Bottle**
 (base price 15c; Rica pays 6c before haggling), and a **Sunken Coin Pouch**
 (`category: "coin_catch"` — it lands in the bag sealed like any other
 catch; opening it via `use_item` (double-click in the bag) rolls its
 `dice` column, `3d8`, pays the copper to the wallet through the same
-path as ground coin piles, and the combat log reports the amount). All are `rarityTier 0`: **no fishing XP** (the
-`10·rarity²` formula grants nothing naturally), no trophy, and in the
-fight they pull and tire like a common fish (`rarity.max(1)` clamps pull and
-stamina). An *escaped* junk catch
-still pays the flat 2 XP consolation when the bite expires, a response
-arrives late, or the fight is lost. Early pulls and voluntary aborts award
-no XP. The species is never revealed on an escape. The economy test above
-includes flotsam in its average.
+path as ground coin piles, and the combat log reports the amount). All have
+`rarityTier 0`, never become trophies, and fight like common fish. The species
+is never revealed on an escape. The economy test includes flotsam.
 
 ## Skill
 
-Catches grant fishing XP: `10 × rarity²` (10 for a minnow, 250 for a golden
-sturgeon). A missed or late bite and a lost fight grant 2 XP; premature
-pulls and aborted sessions grant none. Levels run from 0 to 30; advancing
-from level `L − 1` to `L` costs `100 × L²` XP (`shared/src/skills.rs`).
-Fishing grants **no character XP**. Level effects today: shorter
-waits, better rare weights, and drag control in the fight (`1%` less pull
-tension and `1%` faster reeling per level, pull relief capped at 30%).
-The fishing level is captured when casting and used for that session.
+Stay within 6 m of official NPC Tobin, alive and on the same floor with at
+most 3 m height difference, from casting until a successful catch. A late
+arrival or interrupted observation must wait for the next cast. Watching
+requires no rod, payment, or conversation. A successful lesson sends a
+system message and `SkillsUpdate { skills: { learned: ["fishing"] } }`.
+The skill persists through logout, reconnect, and server restarts.
+
+Fishing has no skill XP, levels, or character XP rewards. The character
+panel shows the same icon, description, tooltip, and draggable skill row as
+other skills, using the existing fishing rod icon. Catch chance and fight
+mechanics depend on species and player input, never on past fishing XP.
+Wait and fight tuning use the former level-10 baseline: 3.2–9.6 s waits,
+10% less pull than the former novice, and 10% faster reeling. Species weights
+use the same baseline with all five species and their trophies unlocked.
+
+Existing `character_skills` rows count as learned even at zero XP. Legacy
+level/XP columns and unknown skill rows remain unchanged in the database;
+new lessons insert a row with zero values. Runtime and protocol state carry
+only the learned skill IDs. Protocol v93 requires updated clients.
 
 ## Client
 
+- Learned Fishing appears in the character panel's **Skills** tab and can be
+  dragged into a quickslot. Double-click the skill row, click its quickslot,
+  or press the slot's number key to select water. A fishing rod must be in
+  the main hand; no MP is consumed. Rowboat fishing remains available.
+- Selecting Fishing shows a crosshair and a water-target hint. Left-click
+  water within 8 m to cast through the existing fishing action. Invalid
+  targets keep selection active without moving, attacking, or opening NPC
+  interactions. Escape, Cancel, or activating Fishing again cancels selection.
+  Losing the rod, dying, changing floors, teleporting, or switching skills
+  also cancels selection. Quickslot bindings remain saved.
 - Click water within 8 m with a rod equipped on floor 0 → `cast_fishing` intent
   (`managers/inputHandler.ts`; water = the baked `WaterFieldManager.surfaceAt`
   sits >0.1 m above the clicked terrain, so both ocean and rivers cast while
@@ -322,14 +328,13 @@ The angler holds one of three stances, changed any time via
 `FishingRespond`: **reel**, **give line**, or **hold**.
 
 - **Tension** (the gauge; snaps at 100, `Escaped`): a Running fish pulls
-  `(20 + 2·rarity)/s`, scaled up to 1.3× by how much line is out and down by
-  skill. Reeling adds 14/s while the fish is active; Resting and Exhausted
+  `(18 + 1.8·rarity)/s`, scaled up to 1.3× by how much line is out. Reeling adds 14/s while the fish is active; Resting and Exhausted
   fish shed 8/s naturally. Giving line subtracts another 44/s, exceeding
   the strongest fish pull. The hook-set opens the fight at 30 tension.
   Trophy rates are scaled as described below.
 - **Distance** (shown, not numbered: the bobber *is* the fish): runs take
-  ~1.1–1.5 m/s of line, reeling takes it back (1.6 m/s vs a Resting fish,
-  0.6 against a run, 2.5 when Exhausted). The fish wanders but stays within
+  ~1.1–1.5 m/s of line, reeling takes it back (1.76 m/s vs a Resting fish,
+  0.66 against a run, 2.75 when Exhausted). The fish wanders but stays within
   6 m of the cast point. The distance integration uses a **line floor**:
   the cast handler samples the player→cast ray in 0.5 m steps to find the
   first fishable point, adds 0.4 m, caps it at the cast distance, then floors
@@ -367,8 +372,7 @@ same trophy flag and reacts with its usual delay.
 Successful trophies award exactly one `trophy_*` fish: a separate stack
 with the same species icon, twice its ordinary weight, and three times its
 base price. It remains edible and grills into the ordinary cooked fish.
-Catch XP uses the base species' rarity and is granted once. The title
-check also uses the base species. There is no second-fish roll or
+The title check uses the base species. There is no second-fish roll or
 accumulated bonus chance.
 
 Every beat carries `FishingFight { player_id, bobber, fish_state,
@@ -380,8 +384,8 @@ Trophy catches are celebrated to everyone in delivery radius via the
 ## Deliberate limits
 
 - The current implementation has no bait, rod tiers, or designated fishing
-  spots (any water — ocean or river — works). Special bait and learned-skill
-  requirements belong to the planned progression change above.
+  spots (any water — ocean or river — works after learning Fishing).
+  Special bait belongs to the planned Advanced Fishing expansion.
 - Animations are in: a Mixamo cast plays once on `FishingCasted`, then a
   fishing idle loops until the line comes in (`fishing.glb` pack, local
   and remote players). Local animation is driven by

@@ -1284,21 +1284,9 @@ pub enum ServerMessage {
         /// monster starts its death animation. `None` for the death penalty.
         monster_id: Option<String>,
     },
-    /// Direct message: the receiving player's full trained-skill map, sent
-    /// once on EnterGame. Skills stay out of the broadcast `Player` struct —
-    /// like gold, they are private to their owner.
+    /// Private learned skills, sent on login and acquisition.
     SkillsUpdate {
         skills: skills::Skills,
-    },
-    /// Direct message: the receiving player gained skill XP (the trained-skill
-    /// mirror of `XpGained`). `xp_amount` is what was actually banked after
-    /// the level-cap clamp.
-    SkillXpGained {
-        skill: skills::SkillId,
-        xp_amount: u64,
-        total_xp: u64,
-        new_level: u32,
-        leveled_up: bool,
     },
     /// A player's cast landed: render their bobber at `position`. Broadcast
     /// nearby (the caster included) so fishing is visible to passers-by.
@@ -1997,7 +1985,6 @@ impl ServerMessage {
             | Self::ManaUpdate { .. }
             | Self::XpGained { .. }
             | Self::SkillsUpdate { .. }
-            | Self::SkillXpGained { .. }
             | Self::FishingError { .. }
             | Self::Kicked { .. }
             | Self::TitleEarned { .. }

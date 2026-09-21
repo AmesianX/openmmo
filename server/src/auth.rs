@@ -126,10 +126,7 @@ pub struct ItemRow {
     pub cape_texture: Option<String>,
 }
 
-/// One trained skill as stored in `character_skills`. The skill id is kept as
-/// its wire string (`SkillId::as_str`) so rows written by a newer server
-/// survive a rollback: unknown ids load as rows, get skipped at the
-/// `Skills` conversion, and are preserved on the next save.
+/// A learned skill; level and XP are retained only for legacy records.
 #[derive(Debug, Clone)]
 pub struct SkillRow {
     pub skill_id: String,
@@ -629,9 +626,7 @@ impl AuthService {
         Ok(())
     }
 
-    /// Upsert, not delete+insert like inventories: skills are only ever added
-    /// or advanced, and an upsert leaves rows a newer server wrote (unknown
-    /// skill ids) untouched across a rollback.
+    /// Add learned skills while preserving legacy XP and unknown skill rows.
     fn upsert_skills<'a>(
         conn: &Connection,
         skills: impl IntoIterator<Item = (i64, &'a [SkillRow])>,
@@ -639,9 +634,7 @@ impl AuthService {
         let mut upsert = conn.prepare(
             "INSERT INTO character_skills (character_id, skill_id, level, xp) \
              VALUES (?1, ?2, ?3, ?4) \
-             ON CONFLICT(character_id, skill_id) DO UPDATE SET
-                level = excluded.level,
-                xp = excluded.xp",
+             ON CONFLICT(character_id, skill_id) DO NOTHING",
         )?;
 
         for (character_id, rows) in skills {
@@ -2907,7 +2900,7 @@ mod tests {
         assert_eq!(rows[1].skill_id, "underwater_basketweaving");
         assert_eq!(rows[1].xp, 999);
 
-        // Advancing a skill updates in place rather than duplicating the row.
+        // Saving learned status preserves legacy progress and unknown rows.
         auth.save_batch(
             &[],
             &[],
@@ -2915,8 +2908,8 @@ mod tests {
                 record.id,
                 vec![SkillRow {
                     skill_id: "fishing".to_string(),
-                    level: 3,
-                    xp: 1400,
+                    level: 0,
+                    xp: 0,
                 }],
             )],
             &[],
@@ -2927,8 +2920,41 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(
             rows.iter().find(|r| r.skill_id == "fishing").unwrap().xp,
-            1400
+            500
         );
+        assert_eq!(
+            rows.iter().find(|r| r.skill_id == "fishing").unwrap().level,
+            2
+        );
+        let beginner = auth
+            .create_character(
+                &account,
+                "Beginner",
+                &attributes,
+                16,
+                CharacterClass::Ranger,
+                Gender::Female,
+            )
+            .unwrap();
+        auth.save_batch(
+            &[],
+            &[],
+            &[(
+                beginner.id,
+                vec![SkillRow {
+                    skill_id: "fishing".into(),
+                    level: 0,
+                    xp: 0,
+                }],
+            )],
+            &[],
+            None,
+        )
+        .unwrap();
+        let rows = auth.load_skills(beginner.id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].skill_id, "fishing");
+        assert_eq!((rows[0].level, rows[0].xp), (0, 0));
     }
 
     /// EnterGame refuses the session when this load errs, so a missing table

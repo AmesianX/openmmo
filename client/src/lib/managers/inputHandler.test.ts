@@ -257,6 +257,46 @@ describe('processCanvasClick cast-vs-walk', () => {
     }
   })
 
+  it('targets water through an NPC without opening an interaction', () => {
+    const npc = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2))
+    npc.position.y = 1
+    npc.userData.npcPlayerId = 7
+    npc.updateMatrixWorld(true)
+    expect(
+      inputHandler.processCanvasClick(
+        centerClick(),
+        contextWith({
+          npcMeshes: [npc],
+          fishingTargeting: true,
+          canCastFishing: true,
+          waterSurfaceAt: () => 1,
+        })
+      ).type
+    ).toBe('cast_fishing')
+  })
+
+  it.each([
+    { waterSurfaceAt: () => 0 },
+    { playerPosition: { x: 20, y: 0, z: 0 } },
+    { canCastFishing: false },
+    { groundMeshes: [] },
+  ])(
+    'does not move when a fishing skill target is invalid: %j',
+    (overrides) => {
+      expect(
+        inputHandler.processCanvasClick(
+          centerClick(),
+          contextWith({
+            fishingTargeting: true,
+            canCastFishing: true,
+            waterSurfaceAt: () => 1,
+            ...overrides,
+          })
+        )
+      ).toEqual({ type: 'none' })
+    }
+  )
+
   it('moves through NPC hits when fence placement requests ground only', () => {
     const npc = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2))
     npc.position.y = 1

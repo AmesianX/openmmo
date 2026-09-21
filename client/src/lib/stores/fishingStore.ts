@@ -68,6 +68,16 @@ export type MyFishing =
   | { phase: 'fight'; fight: FightStatus }
 
 export const myFishing = writable<MyFishing>({ phase: 'idle' })
+export const fishingTargeting = writable(false)
+
+export function cancelFishingTargeting() {
+  fishingTargeting.set(false)
+}
+
+export function queueFishingTarget() {
+  if (get(myFishing).phase !== 'idle') return
+  fishingTargeting.update((active) => !active)
+}
 
 /** Apply a `FishingFight` beat. Opens the fight phase from `bite` (the first
  *  beat follows the hook) but never resurrects one from `idle`/`casting` —
@@ -168,6 +178,7 @@ export function removeBobber(playerId: number) {
 }
 
 export function resetFishingStore() {
+  cancelFishingTargeting()
   for (const timer of catchTimers.values()) clearTimeout(timer)
   catchTimers.clear()
   catches = new Map()

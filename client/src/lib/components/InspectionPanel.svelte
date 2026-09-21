@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkillTargetHint from './SkillTargetHint.svelte'
   import { AUSCULTATION, abilityEquipmentAllowed } from '../data/abilities'
   import { EQUIP_SLOT_LABELS } from '../data/equipSlots'
   import { getItemDef } from '../data/itemDefs'
@@ -57,11 +58,11 @@
 </script>
 
 {#if $inspectionTargeting}
-  <div class="target-hint" role="status">
-    <img src={AUSCULTATION.icon} alt="" />
-    <span>Left-click a nearby player or monster. Esc to cancel.</span>
-    <button type="button" onclick={cancelInspection}>Cancel</button>
-  </div>
+  <SkillTargetHint
+    icon={AUSCULTATION.icon}
+    message="Left-click a nearby player or monster. Esc to cancel."
+    onCancel={cancelInspection}
+  />
 {/if}
 
 {#if $inspectionResult}
@@ -244,39 +245,5 @@
   .slot-name {
     color: #9fb2c3;
     font-size: 11px;
-  }
-  .target-hint {
-    position: fixed;
-    z-index: 45;
-    bottom: 100px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: max-content;
-    max-width: calc(100vw - 24px);
-    box-sizing: border-box;
-    padding: 8px 12px;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(6, 10, 14, 0.88);
-    backdrop-filter: blur(4px);
-    color: #e6edf3;
-    font-family: 'Courier New', monospace;
-    font-size: 12px;
-    pointer-events: auto;
-  }
-  .target-hint img {
-    width: 28px;
-    height: 28px;
-  }
-  .target-hint button {
-    background: rgba(159, 197, 255, 0.08);
-    border: 1px solid rgba(159, 197, 255, 0.45);
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-family: inherit;
-    color: #9fc5ff;
   }
 </style>

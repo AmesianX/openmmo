@@ -4,8 +4,8 @@
 
 use super::*;
 use onlinerpg_shared::fishing::{
-    auto_stance, FishState, FishingAction, FishingOutcome, BITE_WINDOW_MS, CAST_MS, ESCAPE_XP,
-    FIGHT_TIMEOUT_MS, LATENCY_GRACE_MS, WAIT_MAX_MS, WAIT_MIN_MS,
+    auto_stance, FishState, FishingAction, FishingOutcome, BITE_WINDOW_MS, CAST_MS,
+    FIGHT_TIMEOUT_MS, LATENCY_GRACE_MS, WAIT_MAX_MS,
 };
 use tokio::time::{advance, Duration};
 
@@ -13,6 +13,7 @@ mod economy_tests;
 mod flow_tests;
 mod interruption_tests;
 mod inventory_tests;
+mod learning_tests;
 mod scheduled_tests;
 mod session_tests;
 mod trophy_fight_tests;
@@ -35,9 +36,9 @@ async fn make_angler(game_state: &GameState, name: &str) -> (PlayerId, DirectRx)
     game_state
         .register_player_character(&id, 1, 0, attrs_with_cha(10), 0, None)
         .await;
-    game_state
-        .register_player_skills(&id, Default::default())
-        .await;
+    let mut skills = onlinerpg_shared::skills::Skills::default();
+    skills.learn(onlinerpg_shared::skills::SkillId::Fishing);
+    game_state.register_player_skills(&id, skills).await;
     let rx = game_state.register_direct_channel(&id).await;
     (id, rx)
 }

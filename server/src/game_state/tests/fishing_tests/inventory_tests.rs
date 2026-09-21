@@ -161,63 +161,33 @@ async fn eating_one_fish_from_a_pile_leaves_the_rest() {
     );
 }
 
-/// The pure catch-table math: every roll in range maps to a candidate, the
-/// boundaries are exact, and skill shifts weight toward rare fish while
-/// never boosting rarity-0 junk.
 #[test]
-fn pick_catch_maps_every_roll_and_skill_keeps_the_table_ordered() {
+fn pick_catch_maps_every_roll_and_preserves_species_and_flotsam_weights() {
     use crate::game_state::fishing::{effective_weights, pick_catch, CatchCandidate};
     use onlinerpg_shared::fishing::FLOTSAM_SHARE_PCT;
-    use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
 
-    let candidate = |id: &str, rarity, catch_weight, min_fishing_level| CatchCandidate {
+    let candidate = |id: &str, rarity, catch_weight| CatchCandidate {
         item_def_id: id.into(),
         rarity,
         catch_weight,
-        min_fishing_level,
     };
     let candidates = vec![
-        candidate("common", 1, 50, 0),
-        candidate("rare", 5, 2, 0),
-        candidate("junk", 0, 8, 0),
+        candidate("common", 1, 130),
+        candidate("rare", 5, 5),
+        candidate("junk", 0, 8),
     ];
-
-    let weights = effective_weights(&candidates, 0);
+    let weights = effective_weights(&candidates);
     let total: u64 = weights.iter().sum();
     for roll in 0..total {
-        let idx = pick_catch(&weights, roll).expect("every in-range roll lands");
-        assert!(idx < candidates.len());
+        assert!(pick_catch(&weights, roll).unwrap() < candidates.len());
     }
-    assert!(
-        pick_catch(&weights, total).is_none(),
-        "an out-of-range roll picks nothing"
-    );
-    // Exact boundaries of the cumulative walk.
+    assert_eq!(pick_catch(&weights, total), None);
     assert_eq!(pick_catch(&weights, 0), Some(0));
     assert_eq!(pick_catch(&weights, weights[0] - 1), Some(0));
     assert_eq!(pick_catch(&weights, weights[0]), Some(1));
     assert_eq!(pick_catch(&weights, weights[0] + weights[1]), Some(2));
-
-    // Skill lifts rare fish toward the common without ever passing it, and
-    // junk keeps its fixed share instead of thinning out.
-    for level in 0..=SKILL_LEVEL_CAP {
-        let w = effective_weights(&candidates, level);
-        let total: u64 = w.iter().sum();
-        assert!(
-            w[0] > w[1],
-            "the rarer fish overtook the common at level {level}"
-        );
-        assert_eq!(
-            w[2] * 100,
-            total * FLOTSAM_SHARE_PCT,
-            "junk share drifted at level {level}"
-        );
-    }
-    let gap = |level| {
-        let w = effective_weights(&candidates, level);
-        w[0] as f64 / w[1] as f64
-    };
-    assert!(gap(SKILL_LEVEL_CAP) < gap(0), "skill should close the gap");
+    assert_eq!(weights[0], weights[1] * 26);
+    assert_eq!(weights[2] * 100, total * FLOTSAM_SHARE_PCT);
 }
 
 /// Every drop landed on the player's exact position, so a bagful of fish

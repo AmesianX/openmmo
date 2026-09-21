@@ -5,6 +5,10 @@
     cancelInspection,
     takeInspectionTarget,
   } from '../stores/inspectionStore'
+  import {
+    fishingTargeting,
+    cancelFishingTargeting,
+  } from '../stores/fishingStore'
   import { landscapingMode } from '../stores/landscapingStore'
   import {
     estateFurnitureEditorActive,
@@ -17,6 +21,7 @@
     gameStore,
     hoverTarget,
     addChatMessage,
+    reportSkillFailure,
     type LocalPlayer,
   } from '../stores/gameStore'
   import { travelDestination } from '../stores/travelStore'
@@ -46,6 +51,7 @@
   import {
     abilityEquipmentAllowed,
     AUSCULTATION,
+    FISHING,
     isAbilityAvailable,
   } from '../data/abilities'
   import {
@@ -82,11 +88,7 @@
   } from '../stores/debugStore'
   import { localTorchEquipped, inventoryStore } from '../stores/inventoryStore'
   import { hungerState, SPRINT_MIN_SATIATION } from '../stores/hungerStore'
-  import {
-    getItemDef,
-    isRangedWeapon,
-    weaponRangeMeters,
-  } from '../data/itemDefs'
+  import { isRangedWeapon, weaponRangeMeters } from '../data/itemDefs'
   import {
     DEFAULT_MOVEMENT_CONFIG,
     SPRINT_SPEED_MULT,
@@ -131,9 +133,10 @@
   } from '../data/approachRanges'
   import {
     fishing_is_stern_cast,
+    max_cast_distance_m,
     passability_get_floor_at,
   } from '../wasm/onlinerpg_shared'
-  import { get } from 'svelte/store'
+  import { derived, get } from 'svelte/store'
   import { sprintRequested } from '../stores/movementSettings'
   import { createPlayerPhysics } from './player-control/player-physics'
   import { subscribePlayerNetworkEvents } from './player-control/player-network-events'
@@ -2250,8 +2253,10 @@
   function processClickIntent(event: MouseEvent): ClickIntent {
     const groundOnly =
       get(landscapingMode) !== null || get(estateFurnitureEditorActive)
+    const targetingWater = get(fishingTargeting)
     const intent = inputHandler.processCanvasClick(event, {
       groundOnly,
+      fishingTargeting: targetingWater,
       camera,
       monsterMeshes,
       npcMeshes,
@@ -2273,12 +2278,13 @@
         housingManager.stairLandingTargetAt(floorLevel, x, y, z, stairFloor),
       isMonsterDead,
       canCastFishing:
-        getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
-          ?.category === 'fishing_rod' && currentPassabilityFloor() === 0,
+        abilityEquipmentAllowed(FISHING.id, get(inventoryStore).equipped) &&
+        currentPassabilityFloor() === 0,
       waterSurfaceAt,
     })
     if (
       !groundOnly &&
+      !targetingWater &&
       (intent.type === 'move_to_ground' || intent.type === 'none')
     ) {
       return (
@@ -2365,7 +2371,8 @@
         )
       return
     }
-    if (event.button === 0 && $cameraRotationEnabled) return
+    if (event.button === 0 && $cameraRotationEnabled && !get(fishingTargeting))
+      return
     const editorMode =
       $mapEditorMode ||
       $housingEditorMode ||
@@ -2382,6 +2389,16 @@
       processIntent: () => processClickIntent(event),
     })
     if (!playerControlEvent) return
+    if (
+      get(fishingTargeting) &&
+      playerControlEvent.type === 'canvas_intent' &&
+      playerControlEvent.intent.type === 'none'
+    ) {
+      reportSkillFailure(
+        `Click water within ${max_cast_distance_m()} m to fish.`
+      )
+      return
+    }
 
     enqueuePlayerControlEvent(playerControlEvent)
   }
@@ -2457,6 +2474,7 @@
           })
           return
         }
+        cancelFishingTargeting()
         // Movement would cancel the cast on the next waypoint send.
         combatController.cancelCombat()
         stopMovement()
@@ -2656,7 +2674,10 @@
 
   onMount(() => {
     const canvasCursor = renderer.domElement.style.cursor
-    const unsubscribeInspection = inspectionTargeting.subscribe((active) => {
+    const unsubscribeTargeting = derived(
+      [inspectionTargeting, fishingTargeting],
+      (states) => states.some(Boolean)
+    ).subscribe((active) => {
       renderer.domElement.style.cursor = active ? 'crosshair' : canvasCursor
       if (!active || !currentPlayer) return
       cancelAutoTravel()
@@ -2765,8 +2786,9 @@
     })
 
     return () => {
-      unsubscribeInspection()
+      unsubscribeTargeting()
       cancelInspection()
+      cancelFishingTargeting()
       renderer.domElement.style.cursor = canvasCursor
       unsubscribeTravel()
       unsubscribeTeleport()

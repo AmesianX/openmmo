@@ -44,14 +44,7 @@ async fn trophy_is_announced_before_play_and_awards_one_distinct_fish() {
     assert_eq!(beats.first(), Some(&(true, 100)));
     assert!(beats.iter().all(|(trophy, _)| *trophy));
     assert!(beats.iter().any(|(_, stamina)| *stamina == 0));
-    let xp: Vec<_> = messages
-        .iter()
-        .filter_map(|m| match m {
-            ServerMessage::SkillXpGained { total_xp, .. } => Some(*total_xp),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(xp, vec![90]);
+    assert!(!game_state.dirty_skills.read().await.contains(&id));
     let inv = game_state.get_player_inventory(&id).await.unwrap();
     assert_eq!(inv.bag.len(), 1);
     assert_eq!(inv.bag[0].item_def_id, "trophy_raw_trout");

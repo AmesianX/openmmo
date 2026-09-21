@@ -368,8 +368,7 @@ pub struct GameState {
     /// player_id → current gold (smallest currency unit). Kept out of the
     /// broadcast `Player` struct: gold is private to its owner.
     player_gold: Arc<RwLock<HashMap<PlayerId, i64>>>,
-    /// player_id → trained skills. Private to its owner like gold; delivered
-    /// via `SkillsUpdate` on join and `SkillXpGained` on change.
+    /// Private learned skills, delivered via `SkillsUpdate`.
     player_skills: Arc<RwLock<HashMap<PlayerId, onlinerpg_shared::skills::Skills>>>,
     /// Players whose skills changed since the last periodic save.
     dirty_skills: Arc<RwLock<HashSet<PlayerId>>>,

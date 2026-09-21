@@ -494,7 +494,6 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PlayerHealthUpdate { .. } => "PlayerHealthUpdate",
         ServerMessage::XpGained { .. } => "XpGained",
         ServerMessage::SkillsUpdate { .. } => "SkillsUpdate",
-        ServerMessage::SkillXpGained { .. } => "SkillXpGained",
         ServerMessage::FishingCasted { .. } => "FishingCasted",
         ServerMessage::FishingBite { .. } => "FishingBite",
         ServerMessage::FishingFight { .. } => "FishingFight",

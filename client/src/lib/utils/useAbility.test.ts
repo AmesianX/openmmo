@@ -17,9 +17,22 @@ import {
 import { inspectionTargeting, resetInspection } from '../stores/inspectionStore'
 import { inventoryStore } from '../stores/inventoryStore'
 import { manaState } from '../stores/manaStore'
-import { quickslots, resetQuickslots } from '../stores/quickslotStore'
+import {
+  assignQuickslot,
+  quickslots,
+  resetQuickslots,
+} from '../stores/quickslotStore'
 import { initSync } from '../wasm/onlinerpg_shared'
 import { useAbility } from './useAbility'
+import { FISHING, getAbility, isAbilityAvailable } from '../data/abilities'
+import {
+  fishingTargeting,
+  myFishing,
+  resetFishingStore,
+} from '../stores/fishingStore'
+import { skillsStore, resetSkillsStore } from '../stores/skillsStore'
+import { currentDungeonDepth } from '../stores/dungeonStore'
+import { playerVisualFloorLevel } from '../stores/housingStore'
 
 vi.mock('../stores/gameStore', () => ({
   gameStore: writable({ currentPlayer: null }),
@@ -66,6 +79,10 @@ beforeEach(() => {
   resetDaggerSkill()
   resetInspection()
   resetQuickslots()
+  resetFishingStore()
+  resetSkillsStore()
+  currentDungeonDepth.set(0)
+  playerVisualFloorLevel.set(0)
   updatePlayer({ characterClass: 'knight', health: 10, mount: null })
   inventoryStore.set({
     bag: [],
@@ -166,4 +183,94 @@ it('ignores unknown, hidden, and other-class skills', () => {
   expect(networkManager.sendUseAbility).not.toHaveBeenCalled()
   expect(get(daggerSkillState).queued).toBe(false)
   expect(reportSkillFailure).not.toHaveBeenCalled()
+})
+
+it('lists Fishing for every class only after learning it, with an icon and instructions', () => {
+  for (const characterClass of [
+    'knight',
+    'rogue',
+    'merchant',
+    'priest',
+  ] as const) {
+    expect(isAbilityAvailable(FISHING.id, characterClass)).toBe(false)
+    expect(isAbilityAvailable(FISHING.id, characterClass, [FISHING.id])).toBe(
+      true
+    )
+  }
+  const fishing = getAbility('fishing')!
+  expect(
+    readFileSync(new URL(`../../../public${fishing.icon}`, import.meta.url))
+      .length
+  ).toBeGreaterThan(0)
+  expect(fishing.description).toContain('water')
+  expect(fishing.manaCost).toBe(0)
+})
+
+it('uses a Fishing quickslot to select water without sending a combat ability', () => {
+  inventoryStore.set({ bag: [], equipped: { main_hand: item('fishing_rod') } })
+  useAbility(FISHING.id)
+  expect(get(fishingTargeting)).toBe(false)
+  skillsStore.set({ learned: ['fishing'] })
+  manaState.set({ mana: 0, max_mana: 10 })
+  assignQuickslot(3, { skill: FISHING.id })
+  const entry = get(quickslots)[3]!
+  if (!('skill' in entry)) throw new Error('Expected a skill binding')
+  useAbility(entry.skill)
+  expect(get(fishingTargeting)).toBe(true)
+  expect(networkManager.sendUseAbility).not.toHaveBeenCalled()
+  useAbility(entry.skill)
+  expect(get(fishingTargeting)).toBe(false)
+  expect(get(quickslots)[3]).toEqual({ skill: FISHING.id })
+  expect(reportSkillFailure).not.toHaveBeenCalled()
+})
+
+it('requires a rod and open water, supports rowboats, and blocks a second session', () => {
+  skillsStore.set({ learned: ['fishing'] })
+  useAbility(FISHING.id)
+  expect(reportSkillFailure).toHaveBeenLastCalledWith(
+    'Equip a fishing rod to use Fishing.'
+  )
+  expect(get(fishingTargeting)).toBe(false)
+  inventoryStore.set({ bag: [], equipped: { main_hand: item('fishing_rod') } })
+  currentDungeonDepth.set(1)
+  useAbility(FISHING.id)
+  expect(reportSkillFailure).toHaveBeenLastCalledWith(
+    'You can only fish outdoors.'
+  )
+  currentDungeonDepth.set(0)
+  playerVisualFloorLevel.set(1)
+  useAbility(FISHING.id)
+  expect(get(fishingTargeting)).toBe(false)
+  playerVisualFloorLevel.set(0)
+  updatePlayer({ mount: 'horse' })
+  useAbility(FISHING.id)
+  expect(get(fishingTargeting)).toBe(false)
+  updatePlayer({ mount: 'rowboat' })
+  useAbility(FISHING.id)
+  expect(get(fishingTargeting)).toBe(true)
+  resetFishingStore()
+  myFishing.set({ phase: 'casting' })
+  useAbility(FISHING.id)
+  expect(get(fishingTargeting)).toBe(false)
+  expect(reportSkillFailure).toHaveBeenLastCalledWith(
+    'You are already fishing.'
+  )
+})
+
+it('switches between fishing and inspection targeting and resets on logout', () => {
+  skillsStore.set({ learned: ['fishing'] })
+  inventoryStore.update((inventory) => ({
+    ...inventory,
+    equipped: { ...inventory.equipped, main_hand: item('fishing_rod') },
+  }))
+  useAbility('auscultation')
+  useAbility(FISHING.id)
+  expect(get(inspectionTargeting)).toBe(false)
+  expect(get(fishingTargeting)).toBe(true)
+  useAbility('auscultation')
+  expect(get(fishingTargeting)).toBe(false)
+  expect(get(inspectionTargeting)).toBe(true)
+  useAbility(FISHING.id)
+  resetFishingStore()
+  expect(get(fishingTargeting)).toBe(false)
 })

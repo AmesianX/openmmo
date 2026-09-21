@@ -457,15 +457,8 @@ export type FishingOutcome =
   | 'Escaped'
   | 'Aborted'
 
-export type SkillProgress = {
-  level: number
-  xp: number
-}
-
-/** Per-character trained skills (`ServerMessage::SkillsUpdate` payload).
- *  Absent key = never trained (level 0). */
 export type Skills = {
-  map: Partial<Record<SkillId, SkillProgress>>
+  learned: SkillId[]
 }
 
 export type ServerGroundItem = {

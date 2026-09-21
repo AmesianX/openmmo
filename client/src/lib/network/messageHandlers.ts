@@ -118,14 +118,9 @@ import { tipHatManager } from '../managers/tipHatManager'
 import { closeStallPanel, openStall } from '../stores/stallStore'
 import { mealManager } from '../managers/mealManager'
 import { catchMessage } from './fishingMessages'
-import type { SkillId } from '../stores/skillsStore'
 import { earnedTitles } from '../stores/titleStore'
 import { titleNameNow } from '../data/titleDefs'
-import {
-  skillsStore,
-  applySkillXp,
-  SKILL_DISPLAY_NAMES,
-} from '../stores/skillsStore'
+import { skillsStore } from '../stores/skillsStore'
 import {
   myFishing,
   applyFightUpdate,
@@ -2402,23 +2397,6 @@ export function handleServerMessage(
     case 'FishingError':
       reportSkillFailure(data.message, 'combat')
       break
-
-    case 'SkillXpGained': {
-      const skillId = data.skill as SkillId
-      applySkillXp(skillId, Number(data.total_xp), data.new_level)
-      const skillName = SKILL_DISPLAY_NAMES[skillId] ?? skillId
-      addCombatMessage({
-        text: `You gained ${data.xp_amount} ${skillName} XP.`,
-        sender: 'local',
-      })
-      if (data.leveled_up) {
-        addCombatMessage({
-          text: `${skillName} is now level ${data.new_level}!`,
-          sender: 'local',
-        })
-      }
-      break
-    }
 
     case 'ManaUpdate':
       manaState.set({ mana: data.mana, max_mana: data.max_mana })

@@ -3,6 +3,7 @@
   import {
     DOUBLE_SLASH,
     AUSCULTATION,
+    FISHING,
     getAbility,
     isAbilityAvailable,
     abilityEquipmentAllowed,
@@ -34,6 +35,11 @@
   import { dragMeta, dragPos, quickslotAt } from '../stores/dragStore'
   import { itemTooltip } from '../actions/itemTooltip'
   import { instrumentPanelVisible } from '../stores/instrumentStore'
+  import { skillsStore } from '../stores/skillsStore'
+  import {
+    fishingTargeting,
+    cancelFishingTargeting,
+  } from '../stores/fishingStore'
   import {
     inspectionTargeting,
     cancelInspection,
@@ -56,7 +62,10 @@
     return $quickslots.map((entry) => {
       if (!entry) return null
       if ('skill' in entry) {
-        if (!isAbilityAvailable(entry.skill, characterClass)) return null
+        if (
+          !isAbilityAvailable(entry.skill, characterClass, $skillsStore.learned)
+        )
+          return null
         const ability = getAbility(entry.skill)
         return ability ? { kind: 'ability' as const, skill: ability } : null
       }
@@ -85,6 +94,7 @@
       return
     }
     cancelInspection()
+    cancelFishingTargeting()
     const action = quickslotAction(entry.def, entry)
     if (!action) return
     if (action.kind === 'unequip') networkManager.sendUnequipItem(action.slot)
@@ -133,9 +143,11 @@
       class:drop-target={i === dropIndex}
       class:skill-queued={entry?.kind === 'ability' &&
         ((entry.skill.id === DOUBLE_SLASH.id && $daggerSkillState.queued) ||
-          (entry.skill.id === AUSCULTATION.id && $inspectionTargeting))}
+          (entry.skill.id === AUSCULTATION.id && $inspectionTargeting) ||
+          (entry.skill.id === FISHING.id && $fishingTargeting))}
       class:skill-active={entry?.kind === 'ability' &&
         entry.skill.id !== DOUBLE_SLASH.id &&
+        entry.skill.id !== FISHING.id &&
         ($activeBuffs[entry.skill.id] ?? 0) > $abilityClock}
       data-quickslot={i}
       use:skillTooltip={entry && entry.kind === 'ability' ? entry.skill : null}
@@ -154,12 +166,15 @@
           0,
           entry.skill.id === DOUBLE_SLASH.id
             ? $daggerSkillState.cooldownUntil - $daggerSkillClock
-            : ($abilityCooldowns[entry.skill.id] ?? 0) - $abilityClock
+            : entry.skill.id === FISHING.id
+              ? 0
+              : ($abilityCooldowns[entry.skill.id] ?? 0) - $abilityClock
         )}
         {@const pending =
           entry.skill.id === DOUBLE_SLASH.id
             ? $daggerSkillState.pending
-            : ($abilityPending[entry.skill.id] ?? 0) > $abilityClock}
+            : entry.skill.id !== FISHING.id &&
+              ($abilityPending[entry.skill.id] ?? 0) > $abilityClock}
         <img
           class="item-icon skill-icon"
           class:depleted={!abilityEquipmentAllowed(

@@ -107,17 +107,13 @@ pub struct ItemDefinition {
     effect_tokens: Vec<String>,
     #[serde(skip)]
     effects: Vec<ItemEffect>,
-    /// Fish only — rarity tier 1 (common) … 5 (legendary). Drives catch
-    /// weighting and skill XP (doc/FISHING.md).
+    /// Fish rarity 1–5 controls fight difficulty; flotsam uses 0.
     #[serde(rename = "rarityTier", default)]
     pub rarity_tier: Option<u32>,
-    /// Fish only — relative weight in the catch table at fishing level 0.
+    /// Relative weight within the fish or flotsam catch pool.
     #[serde(rename = "catchWeight", default)]
     pub catch_weight: Option<u32>,
-    /// Fish only — the fishing level a catch is locked behind. Absent or 0
-    /// means available from the first cast.
-    #[serde(rename = "minFishingLevel", default)]
-    pub min_fishing_level: Option<u32>,
+
     /// Fish only — dice notation for rolled length in centimeters.
     #[serde(rename = "sizeDice", default)]
     pub size_dice: Option<String>,
@@ -571,7 +567,6 @@ impl ItemDefs {
                     item_def_id: def.id.clone(),
                     rarity: def.rarity_tier.unwrap_or(1),
                     catch_weight: def.catch_weight?,
-                    min_fishing_level: def.min_fishing_level.unwrap_or(0),
                 })
             })
             .collect();
@@ -671,9 +666,7 @@ impl ItemDefs {
             .unwrap_or(true)
     }
 
-    /// The fishing catch table: every item def with a `catchWeight` — fish,
-    /// junk flotsam (rarityTier 0 → no skill XP), and coin catches alike.
-    /// Sorted by id for a deterministic cumulative walk.
+    /// All fish and flotsam with a `catchWeight`, sorted by item ID.
     pub fn catch_table(&self) -> &[crate::game_state::fishing::CatchCandidate] {
         &self.catch_table
     }
@@ -682,7 +675,6 @@ impl ItemDefs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
 
     fn table_ids(defs: &ItemDefs, tier: u8) -> Vec<String> {
         defs.chest_roll_table(tier)
@@ -884,25 +876,38 @@ mod tests {
                 "{expected} missing from catch table"
             );
         }
-        // Junk and coin catches are rarity 0: the XP formula (10·rarity²)
-        // grants nothing for them, and only fish carry tiers ≥ 1.
+        // Only fish carry rarity tiers above zero.
         for c in table {
             let def = defs.get(&c.item_def_id).unwrap();
             if def.is_fish() {
                 assert!(c.rarity >= 1, "{} fish tier", c.item_def_id);
             } else {
-                assert_eq!(c.rarity, 0, "{} must be tier 0 (no XP)", c.item_def_id);
+                assert_eq!(c.rarity, 0, "{} must be tier 0", c.item_def_id);
             }
         }
     }
 
-    /// The economy guardrail as a contract test: the expected *sell* value of
-    /// one catch must stay at coin-pile magnitude (the game's repeatable gold
-    /// faucet is 1–10c piles; a catch should be worth a couple of piles, not
-    /// a wage) — and it must hold at every fishing level, not just at level 0.
-    /// Averaging over raw `catchWeight` would only ever measure a beginner.
     #[test]
-    fn expected_catch_value_stays_in_the_coin_pile_economy_at_every_level() {
+    fn learned_fishing_can_roll_every_current_species() {
+        let defs = ItemDefs::load();
+        let table = defs.catch_table();
+        let weights = crate::game_state::fishing::effective_weights(table);
+        for id in [
+            "raw_minnow",
+            "raw_perch",
+            "raw_trout",
+            "river_salmon",
+            "golden_sturgeon",
+        ] {
+            let index = table.iter().position(|c| c.item_def_id == id).unwrap();
+            assert!(weights[index] > 0, "{id} is available immediately");
+            assert!(defs.get(&format!("trophy_{id}")).is_some());
+        }
+    }
+
+    /// Ordinary catches stay within the existing economy band.
+    #[test]
+    fn expected_catch_value_stays_in_the_coin_pile_economy() {
         fn dice_avg(notation: &str) -> f64 {
             let (n, m) = notation.split_once('d').expect("NdM");
             let n: f64 = n.parse().unwrap();
@@ -916,8 +921,8 @@ mod tests {
             .expect("Rica has a merchant definition")
             .sell_rate_percent as f64
             / 100.0;
-        let ev_at = |level: u32| -> f64 {
-            let weights = crate::game_state::fishing::effective_weights(table, level);
+        let expected_value = {
+            let weights = crate::game_state::fishing::effective_weights(table);
             let total: f64 = weights.iter().map(|w| *w as f64).sum();
             weights
                 .iter()
@@ -937,26 +942,9 @@ mod tests {
                 / total
         };
 
-        let evs: Vec<f64> = (0..=SKILL_LEVEL_CAP).map(ev_at).collect();
-        for (level, ev) in evs.iter().enumerate() {
-            assert!(
-                (5.0..=25.0).contains(ev),
-                "expected sell value per catch at level {level} is {ev:.1}c — outside \
-                 the 5–25c coin-pile band"
-            );
-        }
         assert!(
-            evs.windows(2).all(|w| w[1] >= w[0]),
-            "skill should never make an angler poorer"
-        );
-        // Mastery pays a better wage, not a different economy. Without this
-        // the old additive weighting reached 10x and no test noticed.
-        assert!(
-            evs[evs.len() - 1] <= 4.0 * evs[0],
-            "level {SKILL_LEVEL_CAP} earns {:.1}c vs {:.1}c at level 0 — that is a \
-             different economy, not a better wage",
-            evs[evs.len() - 1],
-            evs[0]
+            (5.0..=25.0).contains(&expected_value),
+            "expected sell value {expected_value:.1}c is outside the 5–25c band"
         );
     }
 

@@ -1,7 +1,14 @@
-import { ability_mana_cost } from '../wasm/onlinerpg_shared'
+import {
+  ability_mana_cost,
+  max_cast_distance_m,
+} from '../wasm/onlinerpg_shared'
 import { getItemDef } from './itemDefs'
 import { DAGGER_SKILL } from './daggerSkill'
-import type { CharacterClass, PlayerInventory } from '../network/networkTypes'
+import type {
+  CharacterClass,
+  PlayerInventory,
+  SkillId,
+} from '../network/networkTypes'
 
 export const GUARDIAN_WARD = {
   get manaCost() {
@@ -114,19 +121,42 @@ export const AUSCULTATION = {
   ],
 } as const
 
+export const FISHING = {
+  id: 'fishing',
+  name: 'Fishing',
+  icon: '/items/weapons/fishing_rod.png',
+  manaCost: 0,
+  description: 'Cast your line into water to catch fish.',
+  get stats() {
+    return [
+      { label: 'Equipment', value: 'Fishing Rod (Main hand)' },
+      { label: 'Range', value: `${max_cast_distance_m()} m` },
+      { label: 'Cost', value: '0 MP' },
+    ]
+  },
+  details: [
+    'Activate, then left-click water. Press Escape to cancel.',
+    'You can also click water directly with a fishing rod equipped.',
+    'Learn by watching Tobin complete a catch nearby.',
+  ],
+} as const
+
 export const ABILITIES = [
   GUARDIAN_WARD,
   DOUBLE_SLASH,
   RADIANCE,
   TRUE_AIM,
   AUSCULTATION,
+  FISHING,
 ] as const
 
 export function isAbilityAvailable(
   id: string,
-  characterClass: CharacterClass | undefined
+  characterClass: CharacterClass | undefined,
+  learned: readonly SkillId[] = []
 ) {
   return (
+    (id === FISHING.id && learned.includes(FISHING.id)) ||
     id === AUSCULTATION.id ||
     (id === DOUBLE_SLASH.id && characterClass === 'rogue') ||
     (id === GUARDIAN_WARD.id && characterClass === 'knight')
@@ -138,9 +168,14 @@ export function getAbility(id: string) {
 }
 
 export function abilityEquipmentAllowed(
-  id: AbilityId | typeof DOUBLE_SLASH.id,
+  id: (typeof ABILITIES)[number]['id'],
   equipped: PlayerInventory['equipped']
 ) {
+  if (id === FISHING.id)
+    return (
+      getItemDef(equipped.main_hand?.item_def_id ?? '')?.category ===
+      'fishing_rod'
+    )
   if (id === AUSCULTATION.id)
     return equipped.neck?.item_def_id === 'stethoscope'
   if (id === TRUE_AIM.id || id === DOUBLE_SLASH.id)
@@ -156,6 +191,7 @@ export function abilityRequirementsNotMet(name: string) {
 }
 
 export function abilityEquipmentNotMet(id: string) {
+  if (id === FISHING.id) return 'Equip a fishing rod to use Fishing.'
   if (id === AUSCULTATION.id) return 'Equip a stethoscope to use Auscultation.'
   if (id === DOUBLE_SLASH.id) return 'Equip a dagger to use Double Slash.'
   return abilityRequirementsNotMet(getAbility(id)?.name ?? id)
