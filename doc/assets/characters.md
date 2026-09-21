@@ -112,7 +112,8 @@ blender -b --python-exit-code 1 -P tools/blender-scripts/export_character.py -- 
 ### Tobin / 토빈 — 강가의 낚시꾼 (2026-09-21)
 
 - 낚싯대를 팔고, 곁에서 한 차례의 낚시를 관찰하면 낚시 스킬을 가르치는 인간 남성 NPC. 이름은 **Tobin (토빈)**, 에셋 이름은 `tobin`.
-- 원화: [tobin-concept.png](../images/characters/tobin-concept.png), 1024×1536 PNG. OpenAI Codex built-in ImageGen, **ChatGPT Pro 20x**(사용자 확인 제작 지침), 생성·수정 2026-09-21. OpenAI 생성 출력물 이용 조건 적용.
+- 원화: [tobin-concept.png](../images/characters/tobin-concept.png), 1024×1536 PNG. OpenAI Codex built-in ImageGen, ChatGPT Pro 20x, 생성·수정 2026-09-21. OpenAI 생성 출력물 이용 조건 적용.
+- 상점 창 초상화: [tobin-portrait.png](../images/characters/tobin-portrait.png) → `client/public/portraits/tobin.webp`(512², alpha 유지). 기존 원화의 얼굴·복장을 유지한 가슴까지의 투명 배경 초상화. OpenAI Codex built-in ImageGen 편집, ChatGPT Pro 20x, 2026-09-21. 출처·출력물 이용 조건과 편집 프롬프트는 [UI 에셋 문서](ui.md#npc-거래-초상화) 참조.
 - 햇볕에 그을린 얼굴과 짧은 희끗한 수염의 친근한 중년 낚시꾼. 리넨 튜닉·가죽 조끼·모직 바지·챙 없는 모직 모자·가죽 신발의 중세풍 복장. 청바지와 현대적인 모자가 있던 초안은 **[미사용]**이며, 사용자 요청으로 복장을 수정했다.
 - Meshy 변환과 Mixamo 리깅을 위해 빈손의 정면 A포즈로 제작했다. 낚싯대는 별도 장착 아이템으로 사용한다.
 - 실제 생성·편집 프롬프트와 출처·해시: [concept-source.json](../../assets/tobin/concept-source.json).
