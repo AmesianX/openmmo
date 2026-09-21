@@ -3,6 +3,7 @@ use crate::metrics::{
     AccountActivity, ConcurrentCounts, GoldSink, GoldSinkRecord, GoldSource, GoldSourceRecord,
 };
 use crate::types::{ClientKind, PlayerId};
+use std::collections::HashMap;
 use tracing::warn;
 
 impl super::GameState {
@@ -139,6 +140,7 @@ impl super::GameState {
         &self,
         player_id: PlayerId,
         account_name: &str,
+        country: &str,
         auth: &AuthService,
     ) {
         if self
@@ -161,6 +163,7 @@ impl super::GameState {
                 account_name: account_name.to_ascii_lowercase(),
                 started_at: now,
                 last_seen_at: now,
+                country: country.to_owned(),
             })
             .clone();
         Self::save_account_activity(activity, auth).await;
@@ -193,6 +196,19 @@ impl super::GameState {
                 ..activity.clone()
             })
             .collect()
+    }
+
+    pub(crate) async fn concurrent_country_counts(&self) -> HashMap<String, u32> {
+        let mut counts = HashMap::new();
+        for activity in self.account_activities.read().await.values() {
+            match counts.get_mut(&activity.country) {
+                Some(count) => *count += 1,
+                None => {
+                    counts.insert(activity.country.clone(), 1);
+                }
+            }
+        }
+        counts
     }
 
     pub(crate) async fn concurrent_account_counts(&self) -> ConcurrentCounts {

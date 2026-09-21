@@ -15,6 +15,8 @@
   import HeroicTalesPanel from './lib/HeroicTalesPanel.svelte'
   import { parseHeroicTales } from './lib/heroicTales'
   import CombatAuditTargetsPanel from './lib/CombatAuditTargetsPanel.svelte'
+  import CountryPanel from './lib/CountryPanel.svelte'
+  import { parseCountryStats } from './lib/countries'
   import { parseCombatAuditTargets } from './lib/combatAuditTargets'
   import MetricsError from './lib/MetricsError.svelte'
   import NetworkPanel from './lib/NetworkPanel.svelte'
@@ -64,9 +66,11 @@
   const landLeaderboard = createMetricsResource(() => landHours, 'land-leaderboard', parseLandLeaderboard, '영지 보유 현황')
   const serverStarts = createMetricsResource(() => 8760, 'server-starts', parseServerStarts, '배포 기록')
   const heroicTales = createMetricsResource(() => undefined, 'heroic-tales', parseHeroicTales, '영웅담 원장')
+  let countryHours = $state<UniqueHours>(24)
+  const countries = createMetricsResource(() => countryHours, 'countries', parseCountryStats, '국가별 접속 계정', () => ({}), 300000)
   const combatAuditTargets = createMetricsResource(() => undefined, 'combat-audit-targets', parseCombatAuditTargets, '전투 기록 추적 대상', () => ({}), 60000)
   let markers = $derived(deployMarkers(serverStarts.history?.starts ?? []))
-  const resources = [concurrent, hardware, network, assetTraffic, unique, gold, perAccountGold, priceIndex, serverStarts, itemGoldSources, goldSinks, leaderboard, goldLeaderboard, weaponEnchantLeaderboard, weaponEnchantFailures, armorEnchantLeaderboard, landLeaderboard, heroicTales, combatAuditTargets]
+  const resources = [concurrent, hardware, network, assetTraffic, unique, gold, perAccountGold, priceIndex, serverStarts, itemGoldSources, goldSinks, leaderboard, goldLeaderboard, weaponEnchantLeaderboard, weaponEnchantFailures, armorEnchantLeaderboard, landLeaderboard, heroicTales, combatAuditTargets, countries]
   let history = $derived(concurrent.history)
   let refreshing = $derived(resources.some((resource) => resource.refreshing))
   let anyError = $derived(resources.some((resource) => resource.error))
@@ -199,6 +203,8 @@
       <span>{unique.history ? `${unique.history.samples.length.toLocaleString('ko-KR')}개 시점` : '기록 확인 중'}</span>
     </div>
   </section>
+
+  <CountryPanel bind:hours={countryHours} resource={countries} />
 
   <GoldPanel bind:hours={goldHours} resource={gold} {markers} />
 

@@ -20,6 +20,7 @@ printf 'dashboard v1\n' > "$work/repo/dashboard/source.txt"
 printf 'game v1\n' > "$work/repo/README.md"
 printf 'node_modules/\ndist/\n.env*\n' > "$work/repo/.gitignore"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$work/repo/tools/fetch-assets.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$work/repo/tools/fetch-geoip.sh"
 cat > "$work/repo/target/release/terrain-manifests" <<'MOCK'
 #!/usr/bin/env bash
 printf 'terrain-manifests %s\n' "$*" >> "$TEST_DEPLOY_EVENTS"

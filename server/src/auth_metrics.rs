@@ -2,8 +2,8 @@ use super::{unix_now, AuthError, AuthService, PricingMeeting, NPC_ACCOUNT_PREFIX
 use crate::metrics::{
     kst_day_start, AccountActivity, ArmorEnchantLeaderboard, ArmorEnchantLeaderboardEntry,
     ArmorEnchantSample, ArmorEnchantSeries, CharacterGoldSample, CharacterGoldSeries,
-    CharacterLeaderboard, ConcurrentCounts, ConcurrentHistorySample, GoldHistory,
-    GoldHistorySample, GoldLeaderboard, GoldLeaderboardEntry, GoldSample, GoldSource,
+    CharacterLeaderboard, ConcurrentCounts, ConcurrentHistorySample, CountryEntry, CountryStats,
+    GoldHistory, GoldHistorySample, GoldLeaderboard, GoldLeaderboardEntry, GoldSample, GoldSource,
     LandLeaderboard, LandLeaderboardEntry, LandSample, LandSeries, LevelLeaderboard,
     LevelLeaderboardEntry, LevelSample, LevelSeries, PerAccountGoldHistory,
     PerAccountGoldHistorySample, PerAccountGoldSample, PriceIndexHistory, PriceMeeting,
@@ -38,6 +38,14 @@ fn character_metric_source(metric: &str) -> &'static str {
 fn unique_collection_started_at(conn: &Connection) -> Result<i64, rusqlite::Error> {
     conn.query_row(
         "SELECT started_at FROM unique_account_collection WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )
+}
+
+fn country_collection_started_at(conn: &Connection) -> Result<i64, rusqlite::Error> {
+    conn.query_row(
+        "SELECT country_started_at FROM unique_account_collection WHERE id = 1",
         [],
         |row| row.get(0),
     )
@@ -767,7 +775,8 @@ impl AuthService {
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 started_at INTEGER NOT NULL
              );
-             INSERT OR IGNORE INTO unique_account_collection VALUES (1, CAST(strftime('%s', 'now') AS INTEGER));
+             INSERT OR IGNORE INTO unique_account_collection (id, started_at)
+                VALUES (1, CAST(strftime('%s', 'now') AS INTEGER));
              CREATE TABLE IF NOT EXISTS account_activity_sessions (
                 id TEXT PRIMARY KEY,
                 account_name TEXT NOT NULL,
@@ -783,7 +792,41 @@ impl AuthService {
                 half_year_accounts INTEGER NOT NULL CHECK (half_year_accounts >= 0),
                 year_accounts INTEGER NOT NULL CHECK (year_accounts >= 0)
              );",
-        )
+        )?;
+        // NULL marks sessions recorded before country collection began.
+        if !Self::table_columns(conn, "account_activity_sessions")?.contains("country") {
+            conn.execute(
+                "ALTER TABLE account_activity_sessions ADD COLUMN country TEXT",
+                [],
+            )?;
+        }
+        if !Self::table_columns(conn, "unique_account_collection")?.contains("country_started_at") {
+            conn.execute(
+                "ALTER TABLE unique_account_collection ADD COLUMN country_started_at INTEGER",
+                [],
+            )?;
+        }
+        let counts = ["day", "week", "month", "half_year", "year"]
+            .iter()
+            .flat_map(|period| ["accounts", "sessions"].map(|kind| format!("{period}_{kind}")))
+            .map(|column| format!("{column} INTEGER NOT NULL CHECK ({column} >= 0)"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Totals deduplicate accounts seen from several countries; one row per aggregated day.
+        conn.execute_batch(&format!(
+            "UPDATE unique_account_collection
+                SET country_started_at = CAST(strftime('%s', 'now') AS INTEGER)
+                WHERE country_started_at IS NULL;
+             CREATE TABLE IF NOT EXISTS account_country_daily_totals (
+                timestamp INTEGER PRIMARY KEY, {counts}
+             );
+             CREATE TABLE IF NOT EXISTS account_country_daily_samples (
+                timestamp INTEGER NOT NULL,
+                country TEXT NOT NULL CHECK (length(country) = 2),
+                {counts},
+                PRIMARY KEY (timestamp, country)
+             ) WITHOUT ROWID;"
+        ))
     }
 
     pub fn record_account_activities(
@@ -797,8 +840,8 @@ impl AuthService {
         let transaction = conn.transaction()?;
         {
             let mut statement = transaction.prepare(
-                "INSERT INTO account_activity_sessions (id, account_name, started_at, last_seen_at)
-                 VALUES (?1, ?2, ?3, ?4)
+                "INSERT INTO account_activity_sessions (id, account_name, started_at, last_seen_at, country)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(id) DO UPDATE SET last_seen_at = MAX(last_seen_at, excluded.last_seen_at)",
             )?;
             for activity in activities {
@@ -806,12 +849,64 @@ impl AuthService {
                     activity.id,
                     activity.account_name.to_ascii_lowercase(),
                     activity.started_at,
-                    activity.last_seen_at
+                    activity.last_seen_at,
+                    activity.country
                 ])?;
             }
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn account_countries(&self, now: i64, days: u32) -> Result<CountryStats, AuthError> {
+        let until = kst_day_start(now);
+        let period = match days {
+            1 => "day",
+            7 => "week",
+            30 => "month",
+            180 => "half_year",
+            _ => "year",
+        };
+        let mut conn = self.open_connection()?;
+        let transaction = conn.transaction()?;
+        let collection_started_at = country_collection_started_at(&transaction)?;
+        let latest = transaction
+            .query_row(
+                &format!(
+                    "SELECT timestamp, {period}_accounts FROM account_country_daily_totals
+                     WHERE timestamp <= ?1 ORDER BY timestamp DESC LIMIT 1"
+                ),
+                [until],
+                |row| Ok((row.get::<_, i64>(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let mut countries = Vec::new();
+        if let Some((timestamp, _)) = latest {
+            let mut statement = transaction.prepare(&format!(
+                "SELECT country, {period}_accounts, {period}_sessions
+                 FROM account_country_daily_samples
+                 WHERE timestamp = ?1 AND {period}_accounts > 0"
+            ))?;
+            countries = statement
+                .query_map([timestamp], |row| {
+                    Ok(CountryEntry {
+                        country: row.get(0)?,
+                        accounts: row.get(1)?,
+                        sessions: row.get(2)?,
+                        current_accounts: 0,
+                    })
+                })?
+                .collect::<Result<_, _>>()?;
+        }
+        Ok(CountryStats {
+            from: until - i64::from(days) * DAY_SECONDS,
+            until,
+            collection_started_at,
+            last_aggregated_at: latest.map(|(timestamp, _)| timestamp),
+            accounts: latest.map_or(0, |(_, accounts)| accounts),
+            current_accounts: 0,
+            countries,
+        })
     }
 
     pub fn backfill_daily_unique_accounts(&self, now: i64) -> Result<usize, AuthError> {
@@ -854,22 +949,69 @@ impl AuthService {
         {
             return Ok(false);
         }
+        // One scan of the session history feeds every rollup while the write lock is held.
+        transaction.execute_batch("DROP TABLE IF EXISTS temp.daily_account_activity")?;
         transaction.execute(
-            "WITH recent_accounts AS (
-                SELECT account_name, MAX(last_seen_at) AS last_seen_at
-                FROM account_activity_sessions
-                WHERE started_at < ?1 AND last_seen_at >= ?1 - 365 * 86400
-                GROUP BY account_name
-             )
-             INSERT INTO unique_account_daily_samples
-                (timestamp, day_accounts, week_accounts, month_accounts, half_year_accounts, year_accounts)
-             SELECT ?1,
-                COUNT(CASE WHEN last_seen_at >= ?1 - 86400 THEN 1 END),
-                COUNT(CASE WHEN last_seen_at >= ?1 - 7 * 86400 THEN 1 END),
-                COUNT(CASE WHEN last_seen_at >= ?1 - 30 * 86400 THEN 1 END),
-                COUNT(CASE WHEN last_seen_at >= ?1 - 180 * 86400 THEN 1 END),
-                COUNT(*) FROM recent_accounts", [timestamp],
+            "CREATE TEMP TABLE daily_account_activity AS
+             SELECT country, account_name, MAX(last_seen_at) AS last_seen_at,
+                COUNT(CASE WHEN last_seen_at >= ?1 - 86400 THEN 1 END) AS day_sessions,
+                COUNT(CASE WHEN last_seen_at >= ?1 - 7 * 86400 THEN 1 END) AS week_sessions,
+                COUNT(CASE WHEN last_seen_at >= ?1 - 30 * 86400 THEN 1 END) AS month_sessions,
+                COUNT(CASE WHEN last_seen_at >= ?1 - 180 * 86400 THEN 1 END) AS half_year_sessions,
+                COUNT(*) AS year_sessions
+             FROM account_activity_sessions
+             WHERE started_at < ?1 AND last_seen_at >= ?1 - 365 * 86400
+             GROUP BY country, account_name",
+            [timestamp],
         )?;
+        const ACCOUNTS: &str = "COUNT(CASE WHEN last_seen_at >= ?1 - 86400 THEN 1 END),
+            COUNT(CASE WHEN last_seen_at >= ?1 - 7 * 86400 THEN 1 END),
+            COUNT(CASE WHEN last_seen_at >= ?1 - 30 * 86400 THEN 1 END),
+            COUNT(CASE WHEN last_seen_at >= ?1 - 180 * 86400 THEN 1 END),
+            COUNT(*)";
+        const SESSIONS: &str = "COALESCE(SUM(day_sessions), 0), COALESCE(SUM(week_sessions), 0),
+            COALESCE(SUM(month_sessions), 0), COALESCE(SUM(half_year_sessions), 0),
+            COALESCE(SUM(year_sessions), 0)";
+        const COLUMNS: &str = "day_accounts, week_accounts, month_accounts, half_year_accounts,
+            year_accounts, day_sessions, week_sessions, month_sessions, half_year_sessions,
+            year_sessions";
+        transaction.execute(
+            &format!(
+                "INSERT INTO unique_account_daily_samples
+                    (timestamp, day_accounts, week_accounts, month_accounts, half_year_accounts, year_accounts)
+                 SELECT ?1, {ACCOUNTS} FROM (
+                    SELECT MAX(last_seen_at) AS last_seen_at
+                    FROM daily_account_activity GROUP BY account_name
+                 )"
+            ),
+            [timestamp],
+        )?;
+        if timestamp > country_collection_started_at(&transaction)? {
+            transaction.execute(
+                &format!(
+                    "INSERT INTO account_country_daily_samples (timestamp, country, {COLUMNS})
+                     SELECT ?1, country, {ACCOUNTS}, {SESSIONS} FROM daily_account_activity
+                     WHERE country IS NOT NULL GROUP BY country"
+                ),
+                [timestamp],
+            )?;
+            transaction.execute(
+                &format!(
+                    "INSERT INTO account_country_daily_totals (timestamp, {COLUMNS})
+                     SELECT ?1, {ACCOUNTS}, {SESSIONS} FROM (
+                        SELECT MAX(last_seen_at) AS last_seen_at,
+                            SUM(day_sessions) AS day_sessions, SUM(week_sessions) AS week_sessions,
+                            SUM(month_sessions) AS month_sessions,
+                            SUM(half_year_sessions) AS half_year_sessions,
+                            SUM(year_sessions) AS year_sessions
+                        FROM daily_account_activity
+                        WHERE country IS NOT NULL GROUP BY account_name
+                     )"
+                ),
+                [timestamp],
+            )?;
+        }
+        transaction.execute_batch("DROP TABLE temp.daily_account_activity")?;
         transaction.commit()?;
         Ok(true)
     }
@@ -2096,6 +2238,85 @@ mod tests {
             account_name: account.into(),
             started_at: start,
             last_seen_at: end,
+            country: "KR".into(),
+        }
+    }
+
+    #[test]
+    fn account_countries_migrate_old_sessions_and_aggregate_with_daily_uniques() {
+        let path = crate::test_util::unique_temp_dir("account_countries").join("game.db");
+        drop(AuthService::new(path.clone()).unwrap());
+        let midnight = 1000 * DAY_SECONDS - 9 * 3600;
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "DROP TABLE account_activity_sessions;
+                 CREATE TABLE account_activity_sessions (
+                    id TEXT PRIMARY KEY,
+                    account_name TEXT NOT NULL,
+                    started_at INTEGER NOT NULL,
+                    last_seen_at INTEGER NOT NULL CHECK (last_seen_at >= started_at)
+                 );
+                 INSERT INTO account_activity_sessions VALUES ('legacy', 'dave', {0}, {0});
+                 UPDATE unique_account_collection SET started_at = {1}, country_started_at = {2};",
+                midnight - 100,
+                midnight - 40 * DAY_SECONDS,
+                midnight - DAY_SECONDS + 10,
+            ))
+            .unwrap();
+        }
+        let auth = AuthService::new(path).unwrap();
+        let traveller = AccountActivity {
+            country: "JP".into(),
+            ..activity("jp", "alice", midnight - 300, midnight - 200)
+        };
+        auth.record_account_activities(&[
+            activity("kr1", "alice", midnight - 900, midnight - 800),
+            activity("kr2", "Alice", midnight - 700, midnight - 600),
+            activity(
+                "kr3",
+                "bob",
+                midnight - 3 * DAY_SECONDS,
+                midnight - 2 * DAY_SECONDS,
+            ),
+            traveller,
+            activity("next", "carol", midnight, midnight + 100),
+        ])
+        .unwrap();
+
+        // The midnight before collection began has a unique sample but no country rows.
+        assert!(auth
+            .aggregate_daily_unique_accounts(midnight - DAY_SECONDS)
+            .unwrap());
+        let pending = auth.account_countries(midnight - 1, 1).unwrap();
+        assert_eq!(pending.last_aggregated_at, None);
+        assert!(pending.countries.is_empty());
+
+        assert!(auth.aggregate_daily_unique_accounts(midnight).unwrap());
+        let entry = |country: &str, accounts, sessions| CountryEntry {
+            country: country.into(),
+            accounts,
+            sessions,
+            current_accounts: 0,
+        };
+        for (days, accounts, expected) in [
+            (1, 1, vec![entry("JP", 1, 1), entry("KR", 1, 2)]),
+            (7, 2, vec![entry("JP", 1, 1), entry("KR", 2, 3)]),
+        ] {
+            let mut period = auth.account_countries(midnight + 3600, days).unwrap();
+            period.countries.sort_by(|a, b| a.country.cmp(&b.country));
+            assert_eq!(
+                period,
+                CountryStats {
+                    from: midnight - i64::from(days) * DAY_SECONDS,
+                    until: midnight,
+                    collection_started_at: midnight - DAY_SECONDS + 10,
+                    last_aggregated_at: Some(midnight),
+                    accounts,
+                    current_accounts: 0,
+                    countries: expected,
+                }
+            );
         }
     }
 

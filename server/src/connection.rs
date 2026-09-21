@@ -174,6 +174,7 @@ fn close_frame(code: u16, reason: &'static str) -> Message {
 struct ConnectionState {
     /// Address the client is held accountable for; see `resolve_client_ip`.
     client_ip: IpAddr,
+    country: String,
     /// Client program reported in `ClientInfo`. `None` until the handshake
     /// arrives, which is what gates every other message.
     client_kind: Option<ClientKind>,
@@ -237,6 +238,7 @@ impl ConnectionState {
     fn new(client_ip: IpAddr) -> Self {
         Self {
             client_ip,
+            country: crate::geoip::UNKNOWN_COUNTRY.to_owned(),
             client_kind: None,
             reported_client_version: String::new(),
             must_close: false,
@@ -327,6 +329,7 @@ impl ConnectionState {
 /// Per-server services every connection needs, bundled so the accept loop
 /// clones one `Arc` per connection instead of four.
 pub struct ServerContext {
+    pub geoip: crate::geoip::GeoIp,
     pub game_state: Arc<GameState>,
     pub auth_service: Arc<AuthService>,
     pub auth_ctx: Arc<AuthContext>,
@@ -344,6 +347,7 @@ pub async fn handle_connection(
     mut shutdown: watch::Receiver<()>,
 ) {
     let ServerContext {
+        geoip,
         game_state,
         auth_service,
         auth_ctx,
@@ -409,6 +413,7 @@ pub async fn handle_connection(
 
     let mut game_receiver = game_state.subscribe();
     let mut state = ConnectionState::new(client_ip);
+    state.country = geoip.country(client_ip);
 
     let mut heartbeat_check = tokio::time::interval(std::time::Duration::from_secs(10));
     let mut unauth_message_count: u32 = 0;
@@ -1383,7 +1388,7 @@ async fn handle_client_message(
             state.last_furniture_tip.clear();
             state.character_name = Some(selected_character.name.clone());
             game_state
-                .begin_account_activity(id, &authed_account_name, auth_service)
+                .begin_account_activity(id, &authed_account_name, &state.country, auth_service)
                 .await;
             drop(character_sessions);
 

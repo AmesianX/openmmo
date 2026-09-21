@@ -88,6 +88,7 @@ data/player_anim_timing.json
 data/titles.json
 data/world_drop.json
 data/terrain/
+data/geoip/
 data/housing/
 data/cape-textures/
 server/data/game_data.db
