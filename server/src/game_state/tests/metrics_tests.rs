@@ -16,14 +16,19 @@ async fn unique_activity_records_short_visits_and_excludes_official_npcs() {
         game.attach_player_to_account_session(account, session, id)
             .await;
         game.add_player(player).await;
-        game.begin_account_activity(id, account, &auth).await;
+        game.begin_account_activity(id, account, "KR", &auth).await;
         ids.push((account, session));
     }
     assert_eq!(game.account_activity_snapshot().await.len(), 1);
+    assert_eq!(
+        game.concurrent_country_counts().await,
+        HashMap::from([("KR".to_string(), 1)])
+    );
     for (account, session) in ids {
         game.end_account_session(account, session, &auth).await;
     }
     assert!(game.account_activity_snapshot().await.is_empty());
+    assert!(game.concurrent_country_counts().await.is_empty());
     let now = crate::auth::unix_now();
     let midnight = crate::metrics::kst_day_start(now) + crate::metrics::DAY_SECONDS;
     auth.aggregate_daily_unique_accounts(midnight).unwrap();

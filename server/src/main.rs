@@ -11,6 +11,7 @@ mod debuff_defs;
 mod dungeon_defs;
 mod game;
 mod game_state;
+mod geoip;
 mod google_auth;
 mod hardware;
 mod housing;
@@ -258,6 +259,14 @@ struct Args {
     )]
     tales_ledger: PathBuf,
 
+    /// DB-IP country CSV (`start,end,CC`) for per-country metrics; see tools/fetch-geoip.sh.
+    #[arg(
+        long,
+        env = "GEOIP_DB",
+        default_value = "./data/geoip/dbip-country-lite.csv"
+    )]
+    geoip_db: PathBuf,
+
     /// Google OAuth client ID used to verify browser sign-in tokens
     #[arg(long, env = "GOOGLE_CLIENT_ID")]
     google_client_id: Option<String>,
@@ -375,6 +384,9 @@ async fn main() -> ExitCode {
         .init();
 
     let args = Args::parse();
+    // Parsed off the runtime while the database and world initialize.
+    let geoip_db = args.geoip_db.clone();
+    let geoip_load = tokio::task::spawn_blocking(move || geoip::GeoIp::load_or_default(&geoip_db));
     world_config::log_world_config();
     let monster_defs = monster_defs::MonsterDefs::load();
     let item_defs = item_defs::item_defs().clone();
@@ -883,7 +895,12 @@ async fn main() -> ExitCode {
     info!("🌐 Connect clients to: ws://{}", addr);
 
     let mut connections = JoinSet::new();
+    let geoip = geoip_load.await.unwrap_or_else(|error| {
+        warn!("GeoIP database load task failed: {error}");
+        geoip::GeoIp::default()
+    });
     let conn_ctx = Arc::new(ServerContext {
+        geoip,
         game_state: Arc::clone(&game_state),
         auth_service: Arc::clone(&auth_service),
         auth_ctx: Arc::clone(&auth_ctx),

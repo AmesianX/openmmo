@@ -32,6 +32,10 @@ git pull --ff-only
 echo "==> assets"
 bash tools/fetch-assets.sh client/public
 
+echo "==> geoip"
+bash tools/fetch-geoip.sh ||
+    echo "warning: GeoIP refresh failed — country metrics keep the previous database" >&2
+
 # Operator data is transferred during deployment preflight.
 if [[ ! -f data/banned_names.txt ]]; then
     echo "warning: data/banned_names.txt missing — restart loads an empty list" >&2

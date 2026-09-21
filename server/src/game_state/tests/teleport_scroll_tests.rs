@@ -52,6 +52,7 @@ async fn scroll_request_over_websocket(item_def_id: &str) {
     let account = auth.login_npc("npc_teleport_reader").unwrap();
     let character = create_test_character(&auth, &account, "Reader");
     let context = Arc::new(ServerContext {
+        geoip: Default::default(),
         game_state: game.clone(),
         auth_service: auth,
         auth_ctx: Arc::new(AuthContext {

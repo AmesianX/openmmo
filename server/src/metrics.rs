@@ -274,6 +274,26 @@ pub struct AccountActivity {
     pub account_name: String,
     pub started_at: i64,
     pub last_seen_at: i64,
+    pub country: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CountryEntry {
+    pub country: String,
+    pub accounts: u32,
+    pub sessions: u32,
+    pub current_accounts: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CountryStats {
+    pub from: i64,
+    pub until: i64,
+    pub collection_started_at: i64,
+    pub last_aggregated_at: Option<i64>,
+    pub accounts: u32,
+    pub current_accounts: u32,
+    pub countries: Vec<CountryEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -461,6 +481,7 @@ fn metrics_routes(game: Arc<GameState>, auth: Arc<AuthService>) -> Router {
     Router::new()
         .route("/api/metrics/concurrent", get(concurrent_history))
         .route("/api/metrics/unique", get(unique_history))
+        .route("/api/metrics/countries", get(country_stats))
         .route("/api/metrics/gold", get(gold_history))
         .route("/api/metrics/item-gold-sources", get(item_gold_sources))
         .route("/api/metrics/gold-sinks", get(gold_sinks))
@@ -542,6 +563,19 @@ fn history_interval(hours: u32) -> Option<i64> {
         8760 => Some(86400),
         _ => None,
     }
+}
+
+fn unique_period_days(hours: Option<u32>) -> Option<u32> {
+    let hours = hours.unwrap_or(24);
+    (hours.is_multiple_of(24) && UNIQUE_PERIOD_DAYS.contains(&(hours / 24))).then_some(hours / 24)
+}
+
+fn invalid_unique_hours(parameter: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        format!("{parameter} must be 24, 168, 720, 4320, or 8760"),
+    )
+        .into_response()
 }
 
 fn invalid_hours() -> Response {
@@ -676,16 +710,11 @@ async fn unique_history(
     State(state): State<MetricsState>,
     Query(query): Query<HistoryQuery>,
 ) -> Response {
-    let hours = query.hours.unwrap_or(24);
-    if !hours.is_multiple_of(24) || !UNIQUE_PERIOD_DAYS.contains(&(hours / 24)) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "hours must be 24, 168, 720, 4320, or 8760",
-        )
-            .into_response();
-    }
+    let Some(days) = unique_period_days(query.hours) else {
+        return invalid_unique_hours("hours");
+    };
     metrics_response(
-        auth_db(move || state.auth.unique_account_history(unix_now(), hours / 24)).await,
+        auth_db(move || state.auth.unique_account_history(unix_now(), days)).await,
         "Unique account history",
     )
 }
@@ -720,6 +749,46 @@ async fn concurrent_history(
             samples,
         }),
         "Concurrent account history",
+    )
+}
+
+async fn country_stats(
+    State(state): State<MetricsState>,
+    Query(query): Query<HistoryQuery>,
+) -> Response {
+    let Some(days) = unique_period_days(query.hours) else {
+        return invalid_unique_hours("hours");
+    };
+    let mut current = state.game.concurrent_country_counts().await;
+    let stats = auth_db(move || state.auth.account_countries(unix_now(), days)).await;
+    metrics_response(
+        stats.map(|mut stats| {
+            stats.current_accounts = current.values().sum();
+            for entry in &mut stats.countries {
+                entry.current_accounts = current.remove(&entry.country).unwrap_or(0);
+            }
+            stats
+                .countries
+                .extend(
+                    current
+                        .into_iter()
+                        .map(|(country, current_accounts)| CountryEntry {
+                            country,
+                            accounts: 0,
+                            sessions: 0,
+                            current_accounts,
+                        }),
+                );
+            stats.countries.sort_by(|a, b| {
+                b.accounts
+                    .cmp(&a.accounts)
+                    .then_with(|| b.sessions.cmp(&a.sessions))
+                    .then_with(|| b.current_accounts.cmp(&a.current_accounts))
+                    .then_with(|| a.country.cmp(&b.country))
+            });
+            stats
+        }),
+        "Country stats",
     )
 }
 
@@ -815,19 +884,14 @@ async fn per_account_gold_history(
         Ok(interval) => interval,
         Err(response) => return response.into_response(),
     };
-    let active_hours = query.active_hours.unwrap_or(24);
-    if !active_hours.is_multiple_of(24) || !UNIQUE_PERIOD_DAYS.contains(&(active_hours / 24)) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "active_hours must be 24, 168, 720, 4320, or 8760",
-        )
-            .into_response();
-    }
+    let Some(active_days) = unique_period_days(query.active_hours) else {
+        return invalid_unique_hours("active_hours");
+    };
     metrics_response(
         auth_db(move || {
             state
                 .auth
-                .per_account_gold_history(unix_now(), hours, interval, active_hours / 24)
+                .per_account_gold_history(unix_now(), hours, interval, active_days)
         })
         .await,
         "Per-account gold history",
@@ -2241,24 +2305,34 @@ mod tests {
                 [now - 2 * 365 * 86400],
             )
             .unwrap();
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE unique_account_collection SET country_started_at = ?1",
+                [now - 86400],
+            )
+            .unwrap();
         auth.record_account_activities(&[
             AccountActivity {
                 id: "old".into(),
                 account_name: "alice".into(),
                 started_at: now - 364 * 86400,
                 last_seen_at: now - 364 * 86400,
+                country: "KR".into(),
             },
             AccountActivity {
                 id: "recent".into(),
                 account_name: "alice".into(),
                 started_at: now - 7200,
                 last_seen_at: now - 7100,
+                country: "KR".into(),
             },
             AccountActivity {
                 id: "short".into(),
                 account_name: "bob".into(),
                 started_at: now - 30,
                 last_seen_at: now - 30,
+                country: "KR".into(),
             },
         ])
         .unwrap();
@@ -2266,6 +2340,35 @@ mod tests {
         assert!(pending.samples.is_empty());
         assert_eq!(pending.last_aggregated_at, None);
         assert!(auth.aggregate_daily_unique_accounts(now).unwrap());
+        let countries_url = format!("http://{addr}/api/metrics/countries");
+        let response = client
+            .get(format!("{countries_url}?hours=168"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let json: serde_json::Value = response.json().await.unwrap();
+        assert!(!json.to_string().contains("alice"));
+        let body: CountryStats = serde_json::from_value(json).unwrap();
+        assert_eq!((body.from, body.until), (now - 168 * 3600, now));
+        assert_eq!(body.collection_started_at, now - 86400);
+        assert_eq!(body.last_aggregated_at, Some(now));
+        assert_eq!((body.accounts, body.current_accounts), (2, 0));
+        assert_eq!(
+            body.countries,
+            vec![CountryEntry {
+                country: "KR".into(),
+                accounts: 2,
+                sessions: 2,
+                current_accounts: 0,
+            }]
+        );
+        let response = client
+            .get(format!("{countries_url}?hours=6"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let unique_url = format!("http://{addr}/api/metrics/unique");
         let default: UniqueHistory = client
             .get(&unique_url)
