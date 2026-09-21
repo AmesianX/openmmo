@@ -1,5 +1,12 @@
 import { manaState } from '../stores/manaStore'
 import {
+  playTeleportEffect,
+  finishTeleportArrival,
+  resetTeleportEffects,
+  deferRemoteTeleportUpdate,
+  cancelLocalTeleportRequest,
+} from '../stores/teleportEffectStore'
+import {
   inspectionResult,
   type InspectionResult,
 } from '../stores/inspectionStore'
@@ -648,6 +655,23 @@ export function handleServerMessage(
   const type = isBare ? raw : Object.keys(raw)[0]
   const data = isBare ? undefined : raw[type]
 
+  const remoteId =
+    type === 'PlayerAppeared'
+      ? data.player.id
+      : ['PlayerTeleported', 'PlayerMoved', 'PlayerDisappeared'].includes(type)
+        ? data.player_id
+        : null
+  if (remoteId !== null && remoteId !== get(gameStore).currentPlayer?.id) {
+    const { epoch, generation } = worldView
+    if (
+      deferRemoteTeleportUpdate(remoteId, () => {
+        if (worldView.epoch === epoch && worldView.generation === generation)
+          handleServerMessage(raw, events, disconnect, resync)
+      })
+    )
+      return
+  }
+
   requestResync = resync
   switch (type) {
     case 'TerrainTileVersion': {
@@ -761,6 +785,7 @@ export function handleServerMessage(
     }
 
     case 'JoinSuccess': {
+      resetTeleportEffects()
       remoteEstateInteractions.clear()
       worldView.synchronized = false
       housingManager.resetView()
@@ -849,6 +874,7 @@ export function handleServerMessage(
     }
 
     case 'PlayerAppeared': {
+      finishTeleportArrival(data.player.id)
       const serverPlayer: ServerPlayer = data.player
       gameStore.update((state) => {
         if (serverPlayer.id === state.currentPlayer?.id) {
@@ -947,9 +973,34 @@ export function handleServerMessage(
       break
     }
 
+    case 'PlayerTeleportEffect': {
+      const local = get(gameStore).currentPlayer?.id === data.player_id
+      playTeleportEffect(
+        {
+          playerId: data.player_id,
+          position: data.position,
+          floorLevel: data.floor_level,
+          phase: data.phase,
+        },
+        local
+      )
+      if (data.phase === 'Departing') {
+        const remote = remotePlayerManager.players.get(data.player_id)
+        if (remote)
+          remotePlayerManager.teleportPlayer(
+            data.player_id,
+            data.position,
+            remote.rotation
+          )
+      }
+      break
+    }
+
     case 'PlayerTeleported': {
+      finishTeleportArrival(data.player_id)
       const state = get(gameStore)
       if (state.currentPlayer && state.currentPlayer.id === data.player_id) {
+        cancelLocalTeleportRequest()
         // Through the store, not a bare mutation: subscribers that live
         // across a teleport (HUD widgets) otherwise keep the old position.
         gameStore.update((s) => {
@@ -977,6 +1028,11 @@ export function handleServerMessage(
         tpDeckY !== null ? { ...data.position, y: tpDeckY } : data.position,
         data.rotation
       )
+      gameStore.update((state) => {
+        const player = state.otherPlayers.get(data.player_id)
+        if (player) player.floorLevel = data.floor_level
+        return state
+      })
       break
     }
 

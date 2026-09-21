@@ -2198,12 +2198,7 @@ impl super::GameState {
             .await;
     }
 
-    /// Shared bookkeeping after a position write: spatial cell, dirty flag,
-    /// floor-change handling and AOI fanout of `update_msg`. Every relocation
-    /// funnels through here — client moves, tick walking, teleports, floor
-    /// changes — so this is also where movement breaks fishing. Turning in
-    /// place is exempt: the cast itself faces the water with a rotation-only
-    /// move.
+    /// Update spatial state, dungeon occupancy, and nearby clients after relocation.
     async fn finish_position_update(
         &self,
         player_id: &PlayerId,
@@ -2230,7 +2225,17 @@ impl super::GameState {
         if old_position != new_position {
             self.check_dungeon_discovery(player_id, &new_position).await;
         }
-        if old_floor != floor_level {
+        let changed_dungeon = old_floor < 0
+            && floor_level < 0
+            && self
+                .dungeon_defs
+                .entrance_at(old_position.x, old_position.z)
+                .zip(
+                    self.dungeon_defs
+                        .entrance_at(new_position.x, new_position.z),
+                )
+                .is_some_and(|(old, new)| old.id != new.id);
+        if old_floor != floor_level || changed_dungeon {
             self.handle_player_floor_change(
                 player_id,
                 old_floor,

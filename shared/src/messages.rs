@@ -25,6 +25,13 @@ pub enum DealKind {
     Sell,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TeleportPhase {
+    Departing,
+    Arriving,
+    Cancelled,
+}
+
 /// Why a `PlayerAttack` request was dropped. Deliberately coarse: a stale id
 /// must not reveal hidden monster state such as its floor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -550,6 +557,9 @@ pub enum ClientMessage {
     UseItem {
         instance_id: u64,
     },
+    UseTeleportScroll {
+        instance_id: u64,
+    },
     UseLandDocument {
         instance_id: u64,
         tile_x: i32,
@@ -970,6 +980,12 @@ pub enum ServerMessage {
         rotation: f32,
         #[serde(default)]
         floor_level: i8,
+    },
+    PlayerTeleportEffect {
+        player_id: PlayerId,
+        position: Position,
+        floor_level: i8,
+        phase: TeleportPhase,
     },
     /// A dungeon treasure chest was opened. The rolled items burst out of
     /// the chest as ground drops moments later; the gold goes straight to
@@ -1936,7 +1952,8 @@ impl ServerMessage {
             | Self::MealEaten { .. }
             | Self::MealRemoved { .. }
             | Self::PlayerRadianceToggled { .. } => DeliveryClass::NearbyState,
-            Self::DungeonChestOpened { .. }
+            Self::PlayerTeleportEffect { .. }
+            | Self::DungeonChestOpened { .. }
             | Self::ChatMessage { .. }
             | Self::Recital { .. }
             | Self::PlayerAttacked { .. }

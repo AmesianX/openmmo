@@ -53,6 +53,7 @@ mod skills_tests;
 mod spawn_scale_tests;
 mod spawn_soak_tests;
 mod stall_tests;
+mod teleport_scroll_tests;
 mod tip_hat_tests;
 mod title_tests;
 mod trading_tests;

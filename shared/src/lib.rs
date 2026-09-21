@@ -182,7 +182,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v91: targeted Auscultation and private inspection results.
 /// v92: FishingFight carries the angler's stance for reel animation.
 /// v93: permanent learned skills replace skill XP and levels.
-pub const PROTOCOL_VERSION: u32 = 93;
+/// v94: teleport departure and arrival effects.
+/// v95: teleport scroll requests follow the client's departure animation.
+pub const PROTOCOL_VERSION: u32 = 95;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -254,7 +256,7 @@ pub use entity::{Monster, MonsterLifecycle, MonsterState, Player, PlayerId};
 pub use messages::{
     deserialize_client_msg, deserialize_server_msg, serialize_client_msg, serialize_server_msg,
     ActiveDeal, AttackRejectReason, ClientMessage, DealKind, InstrumentNoteEvent, ServerMessage,
-    INSTRUMENT_BATCH_MS, INSTRUMENT_MAX_EVENTS_PER_BATCH, INSTRUMENT_NOTE_COUNT,
+    TeleportPhase, INSTRUMENT_BATCH_MS, INSTRUMENT_MAX_EVENTS_PER_BATCH, INSTRUMENT_NOTE_COUNT,
 };
 pub use world::{
     shortest_world_delta_x, wrap_world_x, GameDateTime, NoSpawnZone, Position,

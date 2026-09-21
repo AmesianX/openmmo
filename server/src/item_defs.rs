@@ -236,6 +236,7 @@ pub enum UseEffect {
     PlaceCampfire,
     /// Teleport the user back to the town spawn point.
     TeleportTown,
+    TeleportRandom,
     /// Add +1 enchantment to the wielded weapon (NetHack style).
     EnchantWeapon,
     /// Add +1 enchantment to one random worn armor piece.
@@ -402,6 +403,7 @@ impl ItemDefinition {
             }),
             "campfire_kit" => Some(UseEffect::PlaceCampfire),
             "return_scroll" => Some(UseEffect::TeleportTown),
+            "teleport_scroll" => Some(UseEffect::TeleportRandom),
             "horse_reins" => Some(UseEffect::ToggleMount(
                 onlinerpg_shared::mount::MountKind::Horse,
             )),

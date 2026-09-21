@@ -12,6 +12,16 @@ import type {
 import { hmrSingleton } from '../utils/hmr'
 import type { WallDirection } from '../utils/house-geometry'
 import { gameStore, resetGameStore, serverNotice } from '../stores/gameStore'
+import { get } from 'svelte/store'
+import { inventoryStore } from '../stores/inventoryStore'
+import { getItemDef } from '../data/itemDefs'
+import { currentDungeonDepth } from '../stores/dungeonStore'
+import { playerVisualFloorLevel } from '../stores/housingStore'
+import {
+  beginLocalTeleport,
+  localTeleportActive,
+  resetTeleportEffects,
+} from '../stores/teleportEffectStore'
 import { resetPartyStores } from '../stores/partyStore'
 import { resetFriendStores } from '../stores/friendStore'
 import { resetPlayerTrade } from '../stores/playerTradeStore'
@@ -244,6 +254,7 @@ class NetworkManager {
     }
 
     this.socket.onclose = (event) => {
+      resetTeleportEffects()
       worldView.synchronized = false
       resetTerrainDownloads()
       resetFences()
@@ -745,6 +756,40 @@ class NetworkManager {
 
   sendUseItem(instanceId: number) {
     if (!this.isNetworkableInstanceId(instanceId, 'use')) return
+    if (get(localTeleportActive)) return
+    const item = get(inventoryStore).bag.find(
+      (entry) => entry.instance_id === instanceId
+    )
+    if (item && getItemDef(item.item_def_id)?.category === 'teleport_scroll') {
+      const player = get(gameStore).currentPlayer
+      if (!player || player.health <= 0 || !this.isConnected()) return
+      const position = {
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+      }
+      const depth = get(currentDungeonDepth)
+      const floorLevel =
+        depth > 0 ? -depth : Math.max(0, get(playerVisualFloorLevel))
+      this.sendPlayerMove(position, player.rotation, floorLevel)
+      beginLocalTeleport({ playerId: player.id, position, floorLevel }, () => {
+        const current = get(gameStore).currentPlayer
+        if (
+          !current ||
+          current.id !== player.id ||
+          current.health <= 0 ||
+          Math.hypot(
+            current.position.x - position.x,
+            current.position.z - position.z
+          ) > 0.1
+        )
+          return false
+        return this.sendAndSerialize({
+          UseTeleportScroll: { instance_id: instanceId },
+        })
+      })
+      return
+    }
     this.sendMessage({ UseItem: { instance_id: instanceId } })
   }
 
@@ -1396,6 +1441,7 @@ class NetworkManager {
   // --- Connection management ---
 
   disconnect() {
+    resetTeleportEffects()
     worldView.synchronized = false
     resetTerrainDownloads()
     if (this.reconnectTimer) {

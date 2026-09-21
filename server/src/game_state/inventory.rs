@@ -952,6 +952,7 @@ impl super::GameState {
             UseEffect::Eat(eat) => self.use_eat_item(player_id, instance_id, &eat, None).await,
             UseEffect::PlaceCampfire => self.use_campfire_kit(player_id, instance_id).await,
             UseEffect::TeleportTown => self.use_return_scroll(player_id, instance_id).await,
+            UseEffect::TeleportRandom => self.use_teleport_scroll(player_id, instance_id).await,
             UseEffect::EnchantWeapon => {
                 self.use_enchant_weapon_scroll(player_id, instance_id).await
             }

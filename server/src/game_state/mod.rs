@@ -237,6 +237,7 @@ mod pricing;
 pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
 mod skills;
+mod teleport_scroll;
 pub(crate) use skills::skills_from_rows;
 mod meal;
 mod stall;

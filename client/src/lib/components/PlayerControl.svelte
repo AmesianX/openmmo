@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { localTeleportActive } from '../stores/teleportEffectStore'
   import {
     inspectionTargeting,
     cancelInspection,
@@ -822,6 +823,7 @@
     append = false,
     keyboardForward?: number
   ) {
+    if ($localTeleportActive) return
     cancelMountRecovery()
     const wrappedPosition = { ...position, x: wrapWorldX(position.x) }
     const floorLevel = wireFloorLevel(passabilityFloor)
@@ -2357,6 +2359,7 @@
   }
 
   function handleCanvasClickIntent(event: MouseEvent) {
+    if ($localTeleportActive) return
     if (get(inspectionTargeting)) {
       if (event.button !== 0) return
       const hover = inputHandler.processHover(event, {
@@ -2427,6 +2430,7 @@
 
   function handleCanvasDragMove(event: MouseEvent) {
     if (
+      $localTeleportActive ||
       !currentPlayer ||
       currentPlayer.health <= 0 ||
       $cameraRotationEnabled ||
@@ -2540,6 +2544,7 @@
   }
 
   function dispatchPlayerControlEvent(event: PlayerControlEvent) {
+    if ($localTeleportActive && event.type === 'canvas_intent') return
     // A fresh click supersedes the armed walk-up action, even one that starts
     // no movement of its own (a cast, an in-reach interaction). A click that
     // hit nothing at all shouldn't cancel the walk the player is already on.
@@ -2575,6 +2580,7 @@
     deltaTime: number,
     options: PlayerControlUpdateOptions
   ) {
+    if ($localTeleportActive) return
     if (options.editorMode) {
       cancelAutoTravel()
       if (currentPlayer) {
@@ -2719,6 +2725,24 @@
   currentDungeonDepth.subscribe(() => clearHover())
 
   onMount(() => {
+    const unsubscribeTeleportEffect = localTeleportActive.subscribe(
+      (active) => {
+        if (!active) return
+        cancelMountRecovery()
+        cancelAutoTravel()
+        combatController.cancelCombat()
+        clearStandUpTimer()
+        clearPropSwingTimers()
+        clearDoorInteractionRetry()
+        keyboardMoveSender.reset()
+        keyboardSpeedRamp.reset()
+        inputHandler.clearTransientInput()
+        currentSpeed = 0
+        clickSprinting = false
+        transitionTo('idle')
+        updatePlayerState()
+      }
+    )
     const canvasCursor = renderer.domElement.style.cursor
     const unsubscribeTargeting = derived(
       [inspectionTargeting, fishingTargeting],
@@ -2835,6 +2859,7 @@
       renderer.domElement.style.cursor = canvasCursor
       unsubscribeTravel()
       unsubscribeTeleport()
+      unsubscribeTeleportEffect()
       unsubscribeTravelPlayer()
       travelDestination.set(null)
       removeInputListeners()

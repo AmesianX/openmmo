@@ -460,6 +460,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PlayerDisappeared { .. } => "PlayerDisappeared",
         ServerMessage::PlayerMoved { .. } => "PlayerMoved",
         ServerMessage::PlayerTeleported { .. } => "PlayerTeleported",
+        ServerMessage::PlayerTeleportEffect { .. } => "PlayerTeleportEffect",
         ServerMessage::MountRecovery { .. } => "MountRecovery",
         ServerMessage::PositionCorrected { .. } => "PositionCorrected",
         ServerMessage::MovementResync { .. } => "MovementResync",

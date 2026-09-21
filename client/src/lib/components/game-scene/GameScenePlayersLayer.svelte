@@ -6,6 +6,8 @@
   import PlayerModel from '../PlayerModel.svelte'
   import GameSceneAbilitiesLayer from './GameSceneAbilitiesLayer.svelte'
   import GameSceneEnchantSuccessLayer from './GameSceneEnchantSuccessLayer.svelte'
+  import GameSceneTeleportLayer from './GameSceneTeleportLayer.svelte'
+  import { teleportHiddenPlayers } from '../../stores/teleportEffectStore'
   import type { EnchantSuccess } from '../../stores/enchantSuccessStore'
   import type { EnchantEffectAnchor } from '../../utils/playerEffectAnchors'
   import { applyEnchantLight } from '../../utils/enchantLight'
@@ -279,6 +281,7 @@
   }
 
   let enchantLayer: GameSceneEnchantSuccessLayer | undefined
+  let teleportLayer: GameSceneTeleportLayer | undefined
   // One shadow light: enchantment, fire, local light, then nearby light.
   let unifiedTorchLight = $state<THREE.PointLight | undefined>(undefined)
 
@@ -545,6 +548,7 @@
   }
 
   export function updateUnifiedTorchFlicker(deltaTime: number) {
+    teleportLayer?.update()
     enchantLayer?.update()
     if (currentPlayer) updateRadianceStrength(currentPlayer, deltaTime)
     for (const player of otherPlayers.values())
@@ -593,6 +597,7 @@
   }
 </script>
 
+<GameSceneTeleportLayer bind:this={teleportLayer} {currentPlayer} />
 <GameSceneEnchantSuccessLayer
   bind:this={enchantLayer}
   {currentPlayer}
@@ -657,6 +662,7 @@
 {#if currentPlayer && cameraInitialized && camera}
   <PlayerModel
     bind:this={currentPlayerModel}
+    teleportHidden={$teleportHiddenPlayers.has(currentPlayer.id)}
     position={currentPlayer.position}
     mount={currentPlayer.mount}
     name={currentPlayer.name}
@@ -717,6 +723,7 @@
         caught !== undefined && remotePlayer.state === 'idle'}
       <PlayerModel
         bind:this={otherPlayerModels[index]}
+        teleportHidden={$teleportHiddenPlayers.has(player.id)}
         position={new THREE.Vector3(
           displayX,
           visible ? baseY : OFFSCREEN_Y,

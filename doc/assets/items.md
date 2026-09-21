@@ -104,6 +104,7 @@
     - 원화는 사용자가 제공한 ChatGPT 생성 이미지(2026-09-05, 요금제 미확인, ChatGPT 생성물 약관 적용). `assets/ChatGPT Image 2026년 9월 5일 오후 03_10_38.png`를 원본 해상도 그대로 이동했다. ![원화](../images/items/land_deed.png)
 - scroll_of_party_summon.png — scroll_of_return.png의 hue-rotation 파생 (스크립트, 2026-07-31): 붉은 봉인·장식 → 보라. 3D는 기존 scroll.glb 재사용
 - scroll_of_estate_return — 기존 `scroll_of_return.png`·`scroll.glb` 재사용 (2026-09-08). 새로 생성한 에셋은 없으며 출처·라이선스는 기존 스크롤 항목을 따른다.
+- scroll_of_teleportation — 기존 `scroll_of_return.png`·`scroll.glb` 재사용 (2026-09-21). 출처·라이선스는 기존 스크롤과 [props.md](props.md)의 `scroll.glb` 항목을 따른다. 새 에셋 생성 없음.
 - scroll_of_enchant_armor.png — scroll_of_enchant_weapon.png의 hue-rotation 파생 (스크립트, 2026-08-15): 파란 봉인 → 초록. 3D는 같은 색 변환을 적용한 scroll_enchant_armor.glb (doc/assets/props.md의 scroll 항목 참조)
 - Hunger icons — 자체 제작 프로시저럴 플레이스홀더 (PIL 스크립트, 2026-08-02, 512² 드로잉→128² 다운스케일, 라이선스 문제 없음). 처음 9개를 만들었고, 남은 플레이스홀더는 grilled_minnow.png, grilled_perch.png, grilled_trout.png, grilled_salmon.png, grilled_sturgeon.png 5개다. 기존 ChatGPT 아이콘 스타일과 다르므로 추후 AI 아이콘으로 교체 예정
     - 교체 완료: apple.png(2026-08-03), bread.png·jerky.png(2026-08-04) — 각 모델의 Cycles 렌더. cheese.png는 cheese_wedge.png로 대체되고 삭제됨

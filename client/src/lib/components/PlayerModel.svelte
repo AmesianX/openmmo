@@ -179,6 +179,7 @@
   import { billboardScale, billboardZoomT } from '../utils/billboardScale'
 
   interface Props {
+    teleportHidden?: boolean
     position: Vector3
     name: string
     isCurrentPlayer: boolean
@@ -237,6 +238,7 @@
   }
 
   let {
+    teleportHidden = false,
     position,
     name,
     isCurrentPlayer,
@@ -1836,154 +1838,156 @@
   }
 </script>
 
-<!-- Character Model -->
-{#if boatWater}
-  <T is={boatWater.group} />
-{/if}
-{#if modelRoot}
-  <T.Group
-    bind:ref={modelGroup}
-    position={[position.x, position.y, position.z]}
-    rotation={[0, rotation, 0]}
-  >
-    <!-- 3D Character Model with real animations -->
-    {#if horseMount}
-      <T is={horseMount.root} />
-    {/if}
-    {#if boatMount}
-      <T is={boatMount.root} />
-    {/if}
-    <T.Group bind:ref={riderGroup}>
-      <T is={modelRoot} />
-    </T.Group>
-  </T.Group>
-{/if}
-
-{#if !isCurrentPlayer && remotePlayerId !== undefined}
-  <!-- Invisible box the 20 Hz hover raycast tests; kept out of the model
-       group so clicks still hit the actual silhouette. -->
-  <T.Group
-    bind:ref={hoverProxyGroup}
-    position={[position.x, position.y, position.z]}
-    userData={{ remotePlayerId }}
-  >
-    <T.Mesh
-      visible={false}
-      geometry={HOVER_GEOMETRY}
-      material={HOVER_MATERIAL}
-      position={[0, HOVER_BOX.y / 2, 0]}
-      scale={isHoveredPlayer ? HOVER_SCALE_STICKY : HOVER_SCALE_IDLE}
-    />
-  </T.Group>
-
-  {#if isHoveredPlayer && ringPos && health > 0}
-    <TargetRing
-      {heightManager}
-      x={ringPos.x}
-      z={ringPos.z}
-      radius={0.55}
-      {floorLevel}
-      fallbackY={ringPos.y}
-      color="#4da6ff"
-    />
+<T.Group visible={!teleportHidden}>
+  <!-- Character Model -->
+  {#if boatWater}
+    <T is={boatWater.group} />
   {/if}
-{/if}
+  {#if modelRoot}
+    <T.Group
+      bind:ref={modelGroup}
+      position={[position.x, position.y, position.z]}
+      rotation={[0, rotation, 0]}
+    >
+      <!-- 3D Character Model with real animations -->
+      {#if horseMount}
+        <T is={horseMount.root} />
+      {/if}
+      {#if boatMount}
+        <T is={boatMount.root} />
+      {/if}
+      <T.Group bind:ref={riderGroup}>
+        <T is={modelRoot} />
+      </T.Group>
+    </T.Group>
+  {/if}
 
-<!-- Torch fire particles (world space) -->
-{#if torchFireGroup}
-  <T is={torchFireGroup} />
-{/if}
-
-{#snippet resourceBar(y: number, ratio: number, color: string)}
-  <T.Group position.y={y} renderOrder={LOCAL_NAMETAG_RENDER_ORDER}>
-    <T.Mesh>
-      <T.PlaneGeometry args={[HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT]} />
-      <T.MeshBasicMaterial
-        color="#000000"
-        transparent
-        opacity={0.5}
-        depthTest={false}
-        depthWrite={false}
-      />
-    </T.Mesh>
-    {#if ratio > 0}
+  {#if !isCurrentPlayer && remotePlayerId !== undefined}
+    <!-- Invisible box the 20 Hz hover raycast tests; kept out of the model
+       group so clicks still hit the actual silhouette. -->
+    <T.Group
+      bind:ref={hoverProxyGroup}
+      position={[position.x, position.y, position.z]}
+      userData={{ remotePlayerId }}
+    >
       <T.Mesh
-        position.x={-HEALTH_BAR_WIDTH / 2}
-        position.z={0.001}
-        scale.x={ratio}
-        renderOrder={1}
-      >
-        <T is={healthBarFillGeometry} />
+        visible={false}
+        geometry={HOVER_GEOMETRY}
+        material={HOVER_MATERIAL}
+        position={[0, HOVER_BOX.y / 2, 0]}
+        scale={isHoveredPlayer ? HOVER_SCALE_STICKY : HOVER_SCALE_IDLE}
+      />
+    </T.Group>
+
+    {#if isHoveredPlayer && ringPos && health > 0}
+      <TargetRing
+        {heightManager}
+        x={ringPos.x}
+        z={ringPos.z}
+        radius={0.55}
+        {floorLevel}
+        fallbackY={ringPos.y}
+        color="#4da6ff"
+      />
+    {/if}
+  {/if}
+
+  <!-- Torch fire particles (world space) -->
+  {#if torchFireGroup}
+    <T is={torchFireGroup} />
+  {/if}
+
+  {#snippet resourceBar(y: number, ratio: number, color: string)}
+    <T.Group position.y={y} renderOrder={LOCAL_NAMETAG_RENDER_ORDER}>
+      <T.Mesh>
+        <T.PlaneGeometry args={[HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT]} />
         <T.MeshBasicMaterial
-          {color}
+          color="#000000"
           transparent
+          opacity={0.5}
           depthTest={false}
           depthWrite={false}
         />
       </T.Mesh>
-    {/if}
-  </T.Group>
-{/snippet}
+      {#if ratio > 0}
+        <T.Mesh
+          position.x={-HEALTH_BAR_WIDTH / 2}
+          position.z={0.001}
+          scale.x={ratio}
+          renderOrder={1}
+        >
+          <T is={healthBarFillGeometry} />
+          <T.MeshBasicMaterial
+            {color}
+            transparent
+            depthTest={false}
+            depthWrite={false}
+          />
+        </T.Mesh>
+      {/if}
+    </T.Group>
+  {/snippet}
 
-<!-- Name tag (separate from character to avoid rotation inheritance) -->
-<T.Group
-  bind:ref={nametagGroup}
-  renderOrder={isCurrentPlayer ? LOCAL_NAMETAG_RENDER_ORDER : 0}
->
-  {#if title}
+  <!-- Name tag (separate from character to avoid rotation inheritance) -->
+  <T.Group
+    bind:ref={nametagGroup}
+    renderOrder={isCurrentPlayer ? LOCAL_NAMETAG_RENDER_ORDER : 0}
+  >
+    {#if title}
+      <TextLabel
+        text={$titleName(title)}
+        fontSize={0.17}
+        color="#d6bcfa"
+        outlineColor="#000000"
+        outlineWidth={7}
+        anchorX="center"
+        anchorY="middle"
+        position={[0, isCurrentPlayer ? 0.26 : 0.3, 0]}
+        depthTest={!isCurrentPlayer}
+      />
+    {/if}
     <TextLabel
-      text={$titleName(title)}
-      fontSize={0.17}
-      color="#d6bcfa"
+      text={name}
+      position={[0, isCurrentPlayer ? -0.04 : 0, 0]}
+      fontSize={0.3}
+      color={isCurrentPlayer ? '#4299e1' : '#ffffff'}
       outlineColor="#000000"
       outlineWidth={7}
       anchorX="center"
       anchorY="middle"
-      position={[0, isCurrentPlayer ? 0.26 : 0.3, 0]}
       depthTest={!isCurrentPlayer}
     />
-  {/if}
-  <TextLabel
-    text={name}
-    position={[0, isCurrentPlayer ? -0.04 : 0, 0]}
-    fontSize={0.3}
-    color={isCurrentPlayer ? '#4299e1' : '#ffffff'}
-    outlineColor="#000000"
-    outlineWidth={7}
-    anchorX="center"
-    anchorY="middle"
-    depthTest={!isCurrentPlayer}
-  />
 
-  {#if isCurrentPlayer}
-    {@render resourceBar(
-      -0.42 + HEALTH_BAR_HEIGHT,
-      Math.max(0.001, displayedHealthRatio),
-      '#ff0000'
-    )}
-    {#if $visibleMana}
+    {#if isCurrentPlayer}
       {@render resourceBar(
-        -0.42,
-        $visibleMana.mana / $visibleMana.max_mana,
-        '#4299e1'
+        -0.42 + HEALTH_BAR_HEIGHT,
+        Math.max(0.001, displayedHealthRatio),
+        '#ff0000'
       )}
+      {#if $visibleMana}
+        {@render resourceBar(
+          -0.42,
+          $visibleMana.mana / $visibleMana.max_mana,
+          '#4299e1'
+        )}
+      {/if}
     {/if}
-  {/if}
 
-  {#if animDebugInfo}
-    <TextLabel
-      text={animDebugInfo}
-      fontSize={0.2}
-      color="#ffff00"
-      position={[0, 0.4, 0]}
-      anchorX="center"
-      anchorY="middle"
-      depthTest={!isCurrentPlayer}
-    />
+    {#if animDebugInfo}
+      <TextLabel
+        text={animDebugInfo}
+        fontSize={0.2}
+        color="#ffff00"
+        position={[0, 0.4, 0]}
+        anchorX="center"
+        anchorY="middle"
+        depthTest={!isCurrentPlayer}
+      />
+    {/if}
+  </T.Group>
+
+  <!-- Chat bubble (appears above player when they send a message) -->
+  {#if chatBubble}
+    <ChatBubble {position} {camera} message={chatBubble} />
   {/if}
 </T.Group>
-
-<!-- Chat bubble (appears above player when they send a message) -->
-{#if chatBubble}
-  <ChatBubble {position} {camera} message={chatBubble} />
-{/if}
