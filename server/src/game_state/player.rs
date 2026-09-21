@@ -240,6 +240,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_save_data(
     player: &Player,
     character_id: i64,
@@ -248,6 +249,7 @@ pub(super) fn build_save_data(
     satiation: u32,
     active_ammo: Option<String>,
     mana: Option<u32>,
+    dungeon_epoch: i64,
 ) -> CharacterSaveData {
     CharacterSaveData {
         character_id,
@@ -261,6 +263,7 @@ pub(super) fn build_save_data(
         health: player.health,
         mana,
         floor_level: player.floor_level,
+        dungeon_epoch: (player.floor_level < 0).then_some(dungeon_epoch),
         gold,
         satiation,
         active_ammo,
@@ -739,6 +742,7 @@ impl super::GameState {
         let inventories = self.inventories.read().await;
 
         let mana = self.mana.read().await;
+        let dungeon_epoch = self.dungeon_save_epoch().await;
         let mut characters = Vec::with_capacity(player_characters.len());
         let mut inventory_rows = Vec::with_capacity(player_characters.len());
 
@@ -754,6 +758,7 @@ impl super::GameState {
                         .get(player_id)
                         .and_then(|inv| inv.active_ammo.clone()),
                     mana.get(player_id).map(|data| data.mana),
+                    dungeon_epoch,
                 ));
             }
             if let Some(inventory) = inventories.get(player_id) {
@@ -2740,6 +2745,7 @@ impl super::GameState {
         let inventories = self.inventories.read().await;
         let mana = self.mana.read().await;
         let mut result = Vec::with_capacity(dirty_ids.len());
+        let dungeon_epoch = self.dungeon_save_epoch().await;
         for pid in &dirty_ids {
             if let (Some(player), Some((char_id, xp, _))) =
                 (players.get(pid), player_chars.get(pid))
@@ -2755,6 +2761,7 @@ impl super::GameState {
                     satiation,
                     ammo,
                     mana.get(pid).map(|data| data.mana),
+                    dungeon_epoch,
                 ));
             }
         }
@@ -2780,8 +2787,16 @@ impl super::GameState {
             .and_then(|inv| inv.active_ammo.clone());
 
         let mana = self.mana.read().await.get(player_id).map(|data| data.mana);
+        let dungeon_epoch = self.dungeon_save_epoch().await;
         Some(build_save_data(
-            player, *char_id, *xp, gold, satiation, ammo, mana,
+            player,
+            *char_id,
+            *xp,
+            gold,
+            satiation,
+            ammo,
+            mana,
+            dungeon_epoch,
         ))
     }
 

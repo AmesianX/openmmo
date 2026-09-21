@@ -5,6 +5,7 @@ mod chest_tests;
 mod discovery_tests;
 mod door_tests;
 mod monster_tests;
+mod reconnect_tests;
 mod respawn_tests;
 mod skeleton_tests;
 

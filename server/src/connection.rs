@@ -1193,13 +1193,12 @@ async fn handle_client_message(
                     saved_floor, selected_character.name
                 );
             }
-            // A negative floor means the player logged out inside a
-            // dungeon: re-prime that dungeon's runtime, or fall back to
-            // the world spawn if the entrance no longer exists.
+            let mut dungeon_reset_on_login = false;
             if player.floor_level < 0 {
                 let ok = game_state
-                    .rehydrate_dungeon_player(&player.id, &player.position, player.floor_level)
+                    .rehydrate_dungeon_player(&mut player, selected_character.dungeon_epoch)
                     .await;
+                dungeon_reset_on_login = ok && player.floor_level == 0;
                 if !ok {
                     let spawn = &crate::world_config::world_config().spawn_position;
                     player.position = spawn.position();
@@ -1368,6 +1367,11 @@ async fn handle_client_message(
             // After the snapshot on purpose: the client treats `GameState` as
             // the start of a session and clears its friend stores there.
             responses.push(game_state.friend_list_message(&id).await);
+            if dungeon_reset_on_login {
+                responses.push(ServerMessage::SystemMessage {
+                    message: "The dungeon has reset. You return to its entrance.".to_string(),
+                });
+            }
             if rejoin_floor < 0 {
                 // Restore floor occupancy and populate empty monster slots.
                 game_state
@@ -2473,6 +2477,113 @@ fn default_character_max_hp(
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;
+
+    #[tokio::test]
+    async fn enter_game_restores_only_current_dungeon_visits() {
+        use onlinerpg_shared::dungeon::{cell_center, entrance, generate_dungeon_for};
+
+        for expired in [false, true] {
+            let label = format!("enter_dungeon_{expired}");
+            let game = Arc::new(crate::game_state::tests::make_test_game_state(&label));
+            let auth = Arc::new(crate::game_state::tests::make_test_auth(&label));
+            let account = auth.login_npc("npc_enter_dungeon").unwrap();
+            let character = auth
+                .create_character(
+                    &account,
+                    "Delver",
+                    &CharacterAttributes {
+                        r#str: 12,
+                        dex: 12,
+                        con: 12,
+                        int: 12,
+                        wis: 12,
+                        cha: 12,
+                        guard: 10,
+                    },
+                    16,
+                    CharacterClass::Knight,
+                    crate::types::Gender::Male,
+                )
+                .unwrap();
+            let entrance = entrance("skeleton_crypt").unwrap().position();
+            let chest = generate_dungeon_for("skeleton_crypt")[19].chest.unwrap();
+            let position = cell_center(&entrance, 20, chest);
+            let epoch = GameState::night_epoch(game.current_total_game_seconds());
+            auth.save_batch(
+                &[crate::auth::CharacterSaveData {
+                    character_id: character.id,
+                    x: position.x,
+                    y: position.y,
+                    z: position.z,
+                    rotation: 0.0,
+                    xp: 0,
+                    level: 1,
+                    max_hp: 16,
+                    health: 7,
+                    mana: None,
+                    floor_level: -20,
+                    dungeon_epoch: Some(epoch - i64::from(expired)),
+                    gold: 123,
+                    satiation: character.satiation,
+                    active_ammo: None,
+                }],
+                &[],
+                &[],
+                &[],
+                None,
+            )
+            .unwrap();
+            let mut inventory = auth.load_inventory(character.id).unwrap();
+            inventory.sort_by(|a, b| a.item_def_id.cmp(&b.item_def_id));
+            let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+            handle_handshake(
+                &client_info(onlinerpg_shared::PROTOCOL_VERSION, "web"),
+                &mut state,
+            );
+            finish_auth(&game, &auth, &mut state, account.clone(), false).await;
+            let auth_ctx = Arc::new(AuthContext {
+                google: None,
+                npc_token: String::new(),
+                admin_emails: vec![],
+            });
+            let request = onlinerpg_shared::serialize_client_msg(&ClientMessage::EnterGame {
+                character_id: character.id,
+            })
+            .unwrap();
+            let responses = handle_client_message(&request, &game, &auth, &auth_ctx, &mut state)
+                .await
+                .unwrap();
+            let player = responses
+                .iter()
+                .find_map(|message| match message {
+                    ServerMessage::JoinSuccess { player, .. } => Some(player),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected game entry, got {responses:?}"));
+            assert_eq!(player.floor_level, if expired { 0 } else { -20 });
+            let expected = if expired { entrance } else { position };
+            assert!(player.position.dist_xz_sq(&expected) < 0.01);
+            assert_eq!(player.health, 7);
+            assert_eq!(
+                responses.iter().any(|message| matches!(message,
+                    ServerMessage::SystemMessage { message } if message.contains("dungeon has reset")
+                )),
+                expired
+            );
+
+            game.end_account_session(&account, state.account_session_id.unwrap(), &auth)
+                .await;
+            let saved = auth
+                .get_character_for_account(&account, character.id)
+                .unwrap();
+            assert_eq!(saved.floor_level, player.floor_level);
+            assert_eq!(saved.dungeon_epoch, (!expired).then_some(epoch));
+            assert_eq!(saved.gold, 123);
+            let mut saved_inventory = auth.load_inventory(character.id).unwrap();
+            saved_inventory.sort_by(|a, b| a.item_def_id.cmp(&b.item_def_id));
+            assert_eq!(saved_inventory, inventory);
+        }
+    }
 
     #[test]
     fn token_matches_requires_exact_token() {

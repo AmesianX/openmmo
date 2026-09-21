@@ -1103,6 +1103,7 @@ impl super::GameState {
 
         let save_data = {
             let players = self.players.read().await;
+            let dungeon_epoch = self.dungeon_save_epoch().await;
             let hunger = self.hunger.read().await;
             let inventories = self.inventories.read().await;
             let mana = self.mana.read().await;
@@ -1121,6 +1122,7 @@ impl super::GameState {
                         super::hunger::satiation_for_save(&hunger, &a_id),
                         ammo_of(&a_id),
                         mana.get(&a_id).map(|data| data.mana),
+                        dungeon_epoch,
                     ),
                     build_save_data(
                         b,
@@ -1130,6 +1132,7 @@ impl super::GameState {
                         super::hunger::satiation_for_save(&hunger, &b_id),
                         ammo_of(&b_id),
                         mana.get(&b_id).map(|data| data.mana),
+                        dungeon_epoch,
                     ),
                 ]),
                 _ => None,

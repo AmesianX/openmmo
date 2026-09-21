@@ -468,9 +468,7 @@ pub struct GameState {
     fences: Arc<RwLock<fence::FenceIndex>>,
     /// Price index + meeting bookkeeping (doc/PRICING.md), mirrored in DB.
     pricing: Arc<RwLock<crate::auth::PricingState>>,
-    /// Last `night_epoch` the dungeons were reset on. `None` until the first
-    /// tick after boot, which records without resetting.
-    dungeon_reset_last_epoch: Arc<RwLock<Option<i64>>>,
+    dungeon_reset: Arc<RwLock<dungeon::DungeonResetState>>,
     /// Dungeon entrance registry (data/dungeons.json).
     dungeon_defs: crate::dungeon_defs::DungeonDefs,
     /// Live dungeon runtimes, keyed by entrance id. Created lazily.
@@ -752,7 +750,7 @@ impl GameState {
             estate_chests: Arc::new(RwLock::new(estate_storage::EstateChestIndex::default())),
             fences: Arc::new(RwLock::new(fence::FenceIndex::default())),
             pricing: Arc::new(RwLock::new(Default::default())),
-            dungeon_reset_last_epoch: Arc::new(RwLock::new(None)),
+            dungeon_reset: Arc::new(RwLock::new(Default::default())),
             dungeon_defs,
             dungeons: Arc::new(RwLock::new(HashMap::new())),
             dungeon_monsters: Arc::new(RwLock::new(HashMap::new())),

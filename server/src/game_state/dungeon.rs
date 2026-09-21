@@ -1,11 +1,5 @@
-//! Server-side dungeon runtime. Layouts are regenerated deterministically
-//! from the entrance id (same shared-crate generator the client runs via
-//! wasm), so the runtime holds only live state: cached layouts and spawn
-//! slots. That state is in-memory — after a restart, reconnecting players
-//! rehydrate from the generator plus their persisted position/floor_level.
-//! The one exception is the treasure-chest claim, which is DB-backed
-//! (`GameState::chest_opens`) because a lost claim is free loot. Locked
-//! floors, keys and the keyed chest: doc/DUNGEON_REWARD.md.
+//! Dungeon layouts and spawn state; visits and chest claims persist in the DB.
+//! Locked floors, keys and chest rewards: doc/DUNGEON_REWARD.md.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -22,7 +16,7 @@ use onlinerpg_shared::{wrap_world_x, Position, ServerMessage};
 use rand::Rng;
 use tracing::{info, warn};
 
-use crate::types::PlayerId;
+use crate::types::{Player, PlayerId};
 
 use super::GameState;
 
@@ -52,6 +46,12 @@ const SPAWN_RETRY_MS: u64 = 10 * 1000;
 const CHEST_LOOT_SCATTER_MIN: f32 = 0.8;
 const CHEST_LOOT_SCATTER_MAX: f32 = 3.0;
 pub(super) const DUNGEON_RESET_WARNING_DURATION: Duration = Duration::from_millis(4_640);
+
+#[derive(Default)]
+pub(super) struct DungeonResetState {
+    started_epoch: Option<i64>,
+    completed_epoch: Option<i64>,
+}
 
 /// How close a player must stand to a prop to break (barrel/crate) or open
 /// (chest, the treasure chest included) it.
@@ -1242,35 +1242,35 @@ impl GameState {
         }
     }
 
-    /// Sunset closes the dungeon day: everyone inside is put out at the
-    /// entrance and the guardians rise again. Tied to `night_epoch` because
-    /// the chest's one-open-per-character runs on that clock too.
+    /// Warning-time saves still belong to the visit being evicted.
+    pub(super) async fn dungeon_save_epoch(&self) -> i64 {
+        self.dungeon_reset
+            .read()
+            .await
+            .completed_epoch
+            .unwrap_or_else(|| Self::night_epoch(self.current_total_game_seconds()))
+    }
+
+    /// Sunset returns occupants to the entrance and revives the guardians.
     pub async fn tick_dungeon_reset(&self) {
         let epoch = Self::night_epoch(self.current_total_game_seconds());
         {
-            let mut last = self.dungeon_reset_last_epoch.write().await;
-            match *last {
-                // First tick after boot: record it. A restart must not empty
-                // every dungeon.
+            let mut reset = self.dungeon_reset.write().await;
+            match reset.started_epoch {
                 None => {
-                    *last = Some(epoch);
+                    reset.started_epoch = Some(epoch);
+                    reset.completed_epoch = Some(epoch);
                     return;
                 }
                 Some(seen) if seen >= epoch => return,
-                Some(_) => *last = Some(epoch),
+                Some(_) => reset.started_epoch = Some(epoch),
             }
         }
-        self.reset_dungeons().await;
+        self.reset_dungeons(epoch).await;
     }
 
-    /// Sweep the dungeons empty, then reset the floors that emptied — clearing
-    /// slots under a live floor would orphan its monsters, which
-    /// `leave_dungeon_floor` despawns by reading those very ids. Props and
-    /// doors keep their state; their loot pays once per dungeon instance.
-    ///
-    /// A second pass catches anyone who started descending during the first.
-    /// Whatever it still misses keeps its floor until the next sunset.
-    async fn reset_dungeons(&self) {
+    /// Evict occupants before clearing empty floors; props and doors persist.
+    async fn reset_dungeons(&self, epoch: i64) {
         let warned: Vec<PlayerId> = {
             let dungeons = self.dungeons.read().await;
             dungeons
@@ -1287,6 +1287,8 @@ impl GameState {
             tokio::time::sleep(DUNGEON_RESET_WARNING_DURATION).await;
         }
 
+        // Finish in-flight logins before collecting occupants.
+        let _sessions = self.lock_character_sessions().await;
         let mut evicted = Vec::new();
         for _ in 0..2 {
             let occupants: Vec<(PlayerId, Position)> = {
@@ -1335,6 +1337,8 @@ impl GameState {
                 }
             }
         }
+        drop(dungeons);
+        self.dungeon_reset.write().await.completed_epoch = Some(epoch);
         info!(
             "Dungeons reset for the new night; {} occupant(s) returned to the surface",
             evicted.len()
@@ -1716,25 +1720,32 @@ impl GameState {
         0
     }
 
-    /// Called on login when the persisted floor_level is negative: verify
-    /// the saved position still maps to a known dungeon and prime its
-    /// runtime. Returns false when the dungeon no longer exists (caller
-    /// should fall back to the world spawn).
+    /// Restore a dungeon visit, or return an expired visit to its entrance.
     pub(crate) async fn rehydrate_dungeon_player(
         &self,
-        player_id: &PlayerId,
-        position: &Position,
-        floor_level: i8,
+        player: &mut Player,
+        saved_epoch: Option<i64>,
     ) -> bool {
-        let Some(entrance) = self.dungeon_defs.entrance_at(position.x, position.z) else {
+        let Some(entrance) = self
+            .dungeon_defs
+            .entrance_at(player.position.x, player.position.z)
+        else {
             warn!(
                 "Player {} saved at dungeon floor {} but no entrance covers ({:.1}, {:.1})",
-                player_id, floor_level, position.x, position.z
+                player.id, player.floor_level, player.position.x, player.position.z
             );
             return false;
         };
+        let epoch = Self::night_epoch(self.current_total_game_seconds());
+        if saved_epoch.is_none_or(|saved| saved < epoch) {
+            player.position = entrance.position();
+            player.rotation = 0.0;
+            player.floor_level = 0;
+            info!(player = %player.name, dungeon = %entrance.id, "Offline dungeon visit reset");
+            return true;
+        }
         self.ensure_dungeon_runtime(&entrance.id).await;
-        let depth = (-floor_level) as usize;
+        let depth = (-i16::from(player.floor_level)) as usize;
         let valid = {
             let dungeons = self.dungeons.read().await;
             dungeons
@@ -1744,9 +1755,7 @@ impl GameState {
         if valid {
             info!(
                 "Player {} rehydrated in dungeon '{}' at depth {}",
-                self.player_name_of(player_id).await,
-                entrance.id,
-                depth
+                player.name, entrance.id, depth
             );
         }
         valid

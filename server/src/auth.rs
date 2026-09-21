@@ -244,6 +244,7 @@ pub struct CharacterRecord {
     pub health: Option<u32>,
     pub mana: Option<u32>,
     pub floor_level: i8,
+    pub dungeon_epoch: Option<i64>,
     pub gold: i64,
     /// Nonzero unlocks admin for ADMIN_EMAILS-allowlisted accounts (tiers reserved).
     pub admin_role: i64,
@@ -262,6 +263,7 @@ pub struct CharacterSaveData {
     pub health: u32,
     pub mana: Option<u32>,
     pub floor_level: i8,
+    pub dungeon_epoch: Option<i64>,
     pub gold: i64,
     pub satiation: u32,
     /// The archer's chosen pile; rides the periodic save so a relog resumes
@@ -284,7 +286,7 @@ pub struct TradeLedgerEntry {
 }
 
 /// Column list shared between queries that return full CharacterRecord rows.
-const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role, satiation, mana";
+const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role, satiation, mana, dungeon_epoch";
 
 fn class_from_row(row: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<CharacterClass> {
     let class_str: String = row.get(idx)?;
@@ -342,6 +344,7 @@ fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterR
         mana: row
             .get::<_, Option<i64>>(24)?
             .map(|v| v.clamp(0, i64::from(u32::MAX)) as u32),
+        dungeon_epoch: row.get(25)?,
     })
 }
 
@@ -523,7 +526,8 @@ impl AuthService {
         let mut stmt = conn.prepare(
             "UPDATE characters SET last_x = ?1, last_y = ?2, last_z = ?3, last_rotation = ?4, \
              xp = ?5, level = ?6, max_hp = ?7, health = ?8, floor_level = ?9, gold = ?10, \
-             satiation = ?11, last_seen_at = ?12, active_ammo = ?14, mana = ?15 WHERE id = ?13",
+             satiation = ?11, last_seen_at = ?12, active_ammo = ?14, mana = ?15, \
+             dungeon_epoch = ?16 WHERE id = ?13",
         )?;
         let now = unix_now();
         for d in data {
@@ -543,6 +547,7 @@ impl AuthService {
                 d.character_id,
                 d.active_ammo.as_deref(),
                 d.mana.map(i64::from),
+                d.dungeon_epoch,
             ])?;
         }
         Ok(())
@@ -1393,6 +1398,7 @@ impl AuthService {
             ("health", "INTEGER".into()),
             ("mana", "INTEGER".into()),
             ("floor_level", "INTEGER NOT NULL DEFAULT 0".into()),
+            ("dungeon_epoch", "INTEGER".into()),
             ("gender", "TEXT NOT NULL DEFAULT 'male'".into()),
             ("gold", "INTEGER NOT NULL DEFAULT 0".into()),
             ("admin_role", "INTEGER NOT NULL DEFAULT 0".into()),
@@ -1962,6 +1968,7 @@ impl AuthService {
             health: None,
             mana: None,
             floor_level: 0,
+            dungeon_epoch: None,
             gold: 0,
             admin_role: 0,
             satiation: onlinerpg_shared::hunger::SATIATION_START,
@@ -2458,6 +2465,35 @@ mod tests {
             CharacterClass::Knight,
             Gender::Male,
         )
+    }
+
+    #[test]
+    fn dungeon_epoch_migration_preserves_legacy_character_state() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_dungeon_epoch_migration_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path.clone()).unwrap();
+        let account = auth.login_npc("npc_legacy_dungeon").unwrap();
+        let character = create(&auth, &account, "Delver").unwrap();
+        drop(auth);
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE characters DROP COLUMN dungeon_epoch;
+                 UPDATE characters SET floor_level = -20, health = 7, gold = 123;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let migrated = AuthService::new(db_path).unwrap();
+        let saved = migrated
+            .get_character_for_account(&account, character.id)
+            .unwrap();
+        assert_eq!(saved.dungeon_epoch, None);
+        assert_eq!(saved.floor_level, -20);
+        assert_eq!(saved.health, Some(7));
+        assert_eq!(saved.gold, 123);
     }
 
     #[test]

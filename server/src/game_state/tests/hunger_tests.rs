@@ -842,6 +842,7 @@ fn satiation_survives_a_save_and_reload() {
         health: 16,
         mana: None,
         floor_level: 0,
+        dungeon_epoch: None,
         gold: 0,
         satiation: 123,
         active_ammo: None,
