@@ -1,13 +1,21 @@
-import { persistedBoolean } from './persisted'
+import { persistedBoolean, persistedString } from './persisted'
 
-/** Run without holding Shift. On by default; persisted per browser. */
 export const alwaysRun = persistedBoolean('onlinerpg_alwaysRun', true)
 
-// Cached: sprintRequested runs per frame, so it must not subscribe each call.
+export type KeyboardMovementMode = 'world' | 'character'
+
+export const keyboardMovementMode = persistedString<KeyboardMovementMode>(
+  'onlinerpg_keyboardMovementMode',
+  'world',
+  (value): value is KeyboardMovementMode =>
+    value === 'world' || value === 'character'
+)
+
+// Cache the preference for per-frame reads.
 let alwaysRunNow = false
 alwaysRun.subscribe((v) => (alwaysRunNow = v))
 
-/** Shift inverts the preference: it means "walk" while always-run is on. */
+// Shift inverts the preference.
 export function sprintRequested(shiftHeld: boolean): boolean {
   return alwaysRunNow ? !shiftHeld : shiftHeld
 }

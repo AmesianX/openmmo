@@ -81,6 +81,7 @@ export function recordKeyboardTravel(mounted: boolean, fps = 60) {
       hasMovementTarget: false,
       isInCombat: false,
       input: pressed ? { forward, turn } : null,
+      movementMode: 'character',
       rotation,
       config: {
         ...scaleMovementConfig(

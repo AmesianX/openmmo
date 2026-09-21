@@ -137,7 +137,10 @@
     passability_get_floor_at,
   } from '../wasm/onlinerpg_shared'
   import { derived, get } from 'svelte/store'
-  import { sprintRequested } from '../stores/movementSettings'
+  import {
+    sprintRequested,
+    keyboardMovementMode,
+  } from '../stores/movementSettings'
   import { createPlayerPhysics } from './player-control/player-physics'
   import { subscribePlayerNetworkEvents } from './player-control/player-network-events'
   import type {
@@ -520,7 +523,9 @@
     return (
       inputHandler.isSprintRequested &&
       input !== null &&
-      (!isMounted(currentPlayer) || input.forward === 1)
+      ($keyboardMovementMode === 'world' ||
+        !isMounted(currentPlayer) ||
+        input.forward === 1)
     )
   }
 
@@ -1342,6 +1347,7 @@
     emitKeyboardPlayerState: () => {
       updatePlayerState(
         isMounted(currentPlayer) &&
+          $keyboardMovementMode === 'character' &&
           inputHandler.getMovementInput()?.forward === -1
           ? 0
           : 100
@@ -1458,6 +1464,7 @@
       hasMovementTarget: movingState() !== null,
       isInCombat: combatController.isInCombat,
       input,
+      movementMode: $keyboardMovementMode,
       rotation: playerRotation,
       backwardSpeed: BACKWARD_SPEED * ($hungerState?.moveMult ?? 1),
       config: movementConfig(),
@@ -2250,39 +2257,49 @@
     }
   }
 
-  function processClickIntent(event: MouseEvent): ClickIntent {
+  function processClickIntent(
+    event: MouseEvent,
+    movementOnly = false
+  ): ClickIntent {
     const groundOnly =
       get(landscapingMode) !== null || get(estateFurnitureEditorActive)
     const targetingWater = get(fishingTargeting)
-    const intent = inputHandler.processCanvasClick(event, {
-      groundOnly,
-      fishingTargeting: targetingWater,
-      camera,
-      monsterMeshes,
-      npcMeshes,
-      doorMeshes,
-      objectMeshes,
-      propMeshes,
-      groundItemMeshes,
-      tipHatMeshes,
-      stallMeshes,
-      mealMeshes,
-      groundMeshes,
-      playerPosition: {
-        x: currentPlayer!.position.x,
-        y: currentPlayer!.position.y,
-        z: currentPlayer!.position.z,
+    const intent = inputHandler.processCanvasClick(
+      event,
+      {
+        groundOnly,
+        movementOnly,
+        fishingTargeting: targetingWater,
+        camera,
+        monsterMeshes,
+        npcMeshes,
+        doorMeshes,
+        objectMeshes,
+        propMeshes,
+        groundItemMeshes,
+        tipHatMeshes,
+        stallMeshes,
+        mealMeshes,
+        groundMeshes,
+        playerPosition: {
+          x: currentPlayer!.position.x,
+          y: currentPlayer!.position.y,
+          z: currentPlayer!.position.z,
+        },
+        playerVisualFloorLevel: get(playerVisualFloorLevel),
+        resolveHousingStairTarget: (floorLevel, x, y, z, stairFloor) =>
+          housingManager.stairLandingTargetAt(floorLevel, x, y, z, stairFloor),
+        isMonsterDead,
+        canCastFishing:
+          !movementOnly &&
+          abilityEquipmentAllowed(FISHING.id, get(inventoryStore).equipped) &&
+          currentPassabilityFloor() === 0,
+        waterSurfaceAt,
       },
-      playerVisualFloorLevel: get(playerVisualFloorLevel),
-      resolveHousingStairTarget: (floorLevel, x, y, z, stairFloor) =>
-        housingManager.stairLandingTargetAt(floorLevel, x, y, z, stairFloor),
-      isMonsterDead,
-      canCastFishing:
-        abilityEquipmentAllowed(FISHING.id, get(inventoryStore).equipped) &&
-        currentPassabilityFloor() === 0,
-      waterSurfaceAt,
-    })
+      renderer.domElement.getBoundingClientRect()
+    )
     if (
+      !movementOnly &&
       !groundOnly &&
       !targetingWater &&
       (intent.type === 'move_to_ground' || intent.type === 'none')
@@ -2401,6 +2418,35 @@
     }
 
     enqueuePlayerControlEvent(playerControlEvent)
+    return (
+      !editorMode &&
+      playerControlEvent.type === 'canvas_intent' &&
+      playerControlEvent.intent.type === 'move_to_ground'
+    )
+  }
+
+  function handleCanvasDragMove(event: MouseEvent) {
+    if (
+      !currentPlayer ||
+      currentPlayer.health <= 0 ||
+      $cameraRotationEnabled ||
+      $mapEditorMode ||
+      $housingEditorMode ||
+      get(landscapingMode) !== null ||
+      get(estateFurnitureEditorActive) ||
+      get(inspectionTargeting) ||
+      get(fishingTargeting) ||
+      inputHandler.hasKeysPressed
+    )
+      return
+    const intent = processClickIntent(event, true)
+    if (intent.type === 'move_to_ground') {
+      enqueuePlayerControlEvent({
+        type: 'canvas_intent',
+        intent,
+        editorMode: false,
+      })
+    }
   }
 
   function createPlayerControlEventActions(): PlayerControlEventActions {
@@ -2755,15 +2801,12 @@
 
     const removeInputListeners = inputHandler.setupEventListeners(
       renderer.domElement,
-      handleCanvasClickIntent
+      handleCanvasClickIntent,
+      handleCanvasDragMove
     )
 
     const canvas = renderer.domElement
-    // OrbitControls listens on the canvas's wrapper and captures the pointer
-    // there on every mousedown; that retargets pointer events and fires a
-    // spurious pointerleave on the canvas even though the cursor never moved.
-    // A leave "to" an ancestor of the canvas can only be that retargeting —
-    // a real leave lands on a sibling overlay, another element, or null.
+    // Ignore pointerleave caused by OrbitControls capturing on the wrapper.
     const handlePointerLeave = (e: PointerEvent) => {
       if (e.relatedTarget instanceof Node && e.relatedTarget.contains(canvas))
         return

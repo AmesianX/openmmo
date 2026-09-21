@@ -8,6 +8,7 @@ import {
 import type { MovementConfig, Position } from '../../../utils/movementUtils'
 import { shortestWrappedDeltaX, wrapWorldX } from '../../../terrain/world-wrap'
 import type { InteractionExitKind } from './interaction'
+import type { KeyboardMovementMode } from '../../../stores/movementSettings'
 
 export interface KeyboardInput {
   forward: number
@@ -27,7 +28,8 @@ export interface KeyboardMoveSender {
     input: KeyboardInput,
     speed: number,
     dt: number,
-    mounted: boolean
+    mounted: boolean,
+    movementMode: KeyboardMovementMode
   ): KeyboardTarget
   commitTarget(): void
   flush(position: Position, rotation: number): void
@@ -41,27 +43,33 @@ export function createKeyboardMoveSender(
   let sent: KeyboardTarget | null = null
   let lastInput: KeyboardInput | null = null
   let lastMounted = false
-  let walkingRotation = 0
+  let lastMovementMode: KeyboardMovementMode | null = null
+  let movementRotation = 0
   let lastSpeed = 0
   let elapsed = 0
   return {
-    target(position, rotation, input, speed, dt, mounted) {
+    target(position, rotation, input, speed, dt, mounted, movementMode) {
       elapsed += dt
       const lookahead = Math.max(4, speed * 0.5)
+      const relativeMounted = mounted && movementMode === 'character'
       const inputChanged =
         lastInput === null ||
         lastMounted !== mounted ||
+        lastMovementMode !== movementMode ||
         lastInput.forward !== input.forward ||
         lastInput.turn !== input.turn
-      if (!mounted && inputChanged) {
-        walkingRotation = rotation + Math.atan2(-input.turn, input.forward)
+      if (!relativeMounted && inputChanged) {
+        movementRotation =
+          movementMode === 'world'
+            ? Math.atan2(input.turn, -input.forward)
+            : rotation + Math.atan2(-input.turn, input.forward)
       }
-      const forward = mounted ? input.forward : 1
+      const forward = relativeMounted ? input.forward : 1
       if (
         target === null ||
         inputChanged ||
         lastSpeed !== speed ||
-        (mounted && input.turn !== 0 && elapsed >= 0.1) ||
+        (relativeMounted && input.turn !== 0 && elapsed >= 0.1) ||
         (forward !== 0 &&
           Math.hypot(
             shortestWrappedDeltaX(position.x, target.position.x),
@@ -69,9 +77,9 @@ export function createKeyboardMoveSender(
           ) <=
             lookahead / 2)
       ) {
-        const facing = mounted
+        const facing = relativeMounted
           ? rotation - input.turn * KEYBOARD_TURN_RATE * 0.15
-          : walkingRotation
+          : movementRotation
         target = {
           position: {
             x: wrapWorldX(position.x + Math.sin(facing) * lookahead * forward),
@@ -83,6 +91,7 @@ export function createKeyboardMoveSender(
         }
         lastInput = { ...input }
         lastMounted = mounted
+        lastMovementMode = movementMode
         lastSpeed = speed
         elapsed = 0
       }
@@ -134,6 +143,7 @@ export function createKeyboardSpeedRamp(): KeyboardSpeedRamp {
 interface KeyboardMovementInput {
   currentPos: Position
   input: KeyboardInput
+  movementMode: KeyboardMovementMode
   rotation: number
   backwardSpeed?: number
   config: MovementConfig
@@ -170,6 +180,7 @@ export type KeyboardMovementOutcome =
 export function applyKeyboardMovement({
   currentPos,
   input,
+  movementMode,
   rotation,
   backwardSpeed = BACKWARD_SPEED,
   config,
@@ -183,16 +194,20 @@ export function applyKeyboardMovement({
 }: KeyboardMovementInput): KeyboardMovementOutcome {
   const dt = Math.max(0, Math.min(deltaTimeSeconds, 0.1))
   const mounted = config.mountRotation !== undefined
-  const speed = mounted && input.forward < 0 ? backwardSpeed : config.maxSpeed
+  const speed =
+    mounted && movementMode === 'character' && input.forward < 0
+      ? backwardSpeed
+      : config.maxSpeed
   const target = moveSender.target(
     currentPos,
     rotation,
     input,
     speed,
     dt,
-    mounted
+    mounted,
+    movementMode
   )
-  if (mounted && input.forward === 0) {
+  if (mounted && target.forward === 0) {
     speedRamp.reset()
     const facing = keyboardRotation(rotation, target.rotation, dt)
     writePlayerPosition(currentPos, facing)
@@ -200,7 +215,7 @@ export function applyKeyboardMovement({
     return { kind: 'moved', currentSpeed: 0, playerRotation: facing }
   }
   if (mounted) {
-    const reverseAngle = input.forward < 0 ? Math.PI : 0
+    const reverseAngle = target.forward < 0 ? Math.PI : 0
     const result = moveHorse(
       currentPos,
       rotation + reverseAngle,
@@ -310,6 +325,7 @@ interface RunKeyboardFrameInput {
   hasMovementTarget: boolean
   isInCombat: boolean
   input: KeyboardInput | null
+  movementMode: KeyboardMovementMode
   rotation: number
   backwardSpeed?: number
   config: MovementConfig
@@ -342,6 +358,7 @@ export function runKeyboardFrame({
   hasMovementTarget,
   isInCombat,
   input,
+  movementMode,
   rotation,
   backwardSpeed,
   config,
@@ -393,6 +410,7 @@ export function runKeyboardFrame({
       z: currentPlayer.position.z,
     },
     input,
+    movementMode,
     rotation,
     backwardSpeed,
     config,

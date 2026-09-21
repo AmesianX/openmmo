@@ -5,6 +5,7 @@ import {
 } from '../../../utils/movementUtils'
 import { angleDelta, BACKWARD_SPEED } from '../../../utils/horseMovement'
 import { WORLD_MAX_X, shortestWrappedDeltaX } from '../../../terrain/world-wrap'
+import type { KeyboardMovementMode } from '../../../stores/movementSettings'
 import {
   applyKeyboardMovement,
   applyKeyboardMovementOutcome,
@@ -14,7 +15,11 @@ import {
   type KeyboardInput,
 } from './keyboard'
 
-function setup(mounted = false, initialRotation = 0) {
+function setup(
+  mounted = false,
+  initialRotation = 0,
+  movementMode: KeyboardMovementMode = 'character'
+) {
   const player = { position: { x: 0, y: 5, z: 0 } }
   const send = vi.fn()
   const input = {
@@ -24,6 +29,7 @@ function setup(mounted = false, initialRotation = 0) {
     hasMovementTarget: false,
     isInCombat: false,
     input: { forward: 1, turn: 0 } as KeyboardInput | null,
+    movementMode,
     rotation: initialRotation,
     config: {
       ...DEFAULT_MOVEMENT_CONFIG,
@@ -160,6 +166,71 @@ for (const mounted of [false, true]) {
   )
 }
 
+describe.each([false, true])('fixed directions (mounted: %s)', (mounted) => {
+  it.each([
+    { forward: 1, turn: 0, x: 0, z: -1 },
+    { forward: -1, turn: 0, x: 0, z: 1 },
+    { forward: 0, turn: -1, x: -1, z: 0 },
+    { forward: 0, turn: 1, x: 1, z: 0 },
+    { forward: 1, turn: -1, x: -Math.SQRT1_2, z: -Math.SQRT1_2 },
+    { forward: 1, turn: 1, x: Math.SQRT1_2, z: -Math.SQRT1_2 },
+    { forward: -1, turn: -1, x: -Math.SQRT1_2, z: Math.SQRT1_2 },
+    { forward: -1, turn: 1, x: Math.SQRT1_2, z: Math.SQRT1_2 },
+  ])('moves toward ($x, $z) for input ($forward, $turn)', (direction) => {
+    for (const rotation of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const { input, player, send, frame } = setup(mounted, rotation, 'world')
+      input.input = { forward: direction.forward, turn: direction.turn }
+      for (let i = 0; i < 180; i++) frame()
+      const { x, z } = player.position
+      expect(x * direction.x + z * direction.z).toBeGreaterThan(8)
+      expect(Math.abs(x * direction.z - z * direction.x)).toBeLessThan(1)
+      expect(
+        angleDelta(Math.atan2(direction.x, direction.z), input.rotation)
+      ).toBeCloseTo(0, 2)
+      expect(input.actions.setMoved.mock.lastCall![0]).toBeCloseTo(
+        input.config.maxSpeed,
+        2
+      )
+      expect(send.mock.calls.every((call) => call[2] === 1)).toBe(true)
+      expect(send.mock.calls.length).toBeLessThanOrEqual(mounted ? 12 : 6)
+    }
+  })
+
+  it('recomputes a held direction immediately when the mode changes', () => {
+    const { input, player, send, frame } = setup(mounted, Math.PI / 2)
+    input.input = { forward: -1, turn: 0 }
+    frame()
+    const before = { ...player.position }
+    input.movementMode = 'world'
+    frame()
+    expect(send).toHaveBeenCalledTimes(2)
+    const [target, facing, forward] = send.mock.lastCall!
+    expect(target.x).toBeCloseTo(before.x)
+    expect(target.z).toBeCloseTo(before.z + (mounted ? 6.75 : 4))
+    expect(facing).toBe(0)
+    expect(forward).toBe(1)
+    input.movementMode = 'character'
+    frame()
+    expect(send).toHaveBeenCalledTimes(3)
+    expect(send.mock.lastCall![2]).toBe(mounted ? -1 : 1)
+    if (!mounted) expect(angleDelta(0, input.rotation)).toBeCloseTo(-Math.PI)
+  })
+
+  it('keeps moving east after releasing and pressing right again', () => {
+    const { input, player, frame } = setup(mounted, Math.PI, 'world')
+    input.input = { forward: 0, turn: 1 }
+    for (let i = 0; i < 120; i++) frame()
+    input.input = null
+    frame()
+    const stopped = { ...player.position }
+    input.input = { forward: 0, turn: 1 }
+    for (let i = 0; i < 120; i++) frame()
+    expect(player.position.x).toBeGreaterThan(stopped.x + 5)
+    expect(player.position.z).toBeCloseTo(stopped.z, 1)
+    expect(angleDelta(Math.PI / 2, input.rotation)).toBeCloseTo(0, 2)
+  })
+})
+
 describe('walking virtual destinations', () => {
   it.each([
     { forward: 1, turn: 0 },
@@ -251,11 +322,27 @@ describe('keyboard target publication', () => {
     const sender = createKeyboardMoveSender(send)
     const position = { x: 0, y: 5, z: 0 }
     const input = { forward: 1, turn: 0 }
-    const target = sender.target(position, 0, input, 13.5, 1 / 60, true)
+    const target = sender.target(
+      position,
+      0,
+      input,
+      13.5,
+      1 / 60,
+      true,
+      'character'
+    )
     sender.commitTarget()
     expect(target.position.z).toBe(6.75)
     expect(
-      sender.target({ ...position, z: 1 }, 0, input, 13.5, 1 / 60, true)
+      sender.target(
+        { ...position, z: 1 },
+        0,
+        input,
+        13.5,
+        1 / 60,
+        true,
+        'character'
+      )
     ).toBe(target)
     sender.commitTarget()
     expect(send).toHaveBeenCalledOnce()
@@ -265,7 +352,8 @@ describe('keyboard target publication', () => {
       input,
       13.5,
       1 / 60,
-      true
+      true,
+      'character'
     )
     expect(renewed.position.z).toBe(10.75)
     sender.commitTarget()
@@ -293,7 +381,8 @@ describe('keyboard target publication', () => {
       { forward: 1, turn: 0 },
       13.5,
       1 / 60,
-      true
+      true,
+      'character'
     )
     expect(target.position.x).toBeLessThan(start.x)
     expect(shortestWrappedDeltaX(start.x, target.position.x)).toBe(6.75)
@@ -303,10 +392,26 @@ describe('keyboard target publication', () => {
     const send = vi.fn()
     const sender = createKeyboardMoveSender(send)
     const position = { x: 0, y: 5, z: 0 }
-    sender.target(position, 0, { forward: 1, turn: 0 }, 3, 1 / 60, true)
+    sender.target(
+      position,
+      0,
+      { forward: 1, turn: 0 },
+      3,
+      1 / 60,
+      true,
+      'character'
+    )
     sender.flush(position, 0)
     expect(send).not.toHaveBeenCalled()
-    sender.target(position, 0, { forward: 1, turn: 0 }, 3, 1 / 60, true)
+    sender.target(
+      position,
+      0,
+      { forward: 1, turn: 0 },
+      3,
+      1 / 60,
+      true,
+      'character'
+    )
     sender.commitTarget()
     sender.reset()
     sender.flush(position, 0)

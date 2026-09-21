@@ -30,7 +30,7 @@ import { DEFAULT_MOVEMENT_CONFIG } from '../utils/movementUtils'
 import { angleDelta } from '../utils/horseMovement'
 import { estateFurnitureInteractionData } from '../utils/estateFurnitureModels'
 
-describe('relative movement keys', () => {
+describe('movement keys', () => {
   beforeEach(() => {
     vi.stubGlobal('HTMLElement', class {})
     resetFishingStore()
@@ -72,65 +72,72 @@ describe('relative movement keys', () => {
     expect(movementInput(new Set(['ShiftLeft']))).toBeNull()
   })
 
-  it.each([
-    ['ArrowUp', 'KeyW', 0],
-    ['ArrowDown', 'KeyS', Math.PI],
-    ['ArrowLeft', 'KeyA', Math.PI / 2],
-    ['ArrowRight', 'KeyD', -Math.PI / 2],
-  ] as const)(
-    'drives %s and %s relative to the character through real key events',
-    (arrow, key, offset) => {
-      for (const initialRotation of [0, Math.PI / 2, Math.PI]) {
-        const paths = [arrow, key].map((code) => {
-          inputHandler.clearTransientInput()
-          const event = {
-            code,
-            target: null,
-            ctrlKey: false,
-            repeat: false,
-          } as KeyboardEvent
-          inputHandler.handleKeyDown(event)
-          let position = { x: 0, y: 0, z: 0 }
-          let rotation = initialRotation
-          const send = vi.fn()
-          const moveSender = createKeyboardMoveSender(send)
-          const speedRamp = createKeyboardSpeedRamp()
-          for (let frame = 0; frame < 120; frame++) {
-            inputHandler.handleKeyDown({
-              ...event,
-              repeat: true,
-            } as KeyboardEvent)
-            applyKeyboardMovement({
-              currentPos: position,
-              input: inputHandler.getMovementInput()!,
-              rotation,
-              config: DEFAULT_MOVEMENT_CONFIG,
-              deltaTimeSeconds: 1 / 60,
-              speedRamp,
-              sampleHeight: () => 0,
-              isMovementBlocked: () => false,
-              isUphillTooSteep: () => false,
-              writePlayerPosition: (next, facing) => {
-                position = next
-                rotation = facing
-              },
-              moveSender,
+  describe.each(['world', 'character'] as const)(
+    '%s movement',
+    (movementMode) => {
+      it.each([
+        ['ArrowUp', 'KeyW', 0],
+        ['ArrowDown', 'KeyS', Math.PI],
+        ['ArrowLeft', 'KeyA', Math.PI / 2],
+        ['ArrowRight', 'KeyD', -Math.PI / 2],
+      ] as const)(
+        'drives %s and %s through real key events',
+        (arrow, key, offset) => {
+          for (const initialRotation of [0, Math.PI / 2, Math.PI]) {
+            const paths = [arrow, key].map((code) => {
+              inputHandler.clearTransientInput()
+              const event = {
+                code,
+                target: null,
+                ctrlKey: false,
+                repeat: false,
+              } as KeyboardEvent
+              inputHandler.handleKeyDown(event)
+              let position = { x: 0, y: 0, z: 0 }
+              let rotation = initialRotation
+              const send = vi.fn()
+              const moveSender = createKeyboardMoveSender(send)
+              const speedRamp = createKeyboardSpeedRamp()
+              for (let frame = 0; frame < 120; frame++) {
+                inputHandler.handleKeyDown({
+                  ...event,
+                  repeat: true,
+                } as KeyboardEvent)
+                applyKeyboardMovement({
+                  currentPos: position,
+                  input: inputHandler.getMovementInput()!,
+                  movementMode,
+                  rotation,
+                  config: DEFAULT_MOVEMENT_CONFIG,
+                  deltaTimeSeconds: 1 / 60,
+                  speedRamp,
+                  sampleHeight: () => 0,
+                  isMovementBlocked: () => false,
+                  isUphillTooSteep: () => false,
+                  writePlayerPosition: (next, facing) => {
+                    position = next
+                    rotation = facing
+                  },
+                  moveSender,
+                })
+              }
+              inputHandler.handleKeyUp(event)
+              expect(inputHandler.hasKeysPressed).toBe(false)
+              const facing =
+                (movementMode === 'world' ? Math.PI : initialRotation) + offset
+              expect(angleDelta(facing, rotation)).toBeCloseTo(0)
+              expect(
+                position.x * Math.cos(facing) - position.z * Math.sin(facing)
+              ).toBeCloseTo(0)
+              expect(
+                position.x * Math.sin(facing) + position.z * Math.cos(facing)
+              ).toBeGreaterThan(5)
+              return { position, rotation, commands: send.mock.calls }
             })
+            expect(paths[0]).toEqual(paths[1])
           }
-          inputHandler.handleKeyUp(event)
-          expect(inputHandler.hasKeysPressed).toBe(false)
-          const facing = initialRotation + offset
-          expect(angleDelta(facing, rotation)).toBeCloseTo(0)
-          expect(
-            position.x * Math.cos(facing) - position.z * Math.sin(facing)
-          ).toBeCloseTo(0)
-          expect(
-            position.x * Math.sin(facing) + position.z * Math.cos(facing)
-          ).toBeGreaterThan(5)
-          return { position, rotation, commands: send.mock.calls }
-        })
-        expect(paths[0]).toEqual(paths[1])
-      }
+        }
+      )
     }
   )
 })
@@ -491,35 +498,74 @@ describe('processCanvasClick cast-vs-walk', () => {
     })
   })
 
-  it('uses a nearby stair hit instead of the ground under the pointer', () => {
-    const { camera, ground } = groundScene()
-    const stair = new THREE.Group()
-    stair.userData.housingStairFloor = 0
-    const landing = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7))
-    landing.rotateX(-Math.PI / 2)
-    landing.position.set(1.28, 0.2, 0)
-    stair.add(landing)
-    stair.updateMatrixWorld(true)
-    const target = { x: 3.5, y: 3.15, z: 3.75 }
-    const resolveHousingStairTarget = vi.fn(() => target)
-
+  it('uses the canvas bounds for drag events captured by another element', () => {
+    const event = { clientX: 50, clientY: 50, shiftKey: false } as MouseEvent
+    const context = contextWith({ movementOnly: true })
     const intent = inputHandler.processCanvasClick(
-      centerClick(),
-      contextWith({
-        camera,
-        groundMeshes: [ground, stair],
-        resolveHousingStairTarget,
-      })
+      event,
+      context,
+      RECT as DOMRect
     )
-
-    expect(resolveHousingStairTarget).toHaveBeenCalled()
-    expect(intent).toEqual({
-      type: 'move_to_ground',
-      sprinting: false,
-      position: target,
-      viaHousingStair: true,
-    })
+    expect(intent).toEqual(
+      inputHandler.processCanvasClick(centerClick(), context)
+    )
   })
+
+  it('drags across monsters and water without triggering interactions', () => {
+    const monster = new THREE.Group()
+    monster.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2)))
+    monster.position.y = 1
+    monster.userData.monsterId = 'monster'
+    monster.updateMatrixWorld(true)
+    const context = contextWith({
+      monsterMeshes: [monster],
+      canCastFishing: true,
+      waterSurfaceAt: () => 1,
+    })
+    expect(inputHandler.processCanvasClick(centerClick(), context).type).toBe(
+      'attack_monster'
+    )
+    expect(
+      inputHandler.processCanvasClick(centerClick(true), {
+        ...context,
+        movementOnly: true,
+      })
+    ).toMatchObject({ type: 'move_to_ground', sprinting: true })
+  })
+
+  it.each([false, true])(
+    'uses a nearby stair hit for clicks and drags (movementOnly: %s)',
+    (movementOnly) => {
+      const { camera, ground } = groundScene()
+      const stair = new THREE.Group()
+      stair.userData.housingStairFloor = 0
+      const landing = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7))
+      landing.rotateX(-Math.PI / 2)
+      landing.position.set(1.28, 0.2, 0)
+      stair.add(landing)
+      stair.updateMatrixWorld(true)
+      const target = { x: 3.5, y: 3.15, z: 3.75 }
+      const resolveHousingStairTarget = vi.fn(() => target)
+
+      const intent = inputHandler.processCanvasClick(
+        centerClick(),
+        contextWith({
+          camera,
+          groundMeshes: [ground, stair],
+          resolveHousingStairTarget,
+          movementOnly,
+        })
+      )
+
+      expect(resolveHousingStairTarget).toHaveBeenCalled()
+      expect(intent).toEqual({
+        type: 'move_to_ground',
+        sprinting: false,
+        position: target,
+        viaHousingStair: true,
+      })
+    }
+  )
 })
 
 describe('shouldSuppressContextMenu', () => {

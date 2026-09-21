@@ -6,6 +6,7 @@ import { instrumentPanelVisible } from '../stores/instrumentStore'
 import { pointInRect } from '../stores/dragStore'
 import { sprintRequested } from '../stores/movementSettings'
 import { isTypingTarget } from '../utils/dom'
+import { setupCanvasDragMove } from './canvasDragMove'
 import {
   max_cast_distance_m,
   min_fishable_depth_m,
@@ -161,6 +162,7 @@ export type ClickIntent =
 
 export interface RaycastContext {
   groundOnly?: boolean
+  movementOnly?: boolean
   camera: THREE.Camera
   monsterMeshes: THREE.Group[]
   npcMeshes: THREE.Object3D[]
@@ -391,15 +393,21 @@ class InputHandler {
     )
   }
 
-  processCanvasClick(event: MouseEvent, context: RaycastContext): ClickIntent {
+  processCanvasClick(
+    event: MouseEvent,
+    context: RaycastContext,
+    rect?: DOMRect
+  ): ClickIntent {
     if (get(instrumentPanelVisible)) return { type: 'none' }
-    const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
+    rect ??= (event.target as HTMLCanvasElement).getBoundingClientRect()
     const raycaster = new Raycaster()
     const centerNDC = new Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1
     )
     raycaster.setFromCamera(centerNDC, context.camera)
+    if (context.movementOnly)
+      return this.processMovementClick(event, rect, context, raycaster)
     if (context.groundOnly || context.fishingTargeting)
       return this.processGroundClick(event, context, raycaster)
 
@@ -668,6 +676,15 @@ class InputHandler {
       }
     }
 
+    return this.processMovementClick(event, rect, context, raycaster)
+  }
+
+  private processMovementClick(
+    event: MouseEvent,
+    rect: DOMRect,
+    context: RaycastContext,
+    raycaster: Raycaster
+  ): ClickIntent {
     const stairTarget = this.raycastHousingStair(event, rect, context)
     if (stairTarget) {
       return {
@@ -691,14 +708,12 @@ class InputHandler {
     // Skip walls and roofs to select the walkable surface behind them.
     const groundHit = intersects.find((hit) => !isHouseWall(hit.object))
     if (groundHit) {
-      const waterSurface = context.waterSurfaceAt?.(
-        groundHit.point.x,
-        groundHit.point.z
-      )
+      const waterSurface =
+        !context.groundOnly && !context.movementOnly && context.canCastFishing
+          ? context.waterSurfaceAt?.(groundHit.point.x, groundHit.point.z)
+          : undefined
       // Distant water remains a move request.
       if (
-        !context.groundOnly &&
-        context.canCastFishing &&
         waterSurface !== undefined &&
         waterSurface - groundHit.point.y > min_fishable_depth_m() &&
         withinCastRange(groundHit.point, context.playerPosition)
@@ -893,7 +908,8 @@ class InputHandler {
 
   setupEventListeners(
     canvas: HTMLCanvasElement,
-    onCanvasClick: (event: MouseEvent) => void
+    onCanvasClick: (event: MouseEvent) => boolean | void,
+    onCanvasDragMove: (event: MouseEvent) => void
   ): () => void {
     const onKeyDown = (event: KeyboardEvent) => {
       if (this.handleKeyDown(event)) {
@@ -929,14 +945,18 @@ class InputHandler {
       })
       if (suppress) event.preventDefault()
     }
-    canvas.addEventListener('mousedown', onCanvasClick)
+    const removeCanvasListeners = setupCanvasDragMove(
+      canvas,
+      onCanvasClick,
+      onCanvasDragMove
+    )
     document.addEventListener('contextmenu', onContextMenu, true)
 
     return () => {
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onWindowBlur)
-      canvas.removeEventListener('mousedown', onCanvasClick)
+      removeCanvasListeners()
       document.removeEventListener('contextmenu', onContextMenu, true)
     }
   }

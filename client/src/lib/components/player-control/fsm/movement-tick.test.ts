@@ -293,6 +293,7 @@ describe('runPlayerMovementTick', () => {
           interactionExit: 'none',
           hasMovementTarget: false,
           input: hasKeysPressed ? { forward, turn } : null,
+          movementMode: 'character',
           rotation,
           config: {
             ...input.config,

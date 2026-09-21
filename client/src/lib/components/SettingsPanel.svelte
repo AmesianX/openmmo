@@ -10,7 +10,7 @@
   } from '../stores/graphicsSettings'
   import VolumeControl from './VolumeControl.svelte'
   import { minimapEnabled } from '../stores/minimapStore'
-  import { alwaysRun } from '../stores/movementSettings'
+  import { alwaysRun, keyboardMovementMode } from '../stores/movementSettings'
   import { lightningEnabled } from '../stores/effectSettings'
   import ToggleSwitch from './ToggleSwitch.svelte'
   import { friendOnlineNoticeEnabled } from '../stores/friendStore'
@@ -59,6 +59,31 @@
       alwaysRun,
       $alwaysRun ? 'Hold Shift to walk' : 'Hold Shift to run'
     )}
+    <div class="setting-row">
+      <span class="setting-label">
+        Keyboard Movement
+        <span class="setting-hint">Arrow keys / WASD</span>
+      </span>
+      <div class="quality-row" role="group" aria-label="Keyboard movement mode">
+        <button
+          class="quality-btn"
+          class:active={$keyboardMovementMode === 'world'}
+          aria-pressed={$keyboardMovementMode === 'world'}
+          onclick={() => keyboardMovementMode.set('world')}>Fixed</button
+        >
+        <button
+          class="quality-btn"
+          class:active={$keyboardMovementMode === 'character'}
+          aria-pressed={$keyboardMovementMode === 'character'}
+          onclick={() => keyboardMovementMode.set('character')}>Relative</button
+        >
+      </div>
+    </div>
+    <p class="movement-hint setting-hint">
+      {$keyboardMovementMode === 'world'
+        ? '↑ / W: north · ↓ / S: south · ← / A: west · → / D: east'
+        : 'Movement follows the direction your character faces.'}
+    </p>
     {@render toggleRow('Friend Online Notice', friendOnlineNoticeEnabled)}
     {@render toggleRow(
       'Lightning Flashes',
@@ -238,6 +263,10 @@
     border-radius: 6px;
     overflow: hidden;
     border: 1px solid #4a5568;
+  }
+
+  .movement-hint {
+    margin: 6px 0 12px;
   }
 
   .quality-btn {
