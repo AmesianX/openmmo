@@ -88,15 +88,14 @@
   let groundParentRef: THREE.Group | undefined = $state()
   let terrainAlignedRef: THREE.Group | undefined = $state()
 
-  // Upright-authored discs lie face-up on the ground, lifted so the rim rests
-  // on the floor. Shield boss faces -Z, the timekeeper dial faces +Z.
-  const flatRestRotX = $derived(
-    def?.category === 'timekeeper'
-      ? -Math.PI / 2
-      : def?.equipSlot === 'off_hand' && def?.category === 'armor'
-        ? Math.PI / 2
-        : null
-  )
+  // Lay handheld models flat before measuring their ground clearance.
+  const flatRestRotX = $derived.by(() => {
+    if (def?.category === 'fishing_rod') return -Math.PI / 4
+    if (def?.category === 'timekeeper') return -Math.PI / 2
+    if (def?.equipSlot === 'off_hand' && def?.category === 'armor')
+      return Math.PI / 2
+    return null
+  })
   let restPose = $state<{ rotX: number; y: number } | null>(null)
 
   function applyRestPose(obj: THREE.Object3D, pose: typeof restPose) {
@@ -241,13 +240,16 @@
         measureSource = cloneGroundItemScene(gltf.scene)
         bindClipOnce(measureSource, clip, true)
       }
+      const box = new THREE.Box3()
       if (flatRestRotX != null) {
         measureSource.rotation.set(flatRestRotX, 0, 0)
-        const rotated = new THREE.Box3().setFromObject(measureSource)
-        restPose = { rotX: flatRestRotX, y: -rotated.min.y }
+        box.setFromObject(measureSource, true)
+        restPose = { rotX: flatRestRotX, y: -box.min.y }
         applyRestPose(measureSource, restPose)
+        box.translate(new THREE.Vector3(0, restPose.y, 0))
+      } else {
+        box.setFromObject(measureSource)
       }
-      const box = new THREE.Box3().setFromObject(measureSource)
       worldModelBox = {
         min: { x: box.min.x, y: box.min.y, z: box.min.z },
         max: { x: box.max.x, y: box.max.y, z: box.max.z },
